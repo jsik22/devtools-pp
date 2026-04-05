@@ -224,75 +224,99 @@
         <span style="color:#555;font-size:11px">단축키: <kbd>F</kbd> Forward · <kbd>G</kbd> Forward Modified · <kbd>D</kbd> Drop · <kbd>R</kbd> Mock Response · <kbd>A</kbd> Forward All · <kbd>Q</kbd> Drop All</span>
       </div>
 
-      <!-- 메인: 큐 + 편집기 분할 -->
-      <div class="icpt-split">
-        <!-- 좌: 대기열 -->
-        <div class="icpt-queue-pane">
-          <div class="icpt-queue-header">
-            <span>Paused Requests</span>
+      <!-- 메인: Request/Response 좌우 분할 -->
+      <div class="icpt-main-area">
+        <div class="icpt-dual-split">
+          <!-- 좌: Request -->
+          <div class="icpt-side icpt-req-side" data-side="req">
+            <div class="icpt-side-header">
+              <span>Request</span>
+              <span id="icpt-req-badge" class="badge badge-sm">0</span>
+            </div>
+            <div id="icpt-req-queue" class="icpt-queue-list"></div>
+            <div class="icpt-side-editor">
+              <div class="icpt-editor-placeholder" id="icpt-req-placeholder">
+                <p style="color:#999;font-size:12px">대기 중인 요청 없음</p>
+              </div>
+              <div class="icpt-editor-content hidden" id="icpt-req-editor-content">
+                <div class="icpt-editor-topbar">
+                  <select id="icpt-req-edit-method"></select>
+                  <input type="text" id="icpt-req-edit-url" class="filter-input" style="flex:1">
+                </div>
+                <div class="icpt-editor-tabs" data-side="req">
+                  <button class="icpt-ed-tab active" data-ictab="req-headers">Headers</button>
+                  <button class="icpt-ed-tab" data-ictab="req-body">Body</button>
+                </div>
+                <div id="icpt-tab-req-headers" class="icpt-ed-pane active">
+                  <div class="icpt-kv-toolbar">
+                    <button id="icpt-req-add-header" class="btn btn-xs">+ Add Header</button>
+                  </div>
+                  <div id="icpt-req-headers-list" class="replay-kv-list"></div>
+                </div>
+                <div id="icpt-tab-req-body" class="icpt-ed-pane">
+                  <textarea id="icpt-req-edit-body" class="replay-body-editor" style="min-height:80px;max-height:none;flex:1" spellcheck="false" placeholder="Request body..."></textarea>
+                </div>
+                <div class="icpt-actions">
+                  <button id="icpt-req-forward" class="btn btn-primary icpt-act-btn">Forward</button>
+                  <button id="icpt-req-forward-modified" class="btn btn-warning icpt-act-btn">Forward (Modified)</button>
+                  <button id="icpt-req-drop" class="btn btn-danger icpt-act-btn">Drop</button>
+                  <button id="icpt-req-mock" class="btn btn-mock icpt-act-btn">Mock Response</button>
+                </div>
+              </div>
+            </div>
           </div>
-          <div id="icpt-queue" class="icpt-queue-list"></div>
-          <!-- 로그 (통과/드롭된 항목) -->
+
+          <!-- 우: Response -->
+          <div class="icpt-side icpt-resp-side" data-side="resp">
+            <div class="icpt-side-header">
+              <span>Response</span>
+              <span id="icpt-resp-badge" class="badge badge-sm">0</span>
+            </div>
+            <div id="icpt-resp-queue" class="icpt-queue-list"></div>
+            <div class="icpt-side-editor">
+              <div class="icpt-editor-placeholder" id="icpt-resp-placeholder">
+                <p style="color:#999;font-size:12px">대기 중인 응답 없음</p>
+              </div>
+              <div class="icpt-editor-content hidden" id="icpt-resp-editor-content">
+                <div class="icpt-editor-topbar">
+                  <span id="icpt-resp-edit-method" style="font-weight:700;color:#0451a5;font-size:12px"></span>
+                  <input type="text" id="icpt-resp-edit-url" class="filter-input" style="flex:1" readonly>
+                  <span class="icpt-stage-badge icpt-stage-resp" style="font-size:10px">RESPONSE</span>
+                </div>
+                <div class="icpt-resp-status-bar">
+                  <label style="color:#666;font-size:12px">Status:</label>
+                  <input type="number" id="icpt-resp-edit-status" class="filter-input" style="width:80px;min-width:0" value="200">
+                </div>
+                <div class="icpt-editor-tabs" data-side="resp">
+                  <button class="icpt-ed-tab active" data-ictab="resp-headers">Headers</button>
+                  <button class="icpt-ed-tab" data-ictab="resp-body">Body</button>
+                </div>
+                <div id="icpt-tab-resp-headers" class="icpt-ed-pane active">
+                  <div class="icpt-kv-toolbar">
+                    <button id="icpt-resp-add-header" class="btn btn-xs">+ Add Header</button>
+                  </div>
+                  <div id="icpt-resp-headers-list" class="replay-kv-list"></div>
+                </div>
+                <div id="icpt-tab-resp-body" class="icpt-ed-pane">
+                  <textarea id="icpt-resp-edit-body" class="replay-body-editor" style="min-height:80px;max-height:none;flex:1" spellcheck="false" placeholder="Response body..."></textarea>
+                </div>
+                <div class="icpt-actions">
+                  <button id="icpt-resp-forward" class="btn btn-primary icpt-act-btn">Forward</button>
+                  <button id="icpt-resp-forward-modified" class="btn btn-warning icpt-act-btn">Forward (Modified)</button>
+                  <button id="icpt-resp-drop" class="btn btn-danger icpt-act-btn">Drop</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 하단: 공유 로그 -->
+        <div class="icpt-log-strip">
           <div class="icpt-log-header">
             <span>Log</span>
             <button id="icpt-clear-log" class="btn btn-xs">Clear</button>
           </div>
           <div id="icpt-log" class="icpt-log-list"></div>
-        </div>
-
-        <!-- 우: 편집기 -->
-        <div class="icpt-editor-pane" id="icpt-editor">
-          <div class="icpt-editor-placeholder">
-            <p style="color:#999">Select a paused request to inspect and modify.</p>
-          </div>
-
-          <div class="icpt-editor-content hidden" id="icpt-editor-content">
-            <!-- 요청 상단 -->
-            <div class="icpt-editor-topbar">
-              <select id="icpt-edit-method"></select>
-              <input type="text" id="icpt-edit-url" class="filter-input" style="flex:1">
-              <span id="icpt-edit-stage" class="icpt-stage-badge">REQUEST</span>
-            </div>
-
-            <!-- 편집 탭 -->
-            <div class="icpt-editor-tabs">
-              <button class="icpt-ed-tab active" data-ictab="headers">Headers</button>
-              <button class="icpt-ed-tab" data-ictab="body">Body</button>
-              <button class="icpt-ed-tab" data-ictab="response">Response</button>
-            </div>
-
-            <!-- Headers 편집 -->
-            <div id="icpt-tab-headers" class="icpt-ed-pane active">
-              <div class="icpt-kv-toolbar">
-                <button id="icpt-add-header" class="btn btn-xs">+ Add Header</button>
-              </div>
-              <div id="icpt-headers-list" class="replay-kv-list"></div>
-            </div>
-
-            <!-- Body 편집 -->
-            <div id="icpt-tab-body" class="icpt-ed-pane">
-              <textarea id="icpt-edit-body" class="replay-body-editor" style="min-height:120px;max-height:none;flex:1" spellcheck="false" placeholder="Request body..."></textarea>
-            </div>
-
-            <!-- Response 편집 (response 단계에서만) -->
-            <div id="icpt-tab-response" class="icpt-ed-pane">
-              <div class="icpt-resp-edit-bar">
-                <label style="color:#666;font-size:12px">Status:</label>
-                <input type="number" id="icpt-edit-resp-status" class="filter-input" style="width:80px;min-width:0" value="200">
-                <button id="icpt-add-resp-header" class="btn btn-xs">+ Add Header</button>
-              </div>
-              <div id="icpt-resp-headers-list" class="replay-kv-list"></div>
-              <textarea id="icpt-edit-resp-body" class="replay-body-editor" style="min-height:120px;max-height:none;flex:1" spellcheck="false" placeholder="Response body..."></textarea>
-            </div>
-
-            <!-- 액션 버튼 -->
-            <div class="icpt-actions">
-              <button id="icpt-forward" class="btn btn-primary icpt-act-btn">Forward</button>
-              <button id="icpt-forward-modified" class="btn btn-warning icpt-act-btn">Forward (Modified)</button>
-              <button id="icpt-drop" class="btn btn-danger icpt-act-btn">Drop</button>
-              <button id="icpt-mock-response" class="btn btn-mock icpt-act-btn">Mock Response</button>
-            </div>
-          </div>
         </div>
       </div>
     </section>

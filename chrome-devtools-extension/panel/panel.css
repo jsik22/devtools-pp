@@ -1071,26 +1071,86 @@ tr.selected td {
 }
 
 /* Split layout */
-.icpt-split {
+.icpt-main-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.icpt-dual-split {
   flex: 1;
   display: flex;
   overflow: hidden;
 }
 
-.icpt-queue-pane {
-  flex: 0 0 340px;
+.icpt-side {
+  flex: 1;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.icpt-req-side {
   border-right: 1px solid #d4d4d4;
+}
+
+.icpt-side-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  background: #e8e8e8;
+  font-size: 12px;
+  font-weight: 700;
+  color: #333;
+  border-bottom: 1px solid #d4d4d4;
+  flex-shrink: 0;
+}
+
+.icpt-side.active-side > .icpt-side-header {
+  background: #d6e4f0;
+  color: #0451a5;
+}
+
+.badge-sm {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: #ddd;
+  color: #666;
+  font-weight: 600;
+}
+
+.icpt-queue-list {
+  flex: 0 1 auto;
+  overflow: auto;
+  min-height: 50px;
+  max-height: 30%;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.icpt-side-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
-.icpt-queue-header,
+.icpt-log-strip {
+  flex: 0 0 auto;
+  border-top: 1px solid #d4d4d4;
+  max-height: 150px;
+  display: flex;
+  flex-direction: column;
+}
+
 .icpt-log-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 10px;
+  padding: 4px 10px;
   background: #f3f3f3;
   font-size: 12px;
   font-weight: 600;
@@ -1099,17 +1159,20 @@ tr.selected td {
   flex-shrink: 0;
 }
 
-.icpt-queue-list {
-  flex: 1;
-  overflow: auto;
-  min-height: 80px;
-}
-
 .icpt-log-list {
   flex: 1;
   overflow: auto;
-  max-height: 200px;
-  border-top: 1px solid #d4d4d4;
+  max-height: 120px;
+}
+
+.icpt-resp-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: #f8f8f8;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
 }
 
 .icpt-queue-item {
@@ -1200,14 +1263,6 @@ tr.selected td {
   white-space: nowrap;
 }
 
-/* Editor pane */
-.icpt-editor-pane {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
 .icpt-editor-placeholder {
   flex: 1;
   display: flex;
@@ -1293,15 +1348,6 @@ tr.selected td {
   flex-shrink: 0;
 }
 
-.icpt-resp-edit-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  background: #f3f3f3;
-  border-bottom: 1px solid #d4d4d4;
-  flex-shrink: 0;
-}
 
 /* Action buttons */
 .icpt-actions {

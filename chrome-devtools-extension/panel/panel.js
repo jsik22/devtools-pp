@@ -919,23 +919,42 @@ origDetailTabHandler.forEach(tab => {
 // ============================================================
 
 let interceptActive = false;
-const interceptQueue = [];
+const reqQueue = [];
+const respQueue = [];
 const interceptLog = [];
-let selectedInterceptId = null;
+let selectedReqId = null;
+let selectedRespId = null;
+let activeSide = 'req'; // 'req' or 'resp' — 단축키 대상
 let interceptBypassRegex = null;
 let interceptIdCounter = 0;
 let interceptPollTimer = null;
 let interceptMode = 'proxy'; // 'proxy' or 'legacy'
 
 const icptToggleBtn = document.getElementById('icpt-toggle');
-const icptQueueEl = document.getElementById('icpt-queue');
+const reqQueueEl = document.getElementById('icpt-req-queue');
+const respQueueEl = document.getElementById('icpt-resp-queue');
 const icptLogEl = document.getElementById('icpt-log');
 const icptQueueBadge = document.getElementById('icpt-queue-badge');
-const icptEditorContent = document.getElementById('icpt-editor-content');
-const icptEditorPlaceholder = document.querySelector('.icpt-editor-placeholder');
+const reqBadge = document.getElementById('icpt-req-badge');
+const respBadge = document.getElementById('icpt-resp-badge');
+const reqEditorContent = document.getElementById('icpt-req-editor-content');
+const respEditorContent = document.getElementById('icpt-resp-editor-content');
+const reqPlaceholder = document.getElementById('icpt-req-placeholder');
+const respPlaceholder = document.getElementById('icpt-resp-placeholder');
 const interceptTabBtn = document.querySelector('.intercept-tab');
 const icptModeSelect = document.getElementById('icpt-mode-select');
 const icptProxyStatus = document.getElementById('icpt-proxy-status');
+
+// 사이드 패널 클릭 시 activeSide 전환
+document.querySelectorAll('.icpt-side').forEach(el => {
+  el.addEventListener('click', () => {
+    activeSide = el.dataset.side;
+    document.querySelectorAll('.icpt-side').forEach(s => s.classList.remove('active-side'));
+    el.classList.add('active-side');
+  });
+});
+// 초기 활성 사이드
+document.querySelector('.icpt-req-side').classList.add('active-side');
 
 // Background Service Worker 포트 연결 (자동 재연결)
 let bgPort = null;
@@ -1126,7 +1145,7 @@ function handleProxyInterceptedRequest(msg) {
     return;
   }
 
-  // 큐에 추가
+  // Request 큐에 추가
   const newItem = {
     id: msg.id,
     reqType: 'proxy',
@@ -1134,47 +1153,38 @@ function handleProxyInterceptedRequest(msg) {
     url: msg.url,
     headers: msg.headers || {},
     postData: msg.body || '',
-    stage: 'request',
-    responseStatus: 200,
-    responseHeaders: [],
-    responseBody: '',
   };
-  interceptQueue.push(newItem);
-  // 선택된 항목이 없으면 자동 선택
-  if (!selectedInterceptId) {
-    selectedInterceptId = newItem.id;
-    showInterceptEditor(newItem);
+  reqQueue.push(newItem);
+  if (!selectedReqId) {
+    selectedReqId = newItem.id;
+    showReqEditor(newItem);
   }
-  renderInterceptQueue();
+  renderReqQueue();
 }
 
 function handleResponseIntercepted(msg) {
-  // 응답을 큐에 추가 (stage: 'response')
   let body = msg.body || '';
   try {
     const parsed = JSON.parse(body);
     body = JSON.stringify(parsed, null, 2);
   } catch {}
 
+  // Response 큐에 추가
   const newItem = {
     id: msg.id,
-    reqType: 'response',
     method: msg.method,
     url: msg.url,
+    statusCode: msg.statusCode,
     headers: msg.headers || {},
-    postData: '',
-    stage: 'response',
-    responseStatus: msg.statusCode,
-    responseHeaders: msg.headers || {},
-    responseBody: body,
+    body: body,
     bodyTruncated: msg.bodyTruncated,
   };
-  interceptQueue.push(newItem);
-  if (!selectedInterceptId) {
-    selectedInterceptId = newItem.id;
-    showInterceptEditor(newItem);
+  respQueue.push(newItem);
+  if (!selectedRespId) {
+    selectedRespId = newItem.id;
+    showRespEditor(newItem);
   }
-  renderInterceptQueue();
+  renderRespQueue();
 }
 
 // 모드 전환
@@ -1188,13 +1198,17 @@ icptModeSelect.addEventListener('change', () => {
   icptProxyStatus.style.display = interceptMode === 'proxy' ? 'inline-block' : 'none';
 });
 
-// Editor 탭 전환
-document.querySelectorAll('.icpt-ed-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.icpt-ed-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.icpt-ed-pane').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById('icpt-tab-' + tab.dataset.ictab).classList.add('active');
+// Editor 탭 전환 (사이드별 스코핑)
+document.querySelectorAll('.icpt-editor-tabs').forEach(tabBar => {
+  tabBar.querySelectorAll('.icpt-ed-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const side = tabBar.dataset.side;
+      tabBar.querySelectorAll('.icpt-ed-tab').forEach(t => t.classList.remove('active'));
+      const parentContent = tabBar.closest('.icpt-editor-content');
+      parentContent.querySelectorAll('.icpt-ed-pane').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('icpt-tab-' + tab.dataset.ictab).classList.add('active');
+    });
   });
 });
 
@@ -1202,53 +1216,40 @@ icptToggleBtn.addEventListener('click', () => {
   if (interceptActive) stopIntercept(); else startIntercept();
 });
 
-document.getElementById('icpt-forward').addEventListener('click', () => forwardSelected(false));
-document.getElementById('icpt-forward-modified').addEventListener('click', () => forwardSelected(true));
-document.getElementById('icpt-drop').addEventListener('click', dropSelected);
-document.getElementById('icpt-mock-response').addEventListener('click', mockResponseSelected);
+// Request 사이드 버튼
+document.getElementById('icpt-req-forward').addEventListener('click', () => { activeSide = 'req'; forwardSelected(false); });
+document.getElementById('icpt-req-forward-modified').addEventListener('click', () => { activeSide = 'req'; forwardSelected(true); });
+document.getElementById('icpt-req-drop').addEventListener('click', () => { activeSide = 'req'; dropSelected(); });
+document.getElementById('icpt-req-mock').addEventListener('click', () => { activeSide = 'req'; mockResponseSelected(); });
+document.getElementById('icpt-req-add-header').addEventListener('click', () => addIcptKvRow('icpt-req-headers-list', '', ''));
+
+// Response 사이드 버튼
+document.getElementById('icpt-resp-forward').addEventListener('click', () => { activeSide = 'resp'; forwardSelected(false); });
+document.getElementById('icpt-resp-forward-modified').addEventListener('click', () => { activeSide = 'resp'; forwardSelected(true); });
+document.getElementById('icpt-resp-drop').addEventListener('click', () => { activeSide = 'resp'; dropSelected(); });
+document.getElementById('icpt-resp-add-header').addEventListener('click', () => addIcptKvRow('icpt-resp-headers-list', '', ''));
+
+// 공통 버튼
 document.getElementById('icpt-forward-all').addEventListener('click', forwardAll);
 document.getElementById('icpt-drop-all').addEventListener('click', dropAll);
-document.getElementById('icpt-add-header').addEventListener('click', () => addIcptKvRow('icpt-headers-list', '', ''));
-document.getElementById('icpt-add-resp-header').addEventListener('click', () => addIcptKvRow('icpt-resp-headers-list', '', ''));
 document.getElementById('icpt-clear-log').addEventListener('click', () => { interceptLog.length = 0; renderInterceptLog(); });
 document.getElementById('icpt-bypass-apply').addEventListener('click', applyBypassRule);
 
-// 인터셉트 단축키 (F/G/D/R/A/Q)
+// 인터셉트 단축키 (F/G/D/R/A/Q) — activeSide 기반
 document.addEventListener('keydown', (e) => {
-  // Intercept 탭이 활성 상태가 아니면 무시
   const interceptSection = document.getElementById('intercept');
   if (!interceptSection || !interceptSection.classList.contains('active')) return;
-  // 텍스트 입력 중이면 무시
   const tag = e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return;
-  // 수정자 키(Ctrl/Alt/Meta)와 조합 시 무시
   if (e.ctrlKey || e.altKey || e.metaKey) return;
 
   switch (e.key.toLowerCase()) {
-    case 'f':
-      e.preventDefault();
-      forwardSelected(false);
-      break;
-    case 'g':
-      e.preventDefault();
-      forwardSelected(true);
-      break;
-    case 'd':
-      e.preventDefault();
-      dropSelected();
-      break;
-    case 'r':
-      e.preventDefault();
-      mockResponseSelected();
-      break;
-    case 'a':
-      e.preventDefault();
-      forwardAll();
-      break;
-    case 'q':
-      e.preventDefault();
-      dropAll();
-      break;
+    case 'f': e.preventDefault(); forwardSelected(false); break;
+    case 'g': e.preventDefault(); forwardSelected(true); break;
+    case 'd': e.preventDefault(); dropSelected(); break;
+    case 'r': e.preventDefault(); if (activeSide === 'req') mockResponseSelected(); break;
+    case 'a': e.preventDefault(); forwardAll(); break;
+    case 'q': e.preventDefault(); dropAll(); break;
   }
 });
 
@@ -1446,17 +1447,13 @@ function pollInterceptQueue() {
             url: item.url,
             headers: item.headers || {},
             postData: item.body || '',
-            stage: 'request',
-            responseStatus: 200,
-            responseHeaders: [],
-            responseBody: '',
           };
-          interceptQueue.push(legacyItem);
-          if (!selectedInterceptId) {
-            selectedInterceptId = legacyItem.id;
-            showInterceptEditor(legacyItem);
+          reqQueue.push(legacyItem);
+          if (!selectedReqId) {
+            selectedReqId = legacyItem.id;
+            showReqEditor(legacyItem);
           }
-          renderInterceptQueue();
+          renderReqQueue();
         });
       } catch {}
     }
@@ -1475,74 +1472,100 @@ function sendInterceptDecision(id, decision) {
   }
 }
 
-function renderInterceptQueue() {
-  icptQueueBadge.textContent = interceptQueue.length + ' paused';
-  icptQueueEl.innerHTML = interceptQueue.map((item, i) => {
-    const selected = item.id === selectedInterceptId ? 'selected' : '';
+// ---- Queue 렌더링 ----
+function updateBadges() {
+  reqBadge.textContent = reqQueue.length;
+  respBadge.textContent = respQueue.length;
+  icptQueueBadge.textContent = (reqQueue.length + respQueue.length) + ' paused';
+}
+
+function renderQueueItems(queue, el, selectedId, side) {
+  el.innerHTML = queue.map((item, i) => {
+    const selected = item.id === selectedId ? 'selected' : '';
     let shortUrl;
     try { shortUrl = new URL(item.url).pathname + new URL(item.url).search; } catch { shortUrl = item.url; }
-    const tl = item.stage === 'response' ? 'RESP' : (item.reqType || 'fetch').toUpperCase().slice(0, 4);
-    const tc = (item.stage === 'response' || item.reqType === 'navigation' || item.reqType === 'location' || item.reqType === 'form') ? 'icpt-stage-resp' : 'icpt-stage-req';
-    return `<div class="icpt-queue-item ${selected}" data-icpt-idx="${i}">
+    return `<div class="icpt-queue-item ${selected}" data-icpt-idx="${i}" data-side="${side}">
       <span class="q-idx">#${i + 1}</span>
-      <span class="q-stage ${tc}">${tl}</span>
       <span class="q-method">${escapeHtml(item.method)}</span>
       <span class="q-url" title="${escapeHtml(item.url)}">${escapeHtml(shortUrl)}</span>
     </div>`;
   }).join('');
 
-  icptQueueEl.querySelectorAll('.icpt-queue-item').forEach(el => {
-    el.addEventListener('click', () => {
-      const idx = parseInt(el.dataset.icptIdx);
-      const item = interceptQueue[idx];
-      if (!item) return;
-      selectedInterceptId = item.id;
-      renderInterceptQueue();
-      showInterceptEditor(item);
+  el.querySelectorAll('.icpt-queue-item').forEach(el2 => {
+    el2.addEventListener('click', () => {
+      const idx = parseInt(el2.dataset.icptIdx);
+      if (side === 'req') {
+        const item = reqQueue[idx];
+        if (!item) return;
+        selectedReqId = item.id;
+        activeSide = 'req';
+        showReqEditor(item);
+        renderReqQueue();
+      } else {
+        const item = respQueue[idx];
+        if (!item) return;
+        selectedRespId = item.id;
+        activeSide = 'resp';
+        showRespEditor(item);
+        renderRespQueue();
+      }
+      document.querySelectorAll('.icpt-side').forEach(s => s.classList.remove('active-side'));
+      document.querySelector(`.icpt-${side}-side`).classList.add('active-side');
     });
   });
 }
 
-function showInterceptEditor(item) {
-  icptEditorPlaceholder.style.display = 'none';
-  icptEditorContent.classList.remove('hidden');
-  populateInterceptEditor(item);
+function renderReqQueue() {
+  updateBadges();
+  renderQueueItems(reqQueue, reqQueueEl, selectedReqId, 'req');
 }
 
-function populateInterceptEditor(item) {
-  const methodSel = document.getElementById('icpt-edit-method');
+function renderRespQueue() {
+  updateBadges();
+  renderQueueItems(respQueue, respQueueEl, selectedRespId, 'resp');
+}
+
+// ---- Editor 표시 ----
+function showReqEditor(item) {
+  reqPlaceholder.style.display = 'none';
+  reqEditorContent.classList.remove('hidden');
+  const methodSel = document.getElementById('icpt-req-edit-method');
   methodSel.innerHTML = ['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS']
     .map(m => `<option ${m === item.method ? 'selected' : ''}>${m}</option>`).join('');
-  document.getElementById('icpt-edit-url').value = item.url;
-
-  const stageEl = document.getElementById('icpt-edit-stage');
-  const typeLabel = item.stage === 'response' ? 'RESPONSE' : (item.reqType || 'fetch').toUpperCase();
-  stageEl.textContent = typeLabel;
-  stageEl.className = 'icpt-stage-badge ' + (item.stage === 'response' ? 'icpt-stage-resp' : (item.reqType === 'navigation' || item.reqType === 'location' || item.reqType === 'form') ? 'icpt-stage-resp' : 'icpt-stage-req');
-
-  const headersList = document.getElementById('icpt-headers-list');
+  document.getElementById('icpt-req-edit-url').value = item.url;
+  const headersList = document.getElementById('icpt-req-headers-list');
   headersList.innerHTML = '';
-  Object.entries(item.headers).forEach(([k, v]) => addIcptKvRow('icpt-headers-list', k, Array.isArray(v) ? v.join(', ') : v));
-
-  document.getElementById('icpt-edit-body').value = item.postData || '';
-  document.getElementById('icpt-edit-resp-status').value = item.responseStatus;
-  const respHeadersList = document.getElementById('icpt-resp-headers-list');
-  respHeadersList.innerHTML = '';
-  if (item.stage === 'response' && item.responseHeaders && typeof item.responseHeaders === 'object') {
-    Object.entries(item.responseHeaders).forEach(([k, v]) => addIcptKvRow('icpt-resp-headers-list', k, Array.isArray(v) ? v.join(', ') : v));
-  }
-  document.getElementById('icpt-edit-resp-body').value = item.responseBody || '';
-
-  // Response 항목이면 Response 탭으로 자동 전환
-  if (item.stage === 'response') {
-    document.querySelectorAll('.icpt-ed-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.icpt-ed-pane').forEach(p => p.classList.remove('active'));
-    const respTab = document.querySelector('.icpt-ed-tab[data-ictab="response"]');
-    if (respTab) respTab.classList.add('active');
-    document.getElementById('icpt-tab-response').classList.add('active');
-  }
+  Object.entries(item.headers).forEach(([k, v]) => addIcptKvRow('icpt-req-headers-list', k, Array.isArray(v) ? v.join(', ') : v));
+  document.getElementById('icpt-req-edit-body').value = item.postData || '';
 }
 
+function showRespEditor(item) {
+  respPlaceholder.style.display = 'none';
+  respEditorContent.classList.remove('hidden');
+  document.getElementById('icpt-resp-edit-method').textContent = item.method || '';
+  document.getElementById('icpt-resp-edit-url').value = item.url;
+  document.getElementById('icpt-resp-edit-status').value = item.statusCode || 200;
+  const headersList = document.getElementById('icpt-resp-headers-list');
+  headersList.innerHTML = '';
+  if (item.headers && typeof item.headers === 'object') {
+    Object.entries(item.headers).forEach(([k, v]) => addIcptKvRow('icpt-resp-headers-list', k, Array.isArray(v) ? v.join(', ') : v));
+  }
+  document.getElementById('icpt-resp-edit-body').value = item.body || '';
+}
+
+function hideReqEditor() {
+  selectedReqId = null;
+  reqEditorContent.classList.add('hidden');
+  reqPlaceholder.style.display = '';
+}
+
+function hideRespEditor() {
+  selectedRespId = null;
+  respEditorContent.classList.add('hidden');
+  respPlaceholder.style.display = '';
+}
+
+// ---- KV 헬퍼 (공유) ----
 function addIcptKvRow(listId, name, value) {
   const list = document.getElementById(listId);
   const row = document.createElement('div');
@@ -1570,127 +1593,126 @@ function getIcptKvEntries(listId) {
   return entries;
 }
 
-function getSelectedItem() {
-  return interceptQueue.find(q => q.id === selectedInterceptId);
-}
-
-function removeFromQueue(id) {
-  const idx = interceptQueue.findIndex(q => q.id === id);
-  if (idx >= 0) interceptQueue.splice(idx, 1);
-  if (selectedInterceptId === id) {
-    // 자동으로 다음(또는 이전) 항목 선택
-    autoSelectQueueItem();
+// ---- 큐 조작 ----
+function removeFromReqQueue(id) {
+  const idx = reqQueue.findIndex(q => q.id === id);
+  if (idx >= 0) reqQueue.splice(idx, 1);
+  if (selectedReqId === id) {
+    if (reqQueue.length > 0) { selectedReqId = reqQueue[0].id; showReqEditor(reqQueue[0]); }
+    else hideReqEditor();
   }
-  renderInterceptQueue();
+  renderReqQueue();
 }
 
-function autoSelectQueueItem() {
-  if (interceptQueue.length > 0) {
-    const next = interceptQueue[0];
-    selectedInterceptId = next.id;
-    showInterceptEditor(next);
-  } else {
-    selectedInterceptId = null;
-    icptEditorContent.classList.add('hidden');
-    icptEditorPlaceholder.style.display = '';
+function removeFromRespQueue(id) {
+  const idx = respQueue.findIndex(q => q.id === id);
+  if (idx >= 0) respQueue.splice(idx, 1);
+  if (selectedRespId === id) {
+    if (respQueue.length > 0) { selectedRespId = respQueue[0].id; showRespEditor(respQueue[0]); }
+    else hideRespEditor();
   }
+  renderRespQueue();
 }
 
+// ---- 액션 (activeSide 기반) ----
 function forwardSelected(modified) {
-  const item = getSelectedItem();
-  if (!item) return;
-  const stage = item.stage || 'request';
-
-  if (modified) {
-    if (stage === 'response') {
-      // 응답 수정 후 전달
-      const respStatus = parseInt(document.getElementById('icpt-edit-resp-status').value) || 200;
+  if (activeSide === 'req') {
+    const item = reqQueue.find(q => q.id === selectedReqId);
+    if (!item) return;
+    if (modified) {
+      const newMethod = document.getElementById('icpt-req-edit-method').value;
+      const newUrl = document.getElementById('icpt-req-edit-url').value;
+      const headers = {};
+      getIcptKvEntries('icpt-req-headers-list').forEach(h => { headers[h.name] = h.value; });
+      const body = document.getElementById('icpt-req-edit-body').value;
+      sendInterceptDecision(item.id, { action: 'forward_modified', method: newMethod, url: newUrl, headers, body });
+      addInterceptLog('modified', newMethod, newUrl, 'req', item.id);
+    } else {
+      sendInterceptDecision(item.id, { action: 'forward' });
+      addInterceptLog('forwarded', item.method, item.url, 'req', item.id);
+    }
+    removeFromReqQueue(item.id);
+  } else {
+    const item = respQueue.find(q => q.id === selectedRespId);
+    if (!item) return;
+    if (modified) {
+      const respStatus = parseInt(document.getElementById('icpt-resp-edit-status').value) || 200;
       const respHeaders = {};
       getIcptKvEntries('icpt-resp-headers-list').forEach(h => { respHeaders[h.name] = h.value; });
-      const respBody = document.getElementById('icpt-edit-resp-body').value;
-      sendInterceptDecision(item.id, {
-        action: 'forward_modified',
-        responseStatus: respStatus,
-        headers: respHeaders,
-        body: respBody
-      });
+      const respBody = document.getElementById('icpt-resp-edit-body').value;
+      sendInterceptDecision(item.id, { action: 'forward_modified', responseStatus: respStatus, headers: respHeaders, body: respBody });
       addInterceptLog('modified', respStatus + '', item.url, 'resp', item.id);
     } else {
-      const newMethod = document.getElementById('icpt-edit-method').value;
-      const newUrl = document.getElementById('icpt-edit-url').value;
-      const headers = {};
-      getIcptKvEntries('icpt-headers-list').forEach(h => { headers[h.name] = h.value; });
-      const body = document.getElementById('icpt-edit-body').value;
-      sendInterceptDecision(item.id, {
-        action: 'forward_modified',
-        method: newMethod,
-        url: newUrl,
-        headers: headers,
-        body: body
-      });
-      addInterceptLog('modified', newMethod, newUrl, 'req', item.id);
+      sendInterceptDecision(item.id, { action: 'forward' });
+      addInterceptLog('forwarded', item.method || (item.statusCode + ''), item.url, 'resp', item.id);
     }
-  } else {
-    sendInterceptDecision(item.id, { action: 'forward' });
-    addInterceptLog('forwarded', item.method || (item.responseStatus + ''), item.url, stage, item.id);
+    removeFromRespQueue(item.id);
   }
-  removeFromQueue(item.id);
 }
 
 function dropSelected() {
-  const item = getSelectedItem();
-  if (!item) return;
-  sendInterceptDecision(item.id, { action: 'drop' });
-  addInterceptLog('dropped', item.method, item.url, 'req');
-  removeFromQueue(item.id);
+  if (activeSide === 'req') {
+    const item = reqQueue.find(q => q.id === selectedReqId);
+    if (!item) return;
+    sendInterceptDecision(item.id, { action: 'drop' });
+    addInterceptLog('dropped', item.method, item.url, 'req');
+    removeFromReqQueue(item.id);
+  } else {
+    const item = respQueue.find(q => q.id === selectedRespId);
+    if (!item) return;
+    sendInterceptDecision(item.id, { action: 'drop' });
+    addInterceptLog('dropped', item.method, item.url, 'resp');
+    removeFromRespQueue(item.id);
+  }
 }
 
 function mockResponseSelected() {
-  const item = getSelectedItem();
+  const item = reqQueue.find(q => q.id === selectedReqId);
   if (!item) return;
-  const status = parseInt(document.getElementById('icpt-edit-resp-status').value) || 200;
-  const headers = getIcptKvEntries('icpt-resp-headers-list');
-  const body = document.getElementById('icpt-edit-resp-body').value;
-
-  if (!headers.some(h => h.name.toLowerCase() === 'content-type')) {
-    try { JSON.parse(body); headers.push({ name: 'Content-Type', value: 'application/json' }); }
-    catch { headers.push({ name: 'Content-Type', value: 'text/plain' }); }
-  }
-
+  // Mock Response용 body — Request 사이드에는 Response 편집 영역이 없으므로 빈 body로 처리
+  // 사용자가 원하는 mock 응답은 별도 입력 필요 → 기존 동작 유지를 위해 기본값
   sendInterceptDecision(item.id, {
     action: 'mock',
-    responseStatus: status,
-    responseHeaders: headers,
-    responseBody: body
+    responseStatus: 200,
+    responseHeaders: [{ name: 'Content-Type', value: 'text/plain' }],
+    responseBody: ''
   });
   addInterceptLog('mocked', item.method, item.url, 'req');
-  removeFromQueue(item.id);
+  removeFromReqQueue(item.id);
 }
 
 function forwardAll() {
-  while (interceptQueue.length > 0) {
-    const item = interceptQueue[0];
+  while (reqQueue.length > 0) {
+    const item = reqQueue.shift();
     sendInterceptDecision(item.id, { action: 'forward' });
-    addInterceptLog('forwarded', item.method || (item.responseStatus + ''), item.url, item.stage || 'req', item.id);
-    interceptQueue.shift();
+    addInterceptLog('forwarded', item.method, item.url, 'req', item.id);
   }
-  selectedInterceptId = null;
-  icptEditorContent.classList.add('hidden');
-  icptEditorPlaceholder.style.display = '';
-  renderInterceptQueue();
+  while (respQueue.length > 0) {
+    const item = respQueue.shift();
+    sendInterceptDecision(item.id, { action: 'forward' });
+    addInterceptLog('forwarded', item.method || (item.statusCode + ''), item.url, 'resp', item.id);
+  }
+  hideReqEditor();
+  hideRespEditor();
+  renderReqQueue();
+  renderRespQueue();
 }
 
 function dropAll() {
-  while (interceptQueue.length > 0) {
-    const item = interceptQueue[0];
+  while (reqQueue.length > 0) {
+    const item = reqQueue.shift();
     sendInterceptDecision(item.id, { action: 'drop' });
-    addInterceptLog('dropped', item.method || (item.responseStatus + ''), item.url, item.stage || 'req');
-    interceptQueue.shift();
+    addInterceptLog('dropped', item.method, item.url, 'req');
   }
-  selectedInterceptId = null;
-  icptEditorContent.classList.add('hidden');
-  icptEditorPlaceholder.style.display = '';
-  renderInterceptQueue();
+  while (respQueue.length > 0) {
+    const item = respQueue.shift();
+    sendInterceptDecision(item.id, { action: 'drop' });
+    addInterceptLog('dropped', item.method, item.url, 'resp');
+  }
+  hideReqEditor();
+  hideRespEditor();
+  renderReqQueue();
+  renderRespQueue();
 }
 
 // 응답 캡처 히스토리 (id → response)
@@ -1752,21 +1774,14 @@ icptLogEl.addEventListener('click', (e) => {
 });
 
 function showCapturedResponse(resp) {
-  // Response 탭으로 전환하여 캡처된 응답 표시
-  document.querySelectorAll('.icpt-ed-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.icpt-ed-pane').forEach(p => p.classList.remove('active'));
-  const respTab = document.querySelector('.icpt-ed-tab[data-ictab="response"]');
-  if (respTab) respTab.classList.add('active');
-  document.getElementById('icpt-tab-response').classList.add('active');
+  // Response 사이드 에디터에 캡처된 응답 표시
+  respPlaceholder.style.display = 'none';
+  respEditorContent.classList.remove('hidden');
 
-  // 에디터 영역 표시
-  icptEditorContent.classList.remove('hidden');
-  icptEditorPlaceholder.style.display = 'none';
+  document.getElementById('icpt-resp-edit-method').textContent = '';
+  document.getElementById('icpt-resp-edit-url').value = '';
+  document.getElementById('icpt-resp-edit-status').value = resp.statusCode || 200;
 
-  // Status
-  document.getElementById('icpt-edit-resp-status').value = resp.statusCode || 200;
-
-  // Headers
   const headersList = document.getElementById('icpt-resp-headers-list');
   headersList.innerHTML = '';
   if (resp.headers && typeof resp.headers === 'object') {
@@ -1775,8 +1790,7 @@ function showCapturedResponse(resp) {
     });
   }
 
-  // Body
-  const bodyEl = document.getElementById('icpt-edit-resp-body');
+  const bodyEl = document.getElementById('icpt-resp-edit-body');
   let body = resp.body || '';
   try {
     const parsed = JSON.parse(body);

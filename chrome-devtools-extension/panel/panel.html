@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>DevTools++</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>DevTools++</h1>
+      <div class="tabs">
+        <button class="tab active" data-tab="network">Network</button>
+        <button class="tab intercept-tab" data-tab="intercept">Intercept</button>
+        <button class="tab" data-tab="dom">DOM</button>
+        <button class="tab" data-tab="console">Console</button>
+        <button class="tab" data-tab="performance">Performance</button>
+        <button class="tab" data-tab="storage">Storage</button>
+      </div>
+    </header>
+
+    <!-- Network 탭 -->
+    <section id="network" class="tab-content active">
+      <div class="toolbar">
+        <button id="network-start" class="btn btn-primary">Start Monitoring</button>
+        <button id="network-stop" class="btn btn-danger" disabled>Stop</button>
+        <button id="network-clear" class="btn">Clear</button>
+        <span id="network-count" class="badge">0 requests</span>
+        <input type="text" id="network-filter" placeholder="URL filter..." class="filter-input">
+      </div>
+      <div class="network-split">
+        <div class="table-wrapper" id="network-list-pane">
+          <table id="network-table">
+            <thead>
+              <tr>
+                <th>Method</th>
+                <th>URL</th>
+                <th>Status</th>
+                <th>Type</th>
+                <th>Size</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div id="network-detail" class="network-detail hidden">
+          <div class="detail-header">
+            <div class="detail-tabs">
+              <button class="detail-tab active" data-detail="headers">Headers</button>
+              <button class="detail-tab" data-detail="payload">Payload</button>
+              <button class="detail-tab" data-detail="response">Response</button>
+              <button class="detail-tab" data-detail="preview">Preview</button>
+              <button class="detail-tab replay-tab" data-detail="replay">Replay</button>
+            </div>
+            <button id="detail-close" class="btn detail-close-btn">X</button>
+          </div>
+          <div id="detail-headers" class="detail-content active">
+            <div id="detail-general" class="detail-section"></div>
+            <div id="detail-response-headers" class="detail-section"></div>
+            <div id="detail-request-headers" class="detail-section"></div>
+          </div>
+          <div id="detail-payload" class="detail-content">
+            <div id="detail-query-params" class="detail-section"></div>
+            <div id="detail-request-body" class="detail-section"></div>
+          </div>
+          <div id="detail-response" class="detail-content">
+            <div id="detail-response-body" class="detail-section"></div>
+          </div>
+          <div id="detail-preview" class="detail-content">
+            <div id="detail-preview-body" class="detail-section"></div>
+          </div>
+          <!-- Replay & Tamper 탭 -->
+          <div id="detail-replay" class="detail-content">
+            <div class="replay-container">
+              <!-- Request Composer -->
+              <div class="replay-composer">
+                <div class="replay-url-bar">
+                  <select id="replay-method">
+                    <option>GET</option>
+                    <option>POST</option>
+                    <option>PUT</option>
+                    <option>PATCH</option>
+                    <option>DELETE</option>
+                    <option>HEAD</option>
+                    <option>OPTIONS</option>
+                  </select>
+                  <input type="text" id="replay-url" class="filter-input replay-url-input" placeholder="Request URL">
+                  <button id="replay-send" class="btn btn-primary btn-send">Send</button>
+                  <button id="replay-quick" class="btn btn-quick" title="Replay original request as-is">Replay</button>
+                </div>
+
+                <div class="replay-sections">
+                  <!-- Headers 편집 -->
+                  <div class="replay-section">
+                    <div class="replay-section-title" data-toggle="replay-headers-body">
+                      <span class="arrow">&#9660;</span>
+                      Headers
+                      <button class="btn btn-xs" id="replay-add-header">+ Add</button>
+                    </div>
+                    <div class="replay-section-body" id="replay-headers-body">
+                      <div id="replay-headers-list" class="replay-kv-list"></div>
+                    </div>
+                  </div>
+
+                  <!-- Query Params 편집 -->
+                  <div class="replay-section">
+                    <div class="replay-section-title" data-toggle="replay-params-body">
+                      <span class="arrow">&#9660;</span>
+                      Query Parameters
+                      <button class="btn btn-xs" id="replay-add-param">+ Add</button>
+                    </div>
+                    <div class="replay-section-body" id="replay-params-body">
+                      <div id="replay-params-list" class="replay-kv-list"></div>
+                    </div>
+                  </div>
+
+                  <!-- Body 편집 -->
+                  <div class="replay-section">
+                    <div class="replay-section-title" data-toggle="replay-body-section">
+                      <span class="arrow">&#9660;</span>
+                      Request Body
+                      <select id="replay-body-type" class="replay-body-type-select" onclick="event.stopPropagation()">
+                        <option value="none">None</option>
+                        <option value="json">JSON</option>
+                        <option value="form">Form URL-Encoded</option>
+                        <option value="raw">Raw Text</option>
+                      </select>
+                      <button class="btn btn-xs" id="replay-format-body" title="Format JSON">Format</button>
+                    </div>
+                    <div class="replay-section-body" id="replay-body-section">
+                      <textarea id="replay-body" class="replay-body-editor" placeholder="Request body..." spellcheck="false"></textarea>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Replay 결과 -->
+              <div class="replay-response" id="replay-response">
+                <div class="replay-response-header">
+                  <span class="replay-response-title">Response</span>
+                  <span id="replay-status" class="replay-status"></span>
+                  <span id="replay-timing" class="replay-timing"></span>
+                  <span id="replay-resp-size" class="replay-timing"></span>
+                  <div class="replay-response-tabs">
+                    <button class="replay-resp-tab active" data-rtab="body">Body</button>
+                    <button class="replay-resp-tab" data-rtab="headers">Headers</button>
+                  </div>
+                </div>
+                <div id="replay-resp-body-pane" class="replay-resp-pane active">
+                  <div id="replay-resp-body" class="response-body-content">
+                    <span style="color:#999">Send a request to see the response.</span>
+                  </div>
+                </div>
+                <div id="replay-resp-headers-pane" class="replay-resp-pane">
+                  <div id="replay-resp-headers"></div>
+                </div>
+              </div>
+
+              <!-- Replay 히스토리 -->
+              <div class="replay-history" id="replay-history">
+                <div class="replay-section-title" data-toggle="replay-history-body">
+                  <span class="arrow">&#9660;</span>
+                  History
+                  <button class="btn btn-xs" id="replay-clear-history">Clear</button>
+                </div>
+                <div class="replay-section-body" id="replay-history-body">
+                  <div id="replay-history-list"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Intercept 탭 -->
+    <section id="intercept" class="tab-content">
+      <!-- 상단: 컨트롤 바 -->
+      <div class="toolbar icpt-toolbar">
+        <select id="icpt-mode-select" title="Select intercept mode" style="padding:2px 6px;background:#fff;color:#333;border:1px solid #c4c4c4;border-radius:4px;font-size:12px">
+          <option value="proxy">Proxy Mode</option>
+          <option value="legacy">In-Page Mode (legacy)</option>
+        </select>
+        <button id="icpt-toggle" class="btn btn-intercept-off">Intercept OFF</button>
+        <span id="icpt-proxy-status" style="display:none;font-size:12px;padding:2px 8px;border-radius:4px;background:#f3f3f3;color:#666;border:1px solid #d4d4d4">Proxy: Idle</span>
+        <div class="icpt-scope-group">
+          <label class="icpt-check"><input type="checkbox" id="icpt-req" checked> Request</label>
+          <label class="icpt-check"><input type="checkbox" id="icpt-resp"> Response</label>
+        </div>
+        <input type="text" id="icpt-url-filter" class="filter-input" placeholder="URL filter (*.site.com, api.example.com/v1/*, ...)" style="flex:1">
+        <select id="icpt-method-filter">
+          <option value="">All Methods</option>
+          <option value="GET">GET</option>
+          <option value="POST">POST</option>
+          <option value="PUT">PUT</option>
+          <option value="PATCH">PATCH</option>
+          <option value="DELETE">DELETE</option>
+        </select>
+        <button id="icpt-forward-all" class="btn" title="Forward all paused requests">Forward All</button>
+        <button id="icpt-drop-all" class="btn btn-danger" title="Drop all paused requests">Drop All</button>
+      </div>
+
+      <!-- Breakpoint 룰 -->
+      <div class="toolbar icpt-rules-bar">
+        <span style="color:#666;font-size:12px">Auto-forward:</span>
+        <div class="icpt-ext-filters">
+          <label class="icpt-ext-check"><input type="checkbox" data-ext="css" checked> css</label>
+          <label class="icpt-ext-check"><input type="checkbox" data-ext="js" checked> js</label>
+          <label class="icpt-ext-check"><input type="checkbox" data-ext="png" checked> png</label>
+          <label class="icpt-ext-check"><input type="checkbox" data-ext="jpg" checked> jpg</label>
+          <label class="icpt-ext-check"><input type="checkbox" data-ext="gif" checked> gif</label>
+          <label class="icpt-ext-check"><input type="checkbox" data-ext="svg" checked> svg</label>
+          <label class="icpt-ext-check"><input type="checkbox" data-ext="woff" checked> woff</label>
+          <label class="icpt-ext-check"><input type="checkbox" data-ext="ico" checked> ico</label>
+        </div>
+        <span style="color:#555;font-size:12px;margin-left:4px">+</span>
+        <input type="text" id="icpt-bypass-input" class="filter-input" placeholder="추가 bypass regex..." style="flex:1">
+        <button id="icpt-bypass-apply" class="btn btn-xs">Apply</button>
+        <span id="icpt-queue-badge" class="badge">0 paused</span>
+      </div>
+      <!-- 단축키 안내 -->
+      <div class="toolbar icpt-shortcut-bar">
+        <span style="color:#555;font-size:11px">단축키: <kbd>F</kbd> Forward · <kbd>G</kbd> Forward Modified · <kbd>D</kbd> Drop · <kbd>R</kbd> Mock Response · <kbd>A</kbd> Forward All · <kbd>Q</kbd> Drop All</span>
+      </div>
+
+      <!-- 메인: 큐 + 편집기 분할 -->
+      <div class="icpt-split">
+        <!-- 좌: 대기열 -->
+        <div class="icpt-queue-pane">
+          <div class="icpt-queue-header">
+            <span>Paused Requests</span>
+          </div>
+          <div id="icpt-queue" class="icpt-queue-list"></div>
+          <!-- 로그 (통과/드롭된 항목) -->
+          <div class="icpt-log-header">
+            <span>Log</span>
+            <button id="icpt-clear-log" class="btn btn-xs">Clear</button>
+          </div>
+          <div id="icpt-log" class="icpt-log-list"></div>
+        </div>
+
+        <!-- 우: 편집기 -->
+        <div class="icpt-editor-pane" id="icpt-editor">
+          <div class="icpt-editor-placeholder">
+            <p style="color:#999">Select a paused request to inspect and modify.</p>
+          </div>
+
+          <div class="icpt-editor-content hidden" id="icpt-editor-content">
+            <!-- 요청 상단 -->
+            <div class="icpt-editor-topbar">
+              <select id="icpt-edit-method"></select>
+              <input type="text" id="icpt-edit-url" class="filter-input" style="flex:1">
+              <span id="icpt-edit-stage" class="icpt-stage-badge">REQUEST</span>
+            </div>
+
+            <!-- 편집 탭 -->
+            <div class="icpt-editor-tabs">
+              <button class="icpt-ed-tab active" data-ictab="headers">Headers</button>
+              <button class="icpt-ed-tab" data-ictab="body">Body</button>
+              <button class="icpt-ed-tab" data-ictab="response">Response</button>
+            </div>
+
+            <!-- Headers 편집 -->
+            <div id="icpt-tab-headers" class="icpt-ed-pane active">
+              <div class="icpt-kv-toolbar">
+                <button id="icpt-add-header" class="btn btn-xs">+ Add Header</button>
+              </div>
+              <div id="icpt-headers-list" class="replay-kv-list"></div>
+            </div>
+
+            <!-- Body 편집 -->
+            <div id="icpt-tab-body" class="icpt-ed-pane">
+              <textarea id="icpt-edit-body" class="replay-body-editor" style="min-height:120px;max-height:none;flex:1" spellcheck="false" placeholder="Request body..."></textarea>
+            </div>
+
+            <!-- Response 편집 (response 단계에서만) -->
+            <div id="icpt-tab-response" class="icpt-ed-pane">
+              <div class="icpt-resp-edit-bar">
+                <label style="color:#666;font-size:12px">Status:</label>
+                <input type="number" id="icpt-edit-resp-status" class="filter-input" style="width:80px;min-width:0" value="200">
+                <button id="icpt-add-resp-header" class="btn btn-xs">+ Add Header</button>
+              </div>
+              <div id="icpt-resp-headers-list" class="replay-kv-list"></div>
+              <textarea id="icpt-edit-resp-body" class="replay-body-editor" style="min-height:120px;max-height:none;flex:1" spellcheck="false" placeholder="Response body..."></textarea>
+            </div>
+
+            <!-- 액션 버튼 -->
+            <div class="icpt-actions">
+              <button id="icpt-forward" class="btn btn-primary icpt-act-btn">Forward</button>
+              <button id="icpt-forward-modified" class="btn btn-warning icpt-act-btn">Forward (Modified)</button>
+              <button id="icpt-drop" class="btn btn-danger icpt-act-btn">Drop</button>
+              <button id="icpt-mock-response" class="btn btn-mock icpt-act-btn">Mock Response</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- DOM 탭 -->
+    <section id="dom" class="tab-content">
+      <div class="toolbar">
+        <button id="dom-inspect" class="btn btn-primary">Get DOM Tree</button>
+        <button id="dom-query" class="btn">Query Selector</button>
+        <input type="text" id="dom-selector" placeholder="CSS selector (e.g. .class, #id)" class="filter-input">
+        <button id="dom-highlight" class="btn">Highlight</button>
+      </div>
+      <div id="dom-tree" class="code-block"></div>
+      <div id="dom-info" class="info-panel"></div>
+    </section>
+
+    <!-- Console 탭 -->
+    <section id="console" class="tab-content">
+      <div class="toolbar">
+        <button id="console-start" class="btn btn-primary">Start Capture</button>
+        <button id="console-stop" class="btn btn-danger" disabled>Stop</button>
+        <button id="console-clear" class="btn">Clear</button>
+        <select id="console-level-filter">
+          <option value="all">All Levels</option>
+          <option value="log">Log</option>
+          <option value="warning">Warning</option>
+          <option value="error">Error</option>
+          <option value="info">Info</option>
+        </select>
+      </div>
+      <div class="toolbar">
+        <input type="text" id="console-input" placeholder="Execute JavaScript expression..." class="filter-input" style="flex:1">
+        <button id="console-execute" class="btn btn-primary">Execute</button>
+      </div>
+      <div id="console-output" class="console-output"></div>
+    </section>
+
+    <!-- Performance 탭 -->
+    <section id="performance" class="tab-content">
+      <div class="toolbar">
+        <button id="perf-collect" class="btn btn-primary">Collect Metrics</button>
+        <button id="perf-refresh" class="btn">Refresh</button>
+      </div>
+      <div id="perf-metrics" class="metrics-grid"></div>
+    </section>
+
+    <!-- Storage 탭 -->
+    <section id="storage" class="tab-content">
+      <div class="toolbar">
+        <button id="storage-load" class="btn btn-primary">Load Storage</button>
+        <select id="storage-type">
+          <option value="localStorage">Local Storage</option>
+          <option value="sessionStorage">Session Storage</option>
+          <option value="cookies">Cookies</option>
+        </select>
+      </div>
+      <div class="table-wrapper">
+        <table id="storage-table">
+          <thead>
+            <tr>
+              <th>Key</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script src="panel.js"></script>
+</body>
+</html>

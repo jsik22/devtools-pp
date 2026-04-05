@@ -1,0 +1,10 @@
+{
+  "name": "devtools-pp-native-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DevTools++ Native Messaging MITM Proxy",
+  "main": "native-messaging-host.js",
+  "dependencies": {
+    "node-forge": "^1.3.1"
+  }
+}

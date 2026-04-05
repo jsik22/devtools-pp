@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>DevTools++ Proxy Setup</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      background: #fff;
+      color: #000;
+      line-height: 1.6;
+      padding: 32px;
+      max-width: 780px;
+      margin: 0 auto;
+    }
+    h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+    .subtitle { color: #666; font-size: 14px; margin-bottom: 24px; }
+    h2 { font-size: 16px; font-weight: 600; margin: 24px 0 8px; }
+
+    .status-bar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 16px; border-radius: 6px; margin-bottom: 24px;
+      font-weight: 600; font-size: 13px;
+    }
+    .status-bar.checking  { background: #f3f3f3; color: #666; }
+    .status-bar.connected { background: #e6f4ea; color: #0b7a3e; }
+    .status-bar.not-connected { background: #fef2f2; color: #d32f2f; }
+    .status-dot {
+      width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+    }
+    .checking .status-dot  { background: #999; }
+    .connected .status-dot { background: #0b7a3e; }
+    .not-connected .status-dot { background: #d32f2f; }
+
+    .info-row {
+      display: flex; gap: 8px; align-items: center;
+      padding: 6px 0; font-size: 13px;
+    }
+    .info-label { color: #666; min-width: 120px; }
+    .info-value { font-family: 'SF Mono', Consolas, monospace; font-size: 12px; color: #000; }
+
+    .platform-selector {
+      display: flex; gap: 8px; margin-bottom: 20px;
+    }
+    .platform-btn {
+      padding: 8px 20px; border: 2px solid #d4d4d4; border-radius: 6px;
+      background: #fff; color: #333; font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .platform-btn:hover { border-color: #0078d4; }
+    .platform-btn.active { border-color: #0078d4; background: #e8f0fe; color: #0078d4; }
+
+    .step {
+      padding: 16px; margin-bottom: 12px;
+      border: 1px solid #e8e8e8; border-radius: 8px; background: #fafafa;
+    }
+    .step-header {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+    }
+    .step-num {
+      width: 26px; height: 26px; border-radius: 50%;
+      background: #0078d4; color: #fff; font-size: 12px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .step-title { font-weight: 600; font-size: 14px; }
+    .step-desc { color: #444; font-size: 13px; margin-left: 36px; }
+
+    .code-block {
+      position: relative;
+      background: #1e1e1e; color: #d4d4d4; padding: 14px 16px;
+      border-radius: 6px; font-family: 'SF Mono', Consolas, monospace;
+      font-size: 12px; line-height: 1.6; margin: 10px 0 6px 36px;
+      white-space: pre-wrap; word-break: break-all;
+      overflow-x: auto;
+    }
+    .copy-btn {
+      position: absolute; top: 6px; right: 6px;
+      background: #333; border: none; color: #ccc; padding: 3px 10px;
+      border-radius: 3px; font-size: 11px; cursor: pointer;
+    }
+    .copy-btn:hover { background: #555; }
+    .copy-btn.copied { background: #0b7a3e; color: #fff; }
+
+    .btn {
+      padding: 8px 20px; border-radius: 6px; font-size: 13px; font-weight: 600;
+      cursor: pointer; border: none; transition: background 0.15s;
+    }
+    .btn-primary { background: #0078d4; color: #fff; }
+    .btn-primary:hover { background: #106ebe; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-secondary { background: #e8e8e8; color: #333; border: 1px solid #c4c4c4; }
+    .btn-secondary:hover { background: #d4d4d4; }
+
+    .btn-row { display: flex; gap: 8px; margin: 16px 0 0 36px; }
+
+    .note {
+      margin: 10px 0 0 36px; padding: 10px 14px;
+      background: #fff8e1; border-left: 3px solid #f9a825;
+      font-size: 12px; color: #664d03; border-radius: 0 4px 4px 0;
+    }
+
+    .hidden { display: none; }
+    .section { margin-bottom: 32px; }
+  </style>
+</head>
+<body>
+  <h1>DevTools++ Proxy Mode Setup</h1>
+  <p class="subtitle">One-time setup to enable full HTTP/HTTPS request interception.</p>
+
+  <!-- Connection status -->
+  <div id="status-bar" class="status-bar checking">
+    <div class="status-dot"></div>
+    <span id="status-text">Checking Native Messaging connection...</span>
+    <button id="verify-btn" class="btn btn-secondary" style="margin-left:auto;padding:4px 14px;font-size:12px" onclick="checkConnection()">Verify</button>
+  </div>
+
+  <!-- Extension info -->
+  <div class="section">
+    <div class="info-row">
+      <span class="info-label">Extension ID:</span>
+      <span class="info-value" id="ext-id">—</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">Detected OS:</span>
+      <span class="info-value" id="detected-os">—</span>
+    </div>
+  </div>
+
+  <!-- Setup instructions (shown when not connected) -->
+  <div id="setup-section">
+    <h2>Setup Instructions</h2>
+
+    <!-- Platform selector -->
+    <div class="platform-selector">
+      <button class="platform-btn" data-platform="mac" onclick="selectPlatform('mac')">macOS</button>
+      <button class="platform-btn" data-platform="win" onclick="selectPlatform('win')">Windows</button>
+    </div>
+
+    <!-- Prerequisite -->
+    <div class="step">
+      <div class="step-header">
+        <div class="step-num">0</div>
+        <div class="step-title">Prerequisite: Install Node.js</div>
+      </div>
+      <div class="step-desc">
+        Node.js (v16+) must be installed.
+        Download from <a href="https://nodejs.org" target="_blank">nodejs.org</a> if not already installed.
+      </div>
+    </div>
+
+    <!-- Step 1: Run installer -->
+    <div class="step">
+      <div class="step-header">
+        <div class="step-num">1</div>
+        <div class="step-title">Run the installer script</div>
+      </div>
+      <div class="step-desc">
+        Open a terminal and run the following command. This will install dependencies, generate a CA certificate, and register the Native Messaging host.
+      </div>
+      <div class="code-block" id="install-cmd">—</div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="copy-install-btn" onclick="copyCommand('install-cmd')">Copy Command</button>
+      </div>
+    </div>
+
+    <!-- Step 2: Trust CA cert -->
+    <div class="step">
+      <div class="step-header">
+        <div class="step-num">2</div>
+        <div class="step-title">Trust the CA certificate (for HTTPS interception)</div>
+      </div>
+      <div class="step-desc" id="trust-desc">—</div>
+      <div class="code-block" id="trust-cmd">—</div>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="copyCommand('trust-cmd')">Copy Command</button>
+      </div>
+      <div class="note" id="trust-note">
+        This step requires administrator privileges. If you skip this step, HTTP interception will still work, but HTTPS interception will show certificate errors.
+      </div>
+    </div>
+
+    <!-- Step 3: Restart Chrome -->
+    <div class="step">
+      <div class="step-header">
+        <div class="step-num">3</div>
+        <div class="step-title">Restart Chrome</div>
+      </div>
+      <div class="step-desc">
+        Close and reopen Chrome completely for the Native Messaging host to be recognized. Then click <strong>Verify</strong> above to confirm the connection.
+      </div>
+    </div>
+  </div>
+
+  <!-- Success message (shown when connected) -->
+  <div id="success-section" class="hidden">
+    <div style="text-align:center;padding:40px 0">
+      <div style="font-size:48px;margin-bottom:12px">&#10003;</div>
+      <h2 style="color:#0b7a3e;margin-bottom:8px">Proxy Mode is ready!</h2>
+      <p style="color:#666">Open DevTools &rarr; DevTools++ panel &rarr; Intercept tab &rarr; select Proxy Mode.</p>
+    </div>
+  </div>
+
+  <script src="setup.js"></script>
+</body>
+</html>

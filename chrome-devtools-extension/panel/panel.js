@@ -1222,6 +1222,7 @@ document.getElementById('icpt-req-forward-modified').addEventListener('click', (
 document.getElementById('icpt-req-drop').addEventListener('click', () => { activeSide = 'req'; dropSelected(); });
 document.getElementById('icpt-req-mock').addEventListener('click', () => { activeSide = 'req'; mockResponseSelected(); });
 document.getElementById('icpt-req-add-header').addEventListener('click', () => addIcptKvRow('icpt-req-headers-list', '', ''));
+document.getElementById('icpt-mock-add-header').addEventListener('click', () => addIcptKvRow('icpt-mock-headers-list', '', ''));
 
 // Response 사이드 버튼
 document.getElementById('icpt-resp-forward').addEventListener('click', () => { activeSide = 'resp'; forwardSelected(false); });
@@ -1537,6 +1538,11 @@ function showReqEditor(item) {
   headersList.innerHTML = '';
   Object.entries(item.headers).forEach(([k, v]) => addIcptKvRow('icpt-req-headers-list', k, Array.isArray(v) ? v.join(', ') : v));
   document.getElementById('icpt-req-edit-body').value = item.postData || '';
+  // Mock 탭 초기화
+  document.getElementById('icpt-mock-status').value = 200;
+  document.getElementById('icpt-mock-headers-list').innerHTML = '';
+  addIcptKvRow('icpt-mock-headers-list', 'Content-Type', 'application/json');
+  document.getElementById('icpt-mock-body').value = '';
 }
 
 function showRespEditor(item) {
@@ -1669,13 +1675,20 @@ function dropSelected() {
 function mockResponseSelected() {
   const item = reqQueue.find(q => q.id === selectedReqId);
   if (!item) return;
-  // Mock Response용 body — Request 사이드에는 Response 편집 영역이 없으므로 빈 body로 처리
-  // 사용자가 원하는 mock 응답은 별도 입력 필요 → 기존 동작 유지를 위해 기본값
+  const status = parseInt(document.getElementById('icpt-mock-status').value) || 200;
+  const headers = getIcptKvEntries('icpt-mock-headers-list');
+  const body = document.getElementById('icpt-mock-body').value;
+
+  if (!headers.some(h => h.name.toLowerCase() === 'content-type')) {
+    try { JSON.parse(body); headers.push({ name: 'Content-Type', value: 'application/json' }); }
+    catch { headers.push({ name: 'Content-Type', value: 'text/plain' }); }
+  }
+
   sendInterceptDecision(item.id, {
     action: 'mock',
-    responseStatus: 200,
-    responseHeaders: [{ name: 'Content-Type', value: 'text/plain' }],
-    responseBody: ''
+    responseStatus: status,
+    responseHeaders: headers,
+    responseBody: body
   });
   addInterceptLog('mocked', item.method, item.url, 'req');
   removeFromReqQueue(item.id);

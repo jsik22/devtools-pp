@@ -1165,6 +1165,7 @@ tr.selected td {
   max-height: 120px;
 }
 
+.icpt-mock-bar,
 .icpt-resp-status-bar {
   display: flex;
   align-items: center;

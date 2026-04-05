@@ -246,6 +246,7 @@
                 <div class="icpt-editor-tabs" data-side="req">
                   <button class="icpt-ed-tab active" data-ictab="req-headers">Headers</button>
                   <button class="icpt-ed-tab" data-ictab="req-body">Body</button>
+                  <button class="icpt-ed-tab" data-ictab="req-mock">Mock</button>
                 </div>
                 <div id="icpt-tab-req-headers" class="icpt-ed-pane active">
                   <div class="icpt-kv-toolbar">
@@ -255,6 +256,15 @@
                 </div>
                 <div id="icpt-tab-req-body" class="icpt-ed-pane">
                   <textarea id="icpt-req-edit-body" class="replay-body-editor" style="min-height:80px;max-height:none;flex:1" spellcheck="false" placeholder="Request body..."></textarea>
+                </div>
+                <div id="icpt-tab-req-mock" class="icpt-ed-pane">
+                  <div class="icpt-mock-bar">
+                    <label style="color:#666;font-size:12px">Status:</label>
+                    <input type="number" id="icpt-mock-status" class="filter-input" style="width:80px;min-width:0" value="200">
+                    <button id="icpt-mock-add-header" class="btn btn-xs">+ Add Header</button>
+                  </div>
+                  <div id="icpt-mock-headers-list" class="replay-kv-list"></div>
+                  <textarea id="icpt-mock-body" class="replay-body-editor" style="min-height:80px;max-height:none;flex:1" spellcheck="false" placeholder="Mock response body (JSON, HTML, text...)"></textarea>
                 </div>
                 <div class="icpt-actions">
                   <button id="icpt-req-forward" class="btn btn-primary icpt-act-btn">Forward</button>

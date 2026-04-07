@@ -112,46 +112,115 @@ function scanPage() {
 
     try {
       const data = JSON.parse(result);
-      let added = 0;
-
-      // Add links as discovered GET endpoints
-      const seenUrls = new Set();
-      data.links.forEach(url => {
-        if (seenUrls.has(url)) return;
-        seenUrls.add(url);
-        addToSitemap({
-          method: 'GET', url, status: 0, type: 'discovered',
-          mimeType: '', requestHeaders: {}, responseHeaders: {},
-          _discovered: true
-        });
-        added++;
-      });
-
-      // Add form actions
-      data.forms.forEach(form => {
-        const formReq = {
-          method: form.method, url: form.action, status: 0, type: 'form',
-          mimeType: '', requestHeaders: {}, responseHeaders: {},
-          _discovered: true, _formData: form
-        };
-        addToSitemap(formReq);
-        added++;
-      });
-
-      // Add script sources
-      data.scripts.forEach(url => {
-        if (seenUrls.has(url)) return;
-        seenUrls.add(url);
-        addToSitemap({
-          method: 'GET', url, status: 0, type: 'script',
-          mimeType: 'application/javascript', requestHeaders: {}, responseHeaders: {},
-          _discovered: true
-        });
-        added++;
-      });
-
-      sitemapStats.textContent = sitemapStats.textContent + ` (+${added} scanned)`;
+      // Dedup
+      data.links = [...new Set(data.links)];
+      data.scripts = [...new Set(data.scripts)];
+      showScanResults(data);
     } catch { /* ignore parse errors */ }
+  });
+}
+
+function showScanResults(data) {
+  sitemapSelectedNode = null;
+  sitemapDetail.classList.remove('hidden');
+  sitemapDetailPath.textContent = 'Scan Results';
+  sitemapDetailList.innerHTML = '';
+
+  // Summary
+  const summary = document.createElement('div');
+  summary.className = 'scan-summary';
+  summary.innerHTML =
+    `<div class="scan-stat"><span class="scan-stat-num">${data.links.length}</span> Links</div>` +
+    `<div class="scan-stat"><span class="scan-stat-num">${data.forms.length}</span> Forms</div>` +
+    `<div class="scan-stat"><span class="scan-stat-num">${data.scripts.length}</span> Scripts</div>`;
+  sitemapDetailList.appendChild(summary);
+
+  // Links section
+  buildScanSection('Links', data.links, url => {
+    const item = document.createElement('div');
+    item.className = 'scan-item-row';
+    const urlEl = document.createElement('span');
+    urlEl.className = 'scan-item-url';
+    urlEl.textContent = url;
+    urlEl.title = url;
+    item.appendChild(urlEl);
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.textContent = 'Replay';
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      sendToReplay({ method: 'GET', url, requestHeaders: {}, requestPostData: null });
+    });
+    item.appendChild(btn);
+    return item;
+  });
+
+  // Forms section
+  buildScanSection('Forms', data.forms, form => {
+    const wrapper = document.createElement('div');
+    const item = document.createElement('div');
+    item.className = 'scan-item-row';
+    const methodEl = document.createElement('span');
+    methodEl.className = `sd-method ${form.method.toLowerCase()}`;
+    methodEl.textContent = form.method;
+    item.appendChild(methodEl);
+    const urlEl = document.createElement('span');
+    urlEl.className = 'scan-item-url';
+    urlEl.textContent = form.action;
+    urlEl.title = form.action;
+    item.appendChild(urlEl);
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.textContent = 'Replay';
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      sendToReplay({
+        method: form.method, url: form.action,
+        requestHeaders: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        requestPostData: form.fields.map(f => encodeURIComponent(f.name) + '=' + encodeURIComponent(f.value)).join('&')
+      });
+    });
+    item.appendChild(btn);
+    wrapper.appendChild(item);
+    if (form.fields.length > 0) {
+      const fieldsEl = document.createElement('div');
+      fieldsEl.className = 'sitemap-form-fields';
+      fieldsEl.innerHTML = '<span class="sf-label">Fields:</span> ' +
+        form.fields.map(f => {
+          const cls = f.hidden ? 'sf-field sf-hidden' : 'sf-field';
+          const val = f.value ? `=${escapeHtml(f.value.substring(0, 30))}` : '';
+          return `<span class="${cls}" title="${escapeHtml(f.type)}">${escapeHtml(f.name)}${val}</span>`;
+        }).join(' ');
+      wrapper.appendChild(fieldsEl);
+    }
+    return wrapper;
+  });
+
+  // Scripts section
+  buildScanSection('Scripts', data.scripts, url => {
+    const item = document.createElement('div');
+    item.className = 'scan-item-row scan-script';
+    item.textContent = url;
+    item.title = url;
+    return item;
+  });
+}
+
+function buildScanSection(title, items, renderItem) {
+  if (items.length === 0) return;
+  const header = document.createElement('div');
+  header.className = 'scan-section-header';
+  header.innerHTML = `<span class="arrow">&#9660;</span> ${title} (${items.length})`;
+  sitemapDetailList.appendChild(header);
+  const list = document.createElement('div');
+  list.className = 'scan-section-list';
+  items.forEach(item => list.appendChild(renderItem(item)));
+  sitemapDetailList.appendChild(list);
+  let collapsed = false;
+  header.addEventListener('click', () => {
+    collapsed = !collapsed;
+    header.querySelector('.arrow').innerHTML = collapsed ? '&#9654;' : '&#9660;';
+    list.style.display = collapsed ? 'none' : '';
   });
 }
 

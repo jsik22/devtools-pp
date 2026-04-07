@@ -2,16 +2,34 @@
 set -e
 
 # ============================================================
-# DevTools++ Native Proxy Installer (macOS)
+# DevTools++ Native Proxy Installer (macOS / Linux)
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HOST_NAME="com.devtools_pp.proxy"
 HOST_PATH="$SCRIPT_DIR/native-messaging-host.js"
 
-# Chrome / Chromium NM host manifest directories
-CHROME_NM_DIR="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
-CHROMIUM_NM_DIR="$HOME/Library/Application Support/Chromium/NativeMessagingHosts"
+# Detect OS
+OS="$(uname -s)"
+case "$OS" in
+  Darwin) PLATFORM="macos" ;;
+  Linux)  PLATFORM="linux" ;;
+  *)
+    echo "[ERROR] Unsupported OS: $OS"
+    echo "This installer supports macOS and Linux only."
+    echo "For Windows, use install.bat instead."
+    exit 1
+    ;;
+esac
+
+# Chrome / Chromium NM host manifest directories (per-user)
+if [ "$PLATFORM" = "macos" ]; then
+  CHROME_NM_DIR="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
+  CHROMIUM_NM_DIR="$HOME/Library/Application Support/Chromium/NativeMessagingHosts"
+else
+  CHROME_NM_DIR="$HOME/.config/google-chrome/NativeMessagingHosts"
+  CHROMIUM_NM_DIR="$HOME/.config/chromium/NativeMessagingHosts"
+fi
 
 # ============================================================
 # 1. Extension ID
@@ -38,6 +56,7 @@ fi
 echo ""
 echo "============================================"
 echo "  DevTools++ Native Proxy Installer"
+echo "  Platform: $PLATFORM"
 echo "============================================"
 echo ""
 
@@ -104,8 +123,13 @@ NMEOF
 
 register_nm_host "$CHROME_NM_DIR" "Chrome"
 
-# Register for Chromium if present
-if [ -d "$HOME/Library/Application Support/Chromium" ]; then
+# Register for Chromium if directory exists
+if [ "$PLATFORM" = "macos" ]; then
+  CHROMIUM_CHECK="$HOME/Library/Application Support/Chromium"
+else
+  CHROMIUM_CHECK="$HOME/.config/chromium"
+fi
+if [ -d "$CHROMIUM_CHECK" ]; then
   register_nm_host "$CHROMIUM_NM_DIR" "Chromium"
 fi
 
@@ -119,17 +143,35 @@ echo "============================================"
 echo "  Trust CA Certificate (for HTTPS)"
 echo "============================================"
 echo ""
-echo "Run the following command:"
-echo ""
-echo "  sudo security add-trusted-cert -d -r trustRoot \\"
-echo "    -k /Library/Keychains/System.keychain \\"
-echo "    $CA_PATH"
-echo ""
-echo "Or use Keychain Access:"
-echo "  1. Open Keychain Access app"
-echo "  2. File > Import Items > select $CA_PATH"
-echo "  3. Double-click 'DevTools++ MITM CA'"
-echo "  4. Trust > When using this certificate > Always Trust"
+
+if [ "$PLATFORM" = "macos" ]; then
+  echo "Run the following command:"
+  echo ""
+  echo "  sudo security add-trusted-cert -d -r trustRoot \\"
+  echo "    -k /Library/Keychains/System.keychain \\"
+  echo "    $CA_PATH"
+  echo ""
+  echo "Or use Keychain Access:"
+  echo "  1. Open Keychain Access app"
+  echo "  2. File > Import Items > select $CA_PATH"
+  echo "  3. Double-click 'DevTools++ MITM CA'"
+  echo "  4. Trust > When using this certificate > Always Trust"
+else
+  echo "Option A — System-wide (requires root):"
+  echo ""
+  echo "  sudo cp $CA_PATH /usr/local/share/ca-certificates/devtools-pp-ca.crt"
+  echo "  sudo update-ca-certificates"
+  echo ""
+  echo "Option B — Chrome only:"
+  echo ""
+  echo "  certutil -d sql:\$HOME/.pki/nssdb -A \\"
+  echo "    -t \"C,,\" -n \"DevTools++ MITM CA\" \\"
+  echo "    -i $CA_PATH"
+  echo ""
+  echo "  (Install libnss3-tools if certutil is not found:"
+  echo "   sudo apt install libnss3-tools)"
+fi
+
 echo ""
 echo "If you skip this, HTTP interception will still work"
 echo "but HTTPS will show certificate errors."
@@ -137,6 +179,7 @@ echo ""
 echo "============================================"
 echo "  Summary"
 echo "============================================"
+echo "  Platform     : $PLATFORM"
 echo "  Extension ID : $EXTENSION_ID"
 echo "  Proxy Host   : $HOST_PATH"
 echo "  CA Cert      : $CA_PATH"

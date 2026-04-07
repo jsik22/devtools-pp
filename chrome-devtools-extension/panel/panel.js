@@ -29,6 +29,7 @@ const sitemapDetailPath = document.getElementById('sitemap-detail-path');
 const sitemapDetailList = document.getElementById('sitemap-detail-list');
 const sitemapStats = document.getElementById('sitemap-stats');
 
+document.getElementById('sitemap-scan').addEventListener('click', scanPage);
 document.getElementById('sitemap-clear').addEventListener('click', () => {
   Object.keys(sitemapTree).forEach(k => delete sitemapTree[k]);
   sitemapSelectedNode = null;
@@ -54,6 +55,104 @@ function classifyMimeType(mimeType) {
   if (mimeType.includes('image')) return 'image';
   if (mimeType.includes('font') || mimeType.includes('woff')) return 'font';
   return 'other';
+}
+
+function scanPage() {
+  const btn = document.getElementById('sitemap-scan');
+  btn.textContent = 'Scanning...';
+  btn.disabled = true;
+
+  const expression = `
+    (function() {
+      var results = { links: [], forms: [], scripts: [] };
+
+      // Links: <a href>
+      document.querySelectorAll('a[href]').forEach(function(a) {
+        var href = a.href;
+        if (!href || href.startsWith('javascript:') || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
+        results.links.push(href);
+      });
+
+      // Forms: <form>
+      document.querySelectorAll('form').forEach(function(form) {
+        var fields = [];
+        form.querySelectorAll('input, select, textarea').forEach(function(el) {
+          var name = el.name || el.id || '';
+          if (!name) return;
+          fields.push({
+            tag: el.tagName.toLowerCase(),
+            type: el.type || 'text',
+            name: name,
+            value: el.value || '',
+            hidden: el.type === 'hidden'
+          });
+        });
+        results.forms.push({
+          action: form.action || window.location.href,
+          method: (form.method || 'GET').toUpperCase(),
+          id: form.id || '',
+          fields: fields
+        });
+      });
+
+      // Scripts: <script src>
+      document.querySelectorAll('script[src]').forEach(function(s) {
+        results.scripts.push(s.src);
+      });
+
+      return JSON.stringify(results);
+    })()
+  `;
+
+  chrome.devtools.inspectedWindow.eval(expression, (result, err) => {
+    btn.textContent = 'Scan Page';
+    btn.disabled = false;
+
+    if (err) return;
+
+    try {
+      const data = JSON.parse(result);
+      let added = 0;
+
+      // Add links as discovered GET endpoints
+      const seenUrls = new Set();
+      data.links.forEach(url => {
+        if (seenUrls.has(url)) return;
+        seenUrls.add(url);
+        addToSitemap({
+          method: 'GET', url, status: 0, type: 'discovered',
+          mimeType: '', requestHeaders: {}, responseHeaders: {},
+          _discovered: true
+        });
+        added++;
+      });
+
+      // Add form actions
+      data.forms.forEach(form => {
+        const formReq = {
+          method: form.method, url: form.action, status: 0, type: 'form',
+          mimeType: '', requestHeaders: {}, responseHeaders: {},
+          _discovered: true, _formData: form
+        };
+        addToSitemap(formReq);
+        added++;
+      });
+
+      // Add script sources
+      data.scripts.forEach(url => {
+        if (seenUrls.has(url)) return;
+        seenUrls.add(url);
+        addToSitemap({
+          method: 'GET', url, status: 0, type: 'script',
+          mimeType: 'application/javascript', requestHeaders: {}, responseHeaders: {},
+          _discovered: true
+        });
+        added++;
+      });
+
+      sitemapStats.textContent = sitemapStats.textContent + ` (+${added} scanned)`;
+    } catch { /* ignore parse errors */ }
+  });
 }
 
 function addToSitemap(req) {
@@ -324,7 +423,7 @@ function renderSitemapDetail() {
     if (s >= 200 && s < 300) statusEl.classList.add('s-2xx');
     else if (s >= 300 && s < 400) statusEl.classList.add('s-3xx');
     else if (s >= 400) statusEl.classList.add('s-4xx');
-    statusEl.textContent = s || '-';
+    statusEl.textContent = s || (req._discovered ? 'scan' : '-');
     item.appendChild(statusEl);
 
     // Type
@@ -347,6 +446,21 @@ function renderSitemapDetail() {
     item.appendChild(actionsEl);
 
     sitemapDetailList.appendChild(item);
+
+    // Show form fields if this is a scanned form
+    if (req._formData) {
+      const fieldsEl = document.createElement('div');
+      fieldsEl.className = 'sitemap-form-fields';
+      const f = req._formData;
+      let fieldsHtml = '<span class="sf-label">Fields:</span> ';
+      fieldsHtml += f.fields.map(field => {
+        const cls = field.hidden ? 'sf-field sf-hidden' : 'sf-field';
+        const val = field.value ? `=${escapeHtml(field.value.substring(0, 30))}` : '';
+        return `<span class="${cls}" title="${escapeHtml(field.type)}">${escapeHtml(field.name)}${val}</span>`;
+      }).join(' ');
+      fieldsEl.innerHTML = fieldsHtml;
+      sitemapDetailList.appendChild(fieldsEl);
+    }
   }
 }
 
@@ -365,7 +479,19 @@ function sendToReplay(req) {
   document.querySelector('[data-detail="replay"]').classList.add('active');
   document.getElementById('detail-replay').classList.add('active');
 
-  populateReplayForm(req);
+  // For scanned forms, build a proper request object with form fields as body
+  if (req._formData) {
+    const form = req._formData;
+    const formReq = {
+      method: form.method,
+      url: form.action,
+      requestHeaders: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      requestPostData: form.fields.map(f => encodeURIComponent(f.name) + '=' + encodeURIComponent(f.value)).join('&')
+    };
+    populateReplayForm(formReq);
+  } else {
+    populateReplayForm(req);
+  }
 }
 
 // ============================================================
@@ -2170,144 +2296,6 @@ function showCapturedResponse(resp) {
   if (resp.bodyTruncated) {
     bodyEl.value += '\n\n--- [truncated at 512KB] ---';
   }
-}
-
-// ============================================================
-// 2. DOM Inspection
-// ============================================================
-
-document.getElementById('dom-inspect').addEventListener('click', inspectDOM);
-document.getElementById('dom-query').addEventListener('click', queryDOM);
-document.getElementById('dom-highlight').addEventListener('click', highlightElement);
-
-function inspectDOM() {
-  const expression = `
-    (function() {
-      function serialize(el, depth) {
-        if (depth > 4) return '  ...';
-        if (el.nodeType === 3) return el.textContent.trim() ? JSON.stringify(el.textContent.trim()) : null;
-        if (el.nodeType !== 1) return null;
-
-        const tag = el.tagName.toLowerCase();
-        const attrs = Array.from(el.attributes || []).map(a => a.name + '="' + a.value + '"').join(' ');
-        const children = Array.from(el.childNodes)
-          .map(c => serialize(c, depth + 1))
-          .filter(Boolean);
-
-        const attrStr = attrs ? ' ' + attrs : '';
-        if (children.length === 0) return '<' + tag + attrStr + ' />';
-        if (children.length === 1 && !children[0].startsWith('<'))
-          return '<' + tag + attrStr + '>' + children[0] + '</' + tag + '>';
-
-        return '<' + tag + attrStr + '>\\n' +
-          children.map(c => '  ' + c.split('\\n').join('\\n  ')).join('\\n') +
-          '\\n</' + tag + '>';
-      }
-      return serialize(document.documentElement, 0);
-    })()
-  `;
-
-  chrome.devtools.inspectedWindow.eval(expression, (result, err) => {
-    const domTree = document.getElementById('dom-tree');
-    if (err) {
-      domTree.textContent = 'Error: ' + (err.value || err.description || JSON.stringify(err));
-      return;
-    }
-    domTree.textContent = result || 'Unable to retrieve DOM.';
-    syntaxHighlightDOM(domTree);
-  });
-}
-
-function queryDOM() {
-  const selector = document.getElementById('dom-selector').value;
-  if (!selector) return;
-
-  const expression = `
-    (function() {
-      try {
-        const elements = document.querySelectorAll(${JSON.stringify(selector)});
-        return JSON.stringify({
-          count: elements.length,
-          elements: Array.from(elements).slice(0, 20).map(el => ({
-            tag: el.tagName.toLowerCase(),
-            id: el.id || null,
-            classes: Array.from(el.classList),
-            text: el.textContent?.substring(0, 100) || '',
-            rect: el.getBoundingClientRect ? {
-              x: Math.round(el.getBoundingClientRect().x),
-              y: Math.round(el.getBoundingClientRect().y),
-              width: Math.round(el.getBoundingClientRect().width),
-              height: Math.round(el.getBoundingClientRect().height)
-            } : null
-          }))
-        });
-      } catch(e) { return JSON.stringify({ error: e.message }); }
-    })()
-  `;
-
-  chrome.devtools.inspectedWindow.eval(expression, (result, err) => {
-    const info = document.getElementById('dom-info');
-    if (err) {
-      info.innerHTML = `<span class="status-error">Error: ${escapeHtml(err.value || '')}</span>`;
-      return;
-    }
-    try {
-      const data = JSON.parse(result);
-      if (data.error) {
-        info.innerHTML = `<span class="status-error">${escapeHtml(data.error)}</span>`;
-        return;
-      }
-      info.innerHTML = `<strong>${data.count} elements found</strong><br><br>` +
-        data.elements.map(el => {
-          const id = el.id ? `#${el.id}` : '';
-          const cls = el.classes.length ? `.${el.classes.join('.')}` : '';
-          return `<div style="margin-bottom:6px">
-            <span class="dom-tag">&lt;${el.tag}${id}${cls}&gt;</span>
-            <span class="dom-text">${escapeHtml(el.text.substring(0, 80))}</span>
-            ${el.rect ? `<span style="color:#999"> [${el.rect.width}x${el.rect.height} @ ${el.rect.x},${el.rect.y}]</span>` : ''}
-          </div>`;
-        }).join('');
-    } catch {
-      info.textContent = result;
-    }
-  });
-}
-
-function highlightElement() {
-  const selector = document.getElementById('dom-selector').value;
-  if (!selector) return;
-
-  const expression = `
-    (function() {
-      document.querySelectorAll('.__devtools_highlight__').forEach(el => {
-        el.style.outline = el.dataset.origOutline || '';
-        el.classList.remove('__devtools_highlight__');
-      });
-      const els = document.querySelectorAll(${JSON.stringify(selector)});
-      els.forEach(el => {
-        el.dataset.origOutline = el.style.outline;
-        el.style.outline = '2px solid #007acc';
-        el.classList.add('__devtools_highlight__');
-      });
-      return els.length + ' elements highlighted';
-    })()
-  `;
-
-  chrome.devtools.inspectedWindow.eval(expression, (result) => {
-    const info = document.getElementById('dom-info');
-    info.innerHTML = `<span class="status-ok">${escapeHtml(result)}</span>`;
-  });
-}
-
-function syntaxHighlightDOM(el) {
-  const text = el.textContent;
-  el.innerHTML = text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/(&lt;\/?)([\w-]+)/g, '$1<span class="dom-tag">$2</span>')
-    .replace(/([\w-]+)(=&quot;)/g, '<span class="dom-attr-name">$1</span>$2')
-    .replace(/=&quot;([^&]*)&quot;/g, '=<span class="dom-attr-value">"$1"</span>');
 }
 
 // ============================================================

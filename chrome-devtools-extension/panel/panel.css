@@ -200,24 +200,6 @@ tr:hover {
 .status-redirect { color: #8a6d00; }
 .status-error { color: #d32f2f; }
 
-.code-block {
-  flex: 1;
-  overflow: auto;
-  padding: 12px;
-  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.info-panel {
-  background: #f8f8f8;
-  border-top: 1px solid #d4d4d4;
-  padding: 12px;
-  max-height: 200px;
-  overflow: auto;
-}
 
 .console-output {
   flex: 1;
@@ -305,11 +287,6 @@ tr:hover {
   margin-left: 16px;
 }
 
-.dom-tag { color: #0451a5; }
-.dom-attr-name { color: #e50000; }
-.dom-attr-value { color: #0b7a3e; }
-.dom-text { color: #333; }
-.dom-comment { color: #008000; }
 
 .highlight {
   background: rgba(255, 200, 0, 0.15);
@@ -1162,6 +1139,35 @@ tr.selected td {
   font-size: 12px;
   padding: 20px;
   text-align: center;
+}
+
+/* Form fields in Site Map detail */
+.sitemap-form-fields {
+  padding: 3px 10px 6px 68px;
+  font-size: 11px;
+  border-bottom: 1px solid #f0f0f0;
+  background: #fafafa;
+}
+
+.sitemap-form-fields .sf-label {
+  color: #888;
+  font-weight: 600;
+}
+
+.sitemap-form-fields .sf-field {
+  display: inline-block;
+  padding: 1px 5px;
+  margin: 1px 2px;
+  background: #e8e8e8;
+  border-radius: 3px;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  font-size: 10px;
+  color: #333;
+}
+
+.sitemap-form-fields .sf-hidden {
+  background: #fff3cd;
+  color: #856404;
 }
 
 /* ============================================================

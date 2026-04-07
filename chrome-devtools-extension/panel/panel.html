@@ -13,7 +13,6 @@
         <button class="tab active" data-tab="sitemap">Site Map</button>
         <button class="tab" data-tab="network">Network</button>
         <button class="tab intercept-tab" data-tab="intercept">Intercept</button>
-        <button class="tab" data-tab="dom">DOM</button>
         <button class="tab" data-tab="console">Console</button>
         <button class="tab" data-tab="performance">Performance</button>
         <button class="tab" data-tab="storage">Storage</button>
@@ -23,6 +22,7 @@
     <!-- Site Map tab -->
     <section id="sitemap" class="tab-content active">
       <div class="toolbar">
+        <button id="sitemap-scan" class="btn btn-primary">Scan Page</button>
         <button id="sitemap-clear" class="btn">Clear</button>
         <span id="sitemap-stats" class="badge">0 hosts · 0 endpoints</span>
         <input type="text" id="sitemap-search" placeholder="Search URL..." class="filter-input" style="flex:1">
@@ -368,18 +368,6 @@
           <div id="icpt-log" class="icpt-log-list"></div>
         </div>
       </div>
-    </section>
-
-    <!-- DOM tab -->
-    <section id="dom" class="tab-content">
-      <div class="toolbar">
-        <button id="dom-inspect" class="btn btn-primary">Get DOM Tree</button>
-        <button id="dom-query" class="btn">Query Selector</button>
-        <input type="text" id="dom-selector" placeholder="CSS selector (e.g. .class, #id)" class="filter-input">
-        <button id="dom-highlight" class="btn">Highlight</button>
-      </div>
-      <div id="dom-tree" class="code-block"></div>
-      <div id="dom-info" class="info-panel"></div>
     </section>
 
     <!-- Console tab -->

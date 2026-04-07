@@ -13,8 +13,8 @@ class ProxyServer extends EventEmitter {
     super();
     this.port = options.port || 8899;
     this.bypassPatterns = (options.bypassPatterns || []).map(p => new RegExp(p, 'i'));
-    this.urlFilter = null; // RegExp — set이면 일치하는 URL만 인터셉트
-    this.methodFilter = ''; // 빈 문자열 = all
+    this.urlFilter = null; // RegExp — if set, only intercept matching URLs
+    this.methodFilter = ''; // empty string = all
     this.interceptActive = false;
     this.interceptResponse = options.interceptResponse || false;
     this.pendingRequests = new Map();
@@ -29,11 +29,11 @@ class ProxyServer extends EventEmitter {
   }
 
   _shouldBypass(reqUrl, method) {
-    // Method 필터: 설정된 메소드와 다르면 bypass
+    // Method filter: bypass if method doesn't match
     if (this.methodFilter && method && method.toUpperCase() !== this.methodFilter) return true;
-    // URL 필터 (include): 설정되어 있으면 일치하지 않는 URL bypass
+    // URL filter (include): bypass non-matching URLs if set
     if (this.urlFilter && !this.urlFilter.test(reqUrl)) return true;
-    // Bypass 패턴 (exclude): 일치하면 bypass
+    // Bypass pattern (exclude): bypass if matched
     return this.bypassPatterns.some(re => re.test(reqUrl));
   }
 

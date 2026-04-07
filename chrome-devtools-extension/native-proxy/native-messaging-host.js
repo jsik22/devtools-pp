@@ -55,7 +55,7 @@ async function startProxy(config = {}) {
     interceptResponse: config.interceptResponse || false,
   });
 
-  // URL/Method 필터 초기 적용
+  // Apply initial URL/Method filters
   if (config.urlFilter) {
     proxy.updateConfig({ urlFilter: config.urlFilter });
   }

@@ -1,10 +1,10 @@
 // ============================================================
-// DevTools Inspector Panel - 메인 스크립트
+// DevTools Inspector Panel - Main Script
 // ============================================================
 
 const tabId = chrome.devtools.inspectedWindow.tabId;
 
-// --- 탭 전환 ---
+// --- Tab switching ---
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -15,7 +15,361 @@ document.querySelectorAll('.tab').forEach(tab => {
 });
 
 // ============================================================
-// 1. Network 모니터링 (chrome.devtools.network API 사용 - debugger 불필요)
+// 0. Site Map — Passive collection + tree view
+// ============================================================
+
+const sitemapTree = {};  // host → { children: { path: { children: {}, requests: [] } } }
+let sitemapSelectedNode = null; // { host, path }
+const sitemapSearch = document.getElementById('sitemap-search');
+const sitemapTypeFilter = document.getElementById('sitemap-type-filter');
+const sitemapStatusFilter = document.getElementById('sitemap-status-filter');
+const sitemapTreeEl = document.getElementById('sitemap-tree');
+const sitemapDetail = document.getElementById('sitemap-detail');
+const sitemapDetailPath = document.getElementById('sitemap-detail-path');
+const sitemapDetailList = document.getElementById('sitemap-detail-list');
+const sitemapStats = document.getElementById('sitemap-stats');
+
+document.getElementById('sitemap-clear').addEventListener('click', () => {
+  Object.keys(sitemapTree).forEach(k => delete sitemapTree[k]);
+  sitemapSelectedNode = null;
+  renderSitemapTree();
+  sitemapDetail.classList.add('hidden');
+  updateSitemapStats();
+});
+document.getElementById('sitemap-detail-close').addEventListener('click', () => {
+  sitemapSelectedNode = null;
+  sitemapDetail.classList.add('hidden');
+  renderSitemapTree();
+});
+sitemapSearch.addEventListener('input', renderSitemapTree);
+sitemapTypeFilter.addEventListener('change', renderSitemapTree);
+sitemapStatusFilter.addEventListener('change', renderSitemapTree);
+
+function classifyMimeType(mimeType) {
+  if (!mimeType) return 'other';
+  if (mimeType.includes('json') || mimeType.includes('xml')) return 'api';
+  if (mimeType.includes('html')) return 'page';
+  if (mimeType.includes('javascript')) return 'script';
+  if (mimeType.includes('css')) return 'style';
+  if (mimeType.includes('image')) return 'image';
+  if (mimeType.includes('font') || mimeType.includes('woff')) return 'font';
+  return 'other';
+}
+
+function addToSitemap(req) {
+  let parsed;
+  try { parsed = new URL(req.url); } catch { return; }
+
+  const host = parsed.host;
+  const pathname = parsed.pathname || '/';
+
+  // Split path into segments
+  const segments = pathname.split('/').filter(Boolean);
+
+  if (!sitemapTree[host]) {
+    sitemapTree[host] = { children: {}, requests: [] };
+  }
+
+  // Create path nodes in tree
+  let node = sitemapTree[host];
+  for (const seg of segments) {
+    if (!node.children[seg]) {
+      node.children[seg] = { children: {}, requests: [] };
+    }
+    node = node.children[seg];
+  }
+
+  // Dedup: skip if same method + url + status combination exists
+  const isDup = node.requests.some(r => r.method === req.method && r.url === req.url && r.status === req.status);
+  if (!isDup) {
+    node.requests.push(req);
+  }
+
+  renderSitemapTree();
+  updateSitemapStats();
+}
+
+function updateSitemapStats() {
+  const hosts = Object.keys(sitemapTree).length;
+  let endpoints = 0;
+  function countNode(node) {
+    endpoints += node.requests.length;
+    Object.values(node.children).forEach(countNode);
+  }
+  Object.values(sitemapTree).forEach(countNode);
+  sitemapStats.textContent = `${hosts} hosts · ${endpoints} endpoints`;
+}
+
+function matchesSitemapFilters(req) {
+  const search = sitemapSearch.value.trim().toLowerCase();
+  if (search && !req.url.toLowerCase().includes(search)) return false;
+
+  const typeF = sitemapTypeFilter.value;
+  if (typeF && classifyMimeType(req.mimeType) !== typeF) return false;
+
+  const statusF = sitemapStatusFilter.value;
+  if (statusF) {
+    const s = req.status;
+    if (statusF === '2xx' && (s < 200 || s >= 300)) return false;
+    if (statusF === '3xx' && (s < 300 || s >= 400)) return false;
+    if (statusF === '4xx' && (s < 400 || s >= 500)) return false;
+    if (statusF === '5xx' && (s < 500 || s >= 600)) return false;
+  }
+  return true;
+}
+
+function nodeHasFilteredRequests(node) {
+  if (node.requests.some(matchesSitemapFilters)) return true;
+  return Object.values(node.children).some(nodeHasFilteredRequests);
+}
+
+function getNodeMethods(node) {
+  const methods = new Set();
+  function collect(n) {
+    n.requests.filter(matchesSitemapFilters).forEach(r => methods.add(r.method));
+    Object.values(n.children).forEach(collect);
+  }
+  collect(node);
+  return methods;
+}
+
+function getNodeRequestCount(node) {
+  let count = 0;
+  function countN(n) {
+    count += n.requests.filter(matchesSitemapFilters).length;
+    Object.values(n.children).forEach(countN);
+  }
+  countN(node);
+  return count;
+}
+
+function renderSitemapTree() {
+  sitemapTreeEl.innerHTML = '';
+
+  const hosts = Object.keys(sitemapTree).sort();
+  if (hosts.length === 0) {
+    sitemapTreeEl.innerHTML = '<div class="sitemap-empty">Data is collected automatically as requests are made.</div>';
+    return;
+  }
+
+  for (const host of hosts) {
+    const hostNode = sitemapTree[host];
+    if (!nodeHasFilteredRequests(hostNode)) continue;
+    const hostEl = buildTreeNode(host, hostNode, host, '');
+    if (hostEl) sitemapTreeEl.appendChild(hostEl);
+  }
+
+  // Restore selection state
+  if (sitemapSelectedNode) {
+    renderSitemapDetail();
+  }
+}
+
+function buildTreeNode(label, node, host, currentPath) {
+  const hasChildren = Object.keys(node.children).length > 0;
+  const hasOwnRequests = node.requests.filter(matchesSitemapFilters).length > 0;
+
+  if (!nodeHasFilteredRequests(node)) return null;
+
+  const wrapper = document.createElement('div');
+
+  // Node row
+  const row = document.createElement('div');
+  row.className = 'sitemap-node';
+  const isHost = currentPath === '';
+  const fullPath = currentPath || '/';
+  const isSelected = sitemapSelectedNode &&
+    sitemapSelectedNode.host === host &&
+    sitemapSelectedNode.path === fullPath;
+  if (isSelected) row.classList.add('selected');
+
+  // Toggle icon
+  const toggle = document.createElement('span');
+  toggle.className = 'sitemap-node-toggle';
+  toggle.textContent = hasChildren ? '▶' : '';
+  row.appendChild(toggle);
+
+  // Icon
+  const icon = document.createElement('span');
+  icon.className = 'sitemap-node-icon';
+  icon.textContent = isHost ? '🌐' : (hasChildren ? '📁' : '📄');
+  row.appendChild(icon);
+
+  // Label
+  const labelEl = document.createElement('span');
+  labelEl.className = 'sitemap-node-label';
+  labelEl.textContent = label;
+  row.appendChild(labelEl);
+
+  // Method tags
+  const methods = getNodeMethods(node);
+  if (methods.size > 0) {
+    const methodsEl = document.createElement('span');
+    methodsEl.className = 'sitemap-node-methods';
+    for (const m of methods) {
+      const dot = document.createElement('span');
+      const mLower = m.toLowerCase();
+      const cls = ['get','post','put','patch','delete'].includes(mLower) ? `m-${mLower}` : 'm-other';
+      dot.className = `sitemap-method-dot ${cls}`;
+      dot.textContent = m;
+      methodsEl.appendChild(dot);
+    }
+    row.appendChild(methodsEl);
+  }
+
+  // Request count
+  const count = getNodeRequestCount(node);
+  if (count > 0) {
+    const countEl = document.createElement('span');
+    countEl.className = 'sitemap-node-count';
+    countEl.textContent = count;
+    row.appendChild(countEl);
+  }
+
+  wrapper.appendChild(row);
+
+  // Children container (collapsed by default)
+  const childrenEl = document.createElement('div');
+  childrenEl.className = 'sitemap-children collapsed';
+
+  const sortedChildren = Object.keys(node.children).sort();
+  for (const childName of sortedChildren) {
+    const childPath = currentPath + '/' + childName;
+    const childEl = buildTreeNode(childName, node.children[childName], host, childPath);
+    if (childEl) childrenEl.appendChild(childEl);
+  }
+
+  if (hasChildren) {
+    wrapper.appendChild(childrenEl);
+  }
+
+  // Event: toggle
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    childrenEl.classList.toggle('collapsed');
+    toggle.textContent = childrenEl.classList.contains('collapsed') ? '▶' : '▼';
+  });
+
+  // Event: node click → detail panel
+  row.addEventListener('click', () => {
+    sitemapSelectedNode = { host, path: fullPath };
+    renderSitemapTree();
+    sitemapDetail.classList.remove('hidden');
+    renderSitemapDetail();
+  });
+
+  return wrapper;
+}
+
+function collectNodeRequests(node) {
+  let reqs = [...node.requests];
+  Object.values(node.children).forEach(child => {
+    reqs = reqs.concat(collectNodeRequests(child));
+  });
+  return reqs;
+}
+
+function getNodeByPath(host, path) {
+  const hostNode = sitemapTree[host];
+  if (!hostNode) return null;
+  if (path === '/') return hostNode;
+  const segments = path.split('/').filter(Boolean);
+  let node = hostNode;
+  for (const seg of segments) {
+    if (!node.children[seg]) return null;
+    node = node.children[seg];
+  }
+  return node;
+}
+
+function renderSitemapDetail() {
+  if (!sitemapSelectedNode) return;
+  const { host, path } = sitemapSelectedNode;
+  const node = getNodeByPath(host, path);
+  if (!node) return;
+
+  sitemapDetailPath.textContent = host + path;
+
+  const allReqs = collectNodeRequests(node).filter(matchesSitemapFilters);
+  sitemapDetailList.innerHTML = '';
+
+  if (allReqs.length === 0) {
+    sitemapDetailList.innerHTML = '<div class="sitemap-empty">No requests matching filter</div>';
+    return;
+  }
+
+  for (const req of allReqs) {
+    const item = document.createElement('div');
+    item.className = 'sitemap-detail-item';
+
+    const mLower = req.method.toLowerCase();
+
+    // Method
+    const methodEl = document.createElement('span');
+    methodEl.className = `sd-method ${mLower}`;
+    methodEl.textContent = req.method;
+    item.appendChild(methodEl);
+
+    // URL
+    const urlEl = document.createElement('span');
+    urlEl.className = 'sd-url';
+    urlEl.textContent = req.url;
+    urlEl.title = req.url;
+    item.appendChild(urlEl);
+
+    // Status
+    const statusEl = document.createElement('span');
+    statusEl.className = 'sd-status';
+    const s = req.status;
+    if (s >= 200 && s < 300) statusEl.classList.add('s-2xx');
+    else if (s >= 300 && s < 400) statusEl.classList.add('s-3xx');
+    else if (s >= 400) statusEl.classList.add('s-4xx');
+    statusEl.textContent = s || '-';
+    item.appendChild(statusEl);
+
+    // Type
+    const typeEl = document.createElement('span');
+    typeEl.className = 'sd-type';
+    typeEl.textContent = req.type || '-';
+    item.appendChild(typeEl);
+
+    // Replay button
+    const actionsEl = document.createElement('span');
+    actionsEl.className = 'sd-actions';
+    const replayBtn = document.createElement('button');
+    replayBtn.className = 'btn';
+    replayBtn.textContent = 'Replay';
+    replayBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      sendToReplay(req);
+    });
+    actionsEl.appendChild(replayBtn);
+    item.appendChild(actionsEl);
+
+    sitemapDetailList.appendChild(item);
+  }
+}
+
+function sendToReplay(req) {
+  // Switch to Network tab + activate Replay tab + populate form
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.querySelector('[data-tab="network"]').classList.add('active');
+  document.getElementById('network').classList.add('active');
+
+  // Open detail panel + Replay tab
+  networkDetail.classList.remove('hidden');
+  networkSplit.classList.add('detail-open');
+  document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.detail-content').forEach(c => c.classList.remove('active'));
+  document.querySelector('[data-detail="replay"]').classList.add('active');
+  document.getElementById('detail-replay').classList.add('active');
+
+  populateReplayForm(req);
+}
+
+// ============================================================
+// 1. Network monitoring (using chrome.devtools.network API - no debugger needed)
 // ============================================================
 const networkRequests = [];
 const networkRequestMap = new Map(); // requestId -> request object
@@ -34,7 +388,7 @@ document.getElementById('network-stop').addEventListener('click', stopNetworkMon
 document.getElementById('network-clear').addEventListener('click', clearNetwork);
 networkFilter.addEventListener('input', renderNetworkTable);
 
-// Detail panel 탭 전환
+// Detail panel tab switching
 document.querySelectorAll('.detail-tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
@@ -44,7 +398,7 @@ document.querySelectorAll('.detail-tab').forEach(tab => {
   });
 });
 
-// Detail panel 닫기
+// Detail panel close
 document.getElementById('detail-close').addEventListener('click', closeDetail);
 
 function closeDetail() {
@@ -54,10 +408,8 @@ function closeDetail() {
   networkTable.querySelectorAll('tr.selected').forEach(r => r.classList.remove('selected'));
 }
 
-// chrome.devtools.network 이벤트 리스너 (항상 동작, 별도 attach 불필요)
+// chrome.devtools.network event listener (always active, no attach needed)
 chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
-  if (!networkMonitoring) return;
-
   const reqId = 'net_' + (++networkIdCounter);
   const r = harEntry.request;
   const resp = harEntry.response;
@@ -95,9 +447,14 @@ chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
     responseBody: null,
     responseBodyLoaded: false,
     responseBase64: false,
-    _harEntry: harEntry, // HAR 원본 참조 (body 로딩용)
+    _harEntry: harEntry, // HAR entry reference (for body loading)
   };
 
+  // Site Map always collects
+  addToSitemap(req);
+
+  // Network list only when monitoring is ON
+  if (!networkMonitoring) return;
   networkRequests.push(req);
   networkRequestMap.set(reqId, req);
   renderNetworkTable();
@@ -160,24 +517,24 @@ function renderNetworkTable() {
     </tr>`;
   }).join('');
 
-  // 행 클릭 이벤트
+  // Row click event
   networkTable.querySelectorAll('tr').forEach(row => {
     row.addEventListener('click', () => {
       const reqId = row.dataset.requestId;
       const req = networkRequestMap.get(reqId);
       if (!req) return;
 
-      // 선택 상태 업데이트
+      // Update selection state
       networkTable.querySelectorAll('tr.selected').forEach(r => r.classList.remove('selected'));
       row.classList.add('selected');
       selectedRequestId = reqId;
 
-      // 상세 패널 표시
+      // Show detail panel
       networkDetail.classList.remove('hidden');
       networkSplit.classList.add('has-detail');
       showDetail(req);
 
-      // 아직 body를 못 가져왔으면 시도
+      // Try loading body if not loaded yet
       if (!req.responseBodyLoaded) {
         fetchResponseBody(req);
       }
@@ -208,7 +565,7 @@ function makeSectionHtml(title, id, rows) {
   `;
 }
 
-// 이벤트 위임으로 section toggle 처리 (인라인 onclick은 MV3 CSP에서 차단됨)
+// Section toggle via event delegation (inline onclick blocked by MV3 CSP)
 document.addEventListener('click', (e) => {
   const titleEl = e.target.closest('.section-title[data-section-id]');
   if (!titleEl) return;
@@ -443,7 +800,7 @@ const SKIP_HEADERS = new Set([
   'upgrade-insecure-requests',
 ]);
 
-// 섹션 토글
+// Section toggle
 document.querySelectorAll('.replay-section-title').forEach(title => {
   title.addEventListener('click', (e) => {
     if (e.target.tagName === 'BUTTON' || e.target.tagName === 'SELECT') return;
@@ -456,7 +813,7 @@ document.querySelectorAll('.replay-section-title').forEach(title => {
   });
 });
 
-// Response 하위 탭
+// Response sub-tabs
 document.querySelectorAll('.replay-resp-tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.replay-resp-tab').forEach(t => t.classList.remove('active'));
@@ -486,10 +843,10 @@ document.getElementById('replay-clear-history').addEventListener('click', (e) =>
   document.getElementById('replay-history-list').innerHTML = '';
 });
 
-// URL 변경 시 query params 동기화
+// Sync query params when URL changes
 document.getElementById('replay-url').addEventListener('blur', syncParamsFromUrl);
 
-// Replay 탭이 활성화될 때 현재 선택된 요청 데이터로 폼 채우기
+// Populate form with selected request data when Replay tab activates
 function populateReplayForm(req) {
   if (!req) return;
 
@@ -556,7 +913,7 @@ function addKvRow(listId, name, value, enabled) {
 
   row.querySelector('.kv-remove').addEventListener('click', () => row.remove());
 
-  // Query param 변경 시 URL 동기화
+  // Sync URL when query param changes
   if (listId === 'replay-params-list') {
     row.querySelector('.kv-name').addEventListener('blur', syncUrlFromParams);
     row.querySelector('.kv-value').addEventListener('blur', syncUrlFromParams);
@@ -636,7 +993,7 @@ function buildReplayRequest() {
 }
 
 function executeQuickReplay() {
-  // 원본 요청을 그대로 재전송
+  // Resend original request as-is
   const req = selectedRequestId ? networkRequestMap.get(selectedRequestId) : null;
   if (!req) return;
   populateReplayForm(req);
@@ -663,12 +1020,12 @@ function executeReplay() {
   bodyPane.innerHTML = '<span style="color:#8a6d00">Sending request...</span>';
   headersPane.innerHTML = '';
 
-  // eval()은 async를 지원하지 않으므로, 전역 변수에 결과를 저장하고 polling
+  // eval() doesn't support async, so store result in global variable and poll
   const callbackId = '__replay_' + Date.now() + '_' + Math.random().toString(36).slice(2);
   const headersJson = JSON.stringify(headers);
   const bodyJson = body ? JSON.stringify(body) : 'null';
 
-  // 1단계: 페이지 컨텍스트에서 fetch 시작, 결과를 window[callbackId]에 저장
+  // Step 1: Start fetch in page context, store result in window[callbackId]
   const fetchExpression = `
     (function() {
       window['${callbackId}'] = null;
@@ -717,9 +1074,9 @@ function executeReplay() {
       return;
     }
 
-    // 2단계: polling으로 결과 확인
+    // Step 2: Poll for result
     let attempts = 0;
-    const maxAttempts = 300; // 30초 타임아웃
+    const maxAttempts = 300; // 30s timeout
     const pollInterval = setInterval(() => {
       attempts++;
       if (attempts > maxAttempts) {
@@ -734,13 +1091,13 @@ function executeReplay() {
       }
 
       chrome.devtools.inspectedWindow.eval(`window['${callbackId}']`, (result) => {
-        if (result === null || result === undefined) return; // 아직 대기 중
+        if (result === null || result === undefined) return; // Still waiting
 
         clearInterval(pollInterval);
         sendBtn.textContent = 'Send';
         sendBtn.disabled = false;
 
-        // 전역 변수 정리
+        // Clean up global variable
         chrome.devtools.inspectedWindow.eval(`delete window['${callbackId}']`);
 
         handleReplayResult(result, method, url, bodyPane, headersPane, statusEl, timingEl, sizeEl);
@@ -787,7 +1144,7 @@ function handleReplayResult(result, method, url, bodyPane, headersPane, statusEl
     // Response Headers
     headersPane.innerHTML = headerRowsHtml(resp.headers);
 
-    // Diff - 원본 응답과 비교
+    // Diff - Compare with original response
     const originalReq = selectedRequestId ? networkRequestMap.get(selectedRequestId) : null;
     if (originalReq && originalReq.responseBodyLoaded && originalReq.responseBody !== null) {
       renderDiffBadges(originalReq, resp);
@@ -804,13 +1161,13 @@ function handleReplayResult(result, method, url, bodyPane, headersPane, statusEl
 }
 
 function renderDiffBadges(originalReq, replayResp) {
-  // Status 차이
+  // Status difference
   const statusEl = document.getElementById('replay-status');
   if (originalReq.status !== replayResp.status) {
     statusEl.textContent += ` (was ${originalReq.status})`;
   }
 
-  // Response body 차이 표시
+  // Show response body difference
   const bodyPane = document.getElementById('replay-resp-body');
   if (originalReq.responseBody !== replayResp.body) {
     // Try JSON diff
@@ -885,7 +1242,7 @@ function renderReplayHistory() {
     </div>`;
   }).join('');
 
-  // 히스토리 항목 클릭 → 해당 요청으로 폼 복원
+  // History item click → restore form with that request
   list.querySelectorAll('.replay-history-item').forEach(item => {
     item.addEventListener('click', () => {
       const idx = parseInt(item.dataset.histIdx);
@@ -903,7 +1260,7 @@ function escapeAttr(str) {
   return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// Detail 탭 전환 시 Replay 폼 자동 채우기
+// Auto-populate Replay form on detail tab switch
 const origDetailTabHandler = document.querySelectorAll('.detail-tab');
 origDetailTabHandler.forEach(tab => {
   tab.addEventListener('click', () => {
@@ -924,7 +1281,7 @@ const respQueue = [];
 const interceptLog = [];
 let selectedReqId = null;
 let selectedRespId = null;
-let activeSide = 'req'; // 'req' or 'resp' — 단축키 대상
+let activeSide = 'req'; // 'req' or 'resp' — shortcut target
 let interceptBypassRegex = null;
 let interceptIdCounter = 0;
 let interceptPollTimer = null;
@@ -945,7 +1302,7 @@ const interceptTabBtn = document.querySelector('.intercept-tab');
 const icptModeSelect = document.getElementById('icpt-mode-select');
 const icptProxyStatus = document.getElementById('icpt-proxy-status');
 
-// 사이드 패널 클릭 시 activeSide 전환
+// Switch activeSide on side panel click
 document.querySelectorAll('.icpt-side').forEach(el => {
   el.addEventListener('click', () => {
     activeSide = el.dataset.side;
@@ -953,10 +1310,10 @@ document.querySelectorAll('.icpt-side').forEach(el => {
     el.classList.add('active-side');
   });
 });
-// 초기 활성 사이드
+// Initial active side
 document.querySelector('.icpt-req-side').classList.add('active-side');
 
-// Background Service Worker 포트 연결 (자동 재연결)
+// Background Service Worker port connection (auto-reconnect)
 let bgPort = null;
 
 function connectBgPort() {
@@ -967,7 +1324,7 @@ function connectBgPort() {
   bgPort.onDisconnect.addListener(() => {
     console.warn('[DevTools++] Background port disconnected, reconnecting...');
     bgPort = null;
-    // Service Worker 재시작 대기 후 재연결
+    // Wait for Service Worker restart then reconnect
     setTimeout(connectBgPort, 500);
   });
 }
@@ -1084,33 +1441,33 @@ function showSetupHint() {
   }
 }
 
-// 와일드카드 URL 필터를 regex로 변환
-// 입력: "*.site.com, api.example.com/v1/*"
-// 출력: "(^https?://[^/]*\.site\.com)|(api\.example\.com/v1/.*)" (regex 문자열)
+// Convert wildcard URL filter to regex
+// Input: "*.site.com, api.example.com/v1/*"
+// Output: "(^https?://[^/]*\.site\.com)|(api\.example\.com/v1/.*)" (regex string)
 function urlFilterToRegex(input) {
   if (!input) return '';
   const patterns = input.split(',').map(p => p.trim()).filter(Boolean);
   if (patterns.length === 0) return '';
   const regexParts = patterns.map(p => {
-    // 와일드카드(*) → 플레이스홀더 치환 후, 특수문자 이스케이프, 복원
+    // Wildcard(*) → placeholder substitution, escape special chars, restore
     const PH = '\x00WILD\x00';
     let r = p.replace(/\*/g, PH);
-    r = r.replace(/[.+?^${}()|[\]\\]/g, '\\$&'); // regex 특수문자 이스케이프
-    r = r.replace(new RegExp(PH.replace(/\x00/g, '\\x00'), 'g'), '.*'); // 플레이스홀더 → .*
-    // *.domain 패턴은 프로토콜 포함 매칭 (https://sub.domain)
+    r = r.replace(/[.+?^${}()|[\]\\]/g, '\\$&'); // Escape regex special chars
+    r = r.replace(new RegExp(PH.replace(/\x00/g, '\\x00'), 'g'), '.*'); // Placeholder → .*
+    // *.domain pattern matches with protocol (https://sub.domain)
     if (p.startsWith('*.')) {
-      r = '^https?://[^/]*' + r.slice(2); // 선행 .* 제거하고 [^/]* 로 대체
+      r = '^https?://[^/]*' + r.slice(2); // Remove leading .* and replace with [^/]*
     }
     return '(' + r + ')';
   });
   return regexParts.join('|');
 }
 
-// URL 필터 매칭 테스트 (캐시)
+// URL filter match test (cached)
 let _urlFilterCache = { input: '', regex: null };
 function testUrlFilter(url) {
   const input = document.getElementById('icpt-url-filter').value.trim();
-  if (!input) return true; // 필터 없으면 모두 통과
+  if (!input) return true; // No filter = pass all
   if (_urlFilterCache.input !== input) {
     const pattern = urlFilterToRegex(input);
     try {
@@ -1122,30 +1479,30 @@ function testUrlFilter(url) {
   return _urlFilterCache.regex ? _urlFilterCache.regex.test(url) : true;
 }
 
-// Proxy Mode에서 인터셉트된 요청 처리
+// Handle intercepted request in Proxy Mode
 function handleProxyInterceptedRequest(msg) {
   const methodFilter = document.getElementById('icpt-method-filter').value;
 
-  // Method 필터
+  // Method filter
   if (methodFilter && msg.method !== methodFilter) {
     sendInterceptDecision(msg.id, { action: 'forward' });
     addInterceptLog('bypassed', msg.method, msg.url, 'req');
     return;
   }
-  // URL 필터 (와일드카드/다중 패턴)
+  // URL filter (wildcard/multi-pattern)
   if (!testUrlFilter(msg.url)) {
     sendInterceptDecision(msg.id, { action: 'forward' });
     addInterceptLog('bypassed', msg.method, msg.url, 'req');
     return;
   }
-  // Bypass 룰
+  // Bypass rules
   if (interceptBypassRegex && interceptBypassRegex.test(msg.url)) {
     sendInterceptDecision(msg.id, { action: 'forward' });
     addInterceptLog('bypassed', msg.method, msg.url, 'req');
     return;
   }
 
-  // Request 큐에 추가
+  // Add to request queue
   const newItem = {
     id: msg.id,
     reqType: 'proxy',
@@ -1169,7 +1526,7 @@ function handleResponseIntercepted(msg) {
     body = JSON.stringify(parsed, null, 2);
   } catch {}
 
-  // Response 큐에 추가
+  // Add to response queue
   const newItem = {
     id: msg.id,
     method: msg.method,
@@ -1187,7 +1544,7 @@ function handleResponseIntercepted(msg) {
   renderRespQueue();
 }
 
-// 모드 전환
+// Mode switching
 icptModeSelect.addEventListener('change', () => {
   if (interceptActive) {
     alert('Cannot change mode while intercept is active. Please turn Intercept OFF first.');
@@ -1198,7 +1555,7 @@ icptModeSelect.addEventListener('change', () => {
   icptProxyStatus.style.display = interceptMode === 'proxy' ? 'inline-block' : 'none';
 });
 
-// Editor 탭 전환 (사이드별 스코핑)
+// Editor tab switching (scoped by side)
 document.querySelectorAll('.icpt-editor-tabs').forEach(tabBar => {
   tabBar.querySelectorAll('.icpt-ed-tab').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -1216,7 +1573,7 @@ icptToggleBtn.addEventListener('click', () => {
   if (interceptActive) stopIntercept(); else startIntercept();
 });
 
-// Request 사이드 버튼
+// Request side buttons
 document.getElementById('icpt-req-forward').addEventListener('click', () => { activeSide = 'req'; forwardSelected(false); });
 document.getElementById('icpt-req-forward-modified').addEventListener('click', () => { activeSide = 'req'; forwardSelected(true); });
 document.getElementById('icpt-req-drop').addEventListener('click', () => { activeSide = 'req'; dropSelected(); });
@@ -1224,19 +1581,19 @@ document.getElementById('icpt-req-mock').addEventListener('click', () => { activ
 document.getElementById('icpt-req-add-header').addEventListener('click', () => addIcptKvRow('icpt-req-headers-list', '', ''));
 document.getElementById('icpt-mock-add-header').addEventListener('click', () => addIcptKvRow('icpt-mock-headers-list', '', ''));
 
-// Response 사이드 버튼
+// Response side buttons
 document.getElementById('icpt-resp-forward').addEventListener('click', () => { activeSide = 'resp'; forwardSelected(false); });
 document.getElementById('icpt-resp-forward-modified').addEventListener('click', () => { activeSide = 'resp'; forwardSelected(true); });
 document.getElementById('icpt-resp-drop').addEventListener('click', () => { activeSide = 'resp'; dropSelected(); });
 document.getElementById('icpt-resp-add-header').addEventListener('click', () => addIcptKvRow('icpt-resp-headers-list', '', ''));
 
-// 공통 버튼
+// Common buttons
 document.getElementById('icpt-forward-all').addEventListener('click', forwardAll);
 document.getElementById('icpt-drop-all').addEventListener('click', dropAll);
 document.getElementById('icpt-clear-log').addEventListener('click', () => { interceptLog.length = 0; renderInterceptLog(); });
 document.getElementById('icpt-bypass-apply').addEventListener('click', applyBypassRule);
 
-// 인터셉트 단축키 (F/G/D/R/A/Q) — activeSide 기반
+// Intercept keyboard shortcuts (F/G/D/R/A/Q) — activeSide based
 document.addEventListener('keydown', (e) => {
   const interceptSection = document.getElementById('intercept');
   if (!interceptSection || !interceptSection.classList.contains('active')) return;
@@ -1254,23 +1611,23 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// 확장자 체크박스 변경 시 자동 적용
+// Auto-apply on extension checkbox change
 document.querySelectorAll('.icpt-ext-check input[data-ext]').forEach(cb => {
   cb.addEventListener('change', applyBypassRule);
 });
 
 function buildBypassPattern() {
-  // 체크된 확장자 수집
+  // Collect checked extensions
   const exts = [];
   document.querySelectorAll('.icpt-ext-check input[data-ext]:checked').forEach(cb => {
     exts.push(cb.dataset.ext);
   });
-  // 추가 사용자 regex
+  // Additional user regex
   const userVal = document.getElementById('icpt-bypass-input').value.trim();
 
   const parts = [];
   if (exts.length > 0) {
-    // woff → woff|woff2 변환
+    // woff → woff|woff2 conversion
     const extPatterns = exts.map(e => e === 'woff' ? 'woff2?' : e === 'jpg' ? 'jpe?g' : e);
     parts.push('\\.(' + extPatterns.join('|') + ')(\\?|$)');
   }
@@ -1287,7 +1644,7 @@ function applyBypassRule() {
     alert('Invalid regex: ' + e.message);
     return;
   }
-  // Proxy 모드에서는 서버에도 bypass 패턴 전달
+  // In Proxy mode, also send bypass pattern to server
   if (interceptMode === 'proxy' && interceptActive) {
     sendToBg({
       type: 'update_config',
@@ -1296,7 +1653,7 @@ function applyBypassRule() {
   }
 }
 
-// Intercept 시작 (모드별 분기)
+// Start intercept (branch by mode)
 function startIntercept() {
   interceptActive = true;
   icptToggleBtn.textContent = 'Intercept ON';
@@ -1313,7 +1670,7 @@ function startIntercept() {
 
 function startProxyIntercept() {
   updateProxyStatus('idle', 'Proxy: Connecting...');
-  // 확장자 체크박스 + 사용자 regex 반영
+  // Apply extension checkboxes + user regex
   applyBypassRule();
   const combined = buildBypassPattern();
   const interceptResp = document.getElementById('icpt-resp').checked;
@@ -1331,7 +1688,7 @@ function startProxyIntercept() {
   });
 }
 
-// Response 체크박스 실시간 반영
+// Real-time update when Response checkbox changes
 document.getElementById('icpt-resp').addEventListener('change', (e) => {
   if (interceptActive && interceptMode === 'proxy') {
     sendToBg({
@@ -1341,7 +1698,7 @@ document.getElementById('icpt-resp').addEventListener('change', (e) => {
   }
 });
 
-// URL 필터 / Method 필터 변경 시 프록시에 실시간 반영
+// Real-time proxy update on URL filter / Method filter change
 function syncFiltersToProxy() {
   if (interceptActive && interceptMode === 'proxy') {
     const raw = document.getElementById('icpt-url-filter').value.trim();
@@ -1354,7 +1711,7 @@ function syncFiltersToProxy() {
     });
   }
 }
-// URL 필터: 입력 멈춘 후 300ms 뒤 반영 (debounce)
+// URL filter: apply 300ms after input stops (debounce)
 let urlFilterTimer = null;
 document.getElementById('icpt-url-filter').addEventListener('input', () => {
   clearTimeout(urlFilterTimer);
@@ -1363,7 +1720,7 @@ document.getElementById('icpt-url-filter').addEventListener('input', () => {
 document.getElementById('icpt-method-filter').addEventListener('change', syncFiltersToProxy);
 
 function startLegacyIntercept() {
-  // 기존 monkey-patch 방식
+  // Legacy monkey-patch approach
   chrome.devtools.inspectedWindow.eval('typeof window.__icptActive__', (result) => {
     const activate = () => {
       chrome.devtools.inspectedWindow.eval('window.__icptActive__ = true');
@@ -1392,7 +1749,7 @@ function injectInterceptHookViaEval(callback) {
   );
 }
 
-// Intercept 중지 (모드별 분기)
+// Stop intercept (branch by mode)
 function stopIntercept() {
   interceptActive = false;
   icptToggleBtn.textContent = 'Intercept OFF';
@@ -1400,7 +1757,7 @@ function stopIntercept() {
   interceptTabBtn.classList.remove('intercepting');
   icptModeSelect.disabled = false;
 
-  // 남아있는 큐 전부 forward
+  // Forward all remaining queue items
   forwardAll();
 
   if (interceptMode === 'proxy') {
@@ -1412,7 +1769,7 @@ function stopIntercept() {
   }
 }
 
-// Legacy 모드 전용: polling
+// Legacy mode only: polling
 function pollInterceptQueue() {
   if (!interceptActive || interceptMode !== 'legacy') return;
 
@@ -1461,7 +1818,7 @@ function pollInterceptQueue() {
   );
 }
 
-// Decision 전송 (모드별 분기)
+// Send decision (branch by mode)
 function sendInterceptDecision(id, decision) {
   if (interceptMode === 'proxy') {
     sendToBg({ type: 'decision', id, ...decision });
@@ -1473,7 +1830,7 @@ function sendInterceptDecision(id, decision) {
   }
 }
 
-// ---- Queue 렌더링 ----
+// ---- Queue Rendering ----
 function updateBadges() {
   reqBadge.textContent = reqQueue.length;
   respBadge.textContent = respQueue.length;
@@ -1526,7 +1883,7 @@ function renderRespQueue() {
   renderQueueItems(respQueue, respQueueEl, selectedRespId, 'resp');
 }
 
-// ---- Editor 표시 ----
+// ---- Editor Display ----
 function showReqEditor(item) {
   reqPlaceholder.style.display = 'none';
   reqEditorContent.classList.remove('hidden');
@@ -1538,7 +1895,7 @@ function showReqEditor(item) {
   headersList.innerHTML = '';
   Object.entries(item.headers).forEach(([k, v]) => addIcptKvRow('icpt-req-headers-list', k, Array.isArray(v) ? v.join(', ') : v));
   document.getElementById('icpt-req-edit-body').value = item.postData || '';
-  // Mock 탭 초기화
+  // Initialize Mock tab
   document.getElementById('icpt-mock-status').value = 200;
   document.getElementById('icpt-mock-headers-list').innerHTML = '';
   addIcptKvRow('icpt-mock-headers-list', 'Content-Type', 'application/json');
@@ -1571,7 +1928,7 @@ function hideRespEditor() {
   respPlaceholder.style.display = '';
 }
 
-// ---- KV 헬퍼 (공유) ----
+// ---- KV Helper (shared) ----
 function addIcptKvRow(listId, name, value) {
   const list = document.getElementById(listId);
   const row = document.createElement('div');
@@ -1599,7 +1956,7 @@ function getIcptKvEntries(listId) {
   return entries;
 }
 
-// ---- 큐 조작 ----
+// ---- Queue Operations ----
 function removeFromReqQueue(id) {
   const idx = reqQueue.findIndex(q => q.id === id);
   if (idx >= 0) reqQueue.splice(idx, 1);
@@ -1620,7 +1977,7 @@ function removeFromRespQueue(id) {
   renderRespQueue();
 }
 
-// ---- 액션 (activeSide 기반) ----
+// ---- Actions (based on activeSide) ----
 function forwardSelected(modified) {
   if (activeSide === 'req') {
     const item = reqQueue.find(q => q.id === selectedReqId);
@@ -1728,7 +2085,7 @@ function dropAll() {
   renderRespQueue();
 }
 
-// 응답 캡처 히스토리 (id → response)
+// Response capture history (id → response)
 const capturedResponses = new Map();
 
 function handleResponseCaptured(msg) {
@@ -1739,13 +2096,13 @@ function handleResponseCaptured(msg) {
     bodyLength: msg.bodyLength,
     bodyTruncated: msg.bodyTruncated,
   });
-  // 로그에 응답 기록
+  // Record response in log
   const logEntry = interceptLog.find(l => l.id === msg.id);
   if (logEntry) {
     logEntry.responseStatus = msg.statusCode;
     renderInterceptLog();
   }
-  // 최대 200건 유지
+  // Keep max 200 entries
   if (capturedResponses.size > 200) {
     const oldest = capturedResponses.keys().next().value;
     capturedResponses.delete(oldest);
@@ -1777,7 +2134,7 @@ function renderInterceptLog() {
   }).join('');
 }
 
-// 로그 클릭 시 응답 상세 표시
+// Show response detail on log click
 icptLogEl.addEventListener('click', (e) => {
   const item = e.target.closest('[data-resp-id]');
   if (!item) return;
@@ -1787,7 +2144,7 @@ icptLogEl.addEventListener('click', (e) => {
 });
 
 function showCapturedResponse(resp) {
-  // Response 사이드 에디터에 캡처된 응답 표시
+  // Display captured response in Response side editor
   respPlaceholder.style.display = 'none';
   respEditorContent.classList.remove('hidden');
 
@@ -1816,7 +2173,7 @@ function showCapturedResponse(resp) {
 }
 
 // ============================================================
-// 2. DOM 검사
+// 2. DOM Inspection
 // ============================================================
 
 document.getElementById('dom-inspect').addEventListener('click', inspectDOM);
@@ -1954,7 +2311,7 @@ function syntaxHighlightDOM(el) {
 }
 
 // ============================================================
-// 3. Console 로그 캡처 (페이지에 hook 주입, debugger 불필요)
+// 3. Console Log Capture (inject hook into page, no debugger needed)
 // ============================================================
 const consoleLogs = [];
 let consoleCapturing = false;
@@ -1974,7 +2331,7 @@ function startConsoleCapture() {
   document.getElementById('console-start').disabled = true;
   document.getElementById('console-stop').disabled = false;
 
-  // 페이지에 console hook 주입
+  // Inject console hook into page
   const hookExpr = `
     (function() {
       if (window.__consoleHooked__) return 'already';
@@ -2005,7 +2362,7 @@ function startConsoleCapture() {
   `;
   chrome.devtools.inspectedWindow.eval(hookExpr);
 
-  // Polling으로 로그 수집
+  // Collect logs via polling
   consolePollTimer = setInterval(pollConsoleLogs, 500);
 }
 
@@ -2099,7 +2456,7 @@ function renderConsoleLogs() {
 }
 
 // ============================================================
-// 4. Performance 정보
+// 4. Performance Info
 // ============================================================
 
 document.getElementById('perf-collect').addEventListener('click', collectPerformance);
@@ -2184,7 +2541,7 @@ function collectPerformance() {
 }
 
 // ============================================================
-// 5. Storage 조회
+// 5. Storage Query
 // ============================================================
 
 document.getElementById('storage-load').addEventListener('click', loadStorage);
@@ -2244,7 +2601,7 @@ function loadStorage() {
 }
 
 // ============================================================
-// 유틸리티 함수
+// Utility Functions
 // ============================================================
 
 function escapeHtml(str) {

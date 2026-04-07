@@ -9,7 +9,7 @@ let nativePort = null;
 const panelPorts = new Map(); // tabId -> port
 
 // ============================================================
-// 1. Content script 등록 (기존 legacy 모드 유지)
+// 1. Content script registration (legacy mode preserved)
 // ============================================================
 chrome.scripting.registerContentScripts([{
   id: 'intercept-hook',
@@ -30,7 +30,7 @@ chrome.scripting.registerContentScripts([{
 });
 
 // ============================================================
-// 2. Panel 연결 관리
+// 2. Panel connection management
 // ============================================================
 chrome.runtime.onConnect.addListener((port) => {
   if (!port.name.startsWith('panel-')) return;
@@ -44,7 +44,7 @@ chrome.runtime.onConnect.addListener((port) => {
 
   port.onDisconnect.addListener(() => {
     panelPorts.delete(tabId);
-    // 모든 패널이 닫히면 프록시 중지
+    // Stop proxy when all panels are closed
     if (panelPorts.size === 0 && nativePort) {
       sendToNative({ type: 'intercept_off' });
       resetProxySettings();
@@ -53,7 +53,7 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 // ============================================================
-// 3. Native Messaging 연결
+// 3. Native Messaging connection
 // ============================================================
 function connectNative() {
   if (nativePort) return true;
@@ -66,11 +66,11 @@ function connectNative() {
   }
 
   nativePort.onMessage.addListener((msg) => {
-    // proxy_started 수신 시 브라우저 프록시 설정 적용
+    // Apply browser proxy settings when proxy_started is received
     if (msg.type === 'proxy_started') {
       setProxySettings(msg.port || 8899);
     }
-    // 프록시에서 온 메시지를 모든 패널에 전달
+    // Forward messages from proxy to all panels
     broadcastToPanels(msg);
   });
 
@@ -105,14 +105,14 @@ function broadcastToPanels(msg) {
 }
 
 // ============================================================
-// 4. Panel 메시지 핸들링
+// 4. Panel message handling
 // ============================================================
 function handlePanelMessage(tabId, msg) {
   switch (msg.type) {
     case 'intercept_on':
       connectNative();
       sendToNative({ type: 'intercept_on', config: msg.config || {} });
-      // proxy_started 메시지 수신 시 setProxySettings 호출됨 (onMessage 리스너)
+      // setProxySettings is called when proxy_started message is received (onMessage listener)
       break;
 
     case 'intercept_off':
@@ -140,7 +140,7 @@ function handlePanelMessage(tabId, msg) {
 }
 
 // ============================================================
-// 5. Chrome Proxy Settings 관리
+// 5. Chrome Proxy Settings management
 // ============================================================
 function setProxySettings(port) {
   chrome.proxy.settings.set({
@@ -157,7 +157,7 @@ function setProxySettings(port) {
           '127.0.0.1',
           'localhost',
           'chrome-extension://*',
-          // Chrome 내부 sync/update 도메인
+          // Chrome internal sync/update domains
           'clients*.google.com',
           'update.googleapis.com',
           '*.gvt1.com',

@@ -10,7 +10,8 @@
     <header>
       <h1>DevTools++</h1>
       <div class="tabs">
-        <button class="tab active" data-tab="network">Network</button>
+        <button class="tab active" data-tab="sitemap">Site Map</button>
+        <button class="tab" data-tab="network">Network</button>
         <button class="tab intercept-tab" data-tab="intercept">Intercept</button>
         <button class="tab" data-tab="dom">DOM</button>
         <button class="tab" data-tab="console">Console</button>
@@ -19,8 +20,46 @@
       </div>
     </header>
 
-    <!-- Network 탭 -->
-    <section id="network" class="tab-content active">
+    <!-- Site Map tab -->
+    <section id="sitemap" class="tab-content active">
+      <div class="toolbar">
+        <button id="sitemap-clear" class="btn">Clear</button>
+        <span id="sitemap-stats" class="badge">0 hosts · 0 endpoints</span>
+        <input type="text" id="sitemap-search" placeholder="Search URL..." class="filter-input" style="flex:1">
+        <select id="sitemap-type-filter">
+          <option value="">All Types</option>
+          <option value="api">API (json/xml)</option>
+          <option value="page">Pages (html)</option>
+          <option value="script">Scripts (js)</option>
+          <option value="style">Styles (css)</option>
+          <option value="image">Images</option>
+          <option value="font">Fonts</option>
+          <option value="other">Other</option>
+        </select>
+        <select id="sitemap-status-filter">
+          <option value="">All Status</option>
+          <option value="2xx">2xx Success</option>
+          <option value="3xx">3xx Redirect</option>
+          <option value="4xx">4xx Client Error</option>
+          <option value="5xx">5xx Server Error</option>
+        </select>
+      </div>
+      <div class="sitemap-split">
+        <div class="sitemap-tree-pane">
+          <div id="sitemap-tree" class="sitemap-tree"></div>
+        </div>
+        <div class="sitemap-detail-pane hidden" id="sitemap-detail">
+          <div class="sitemap-detail-header">
+            <span id="sitemap-detail-path" class="sitemap-detail-path">/</span>
+            <button id="sitemap-detail-close" class="btn detail-close-btn">X</button>
+          </div>
+          <div id="sitemap-detail-list" class="sitemap-detail-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Network tab -->
+    <section id="network" class="tab-content">
       <div class="toolbar">
         <button id="network-start" class="btn btn-primary">Start Monitoring</button>
         <button id="network-stop" class="btn btn-danger" disabled>Stop</button>
@@ -70,7 +109,7 @@
           <div id="detail-preview" class="detail-content">
             <div id="detail-preview-body" class="detail-section"></div>
           </div>
-          <!-- Replay & Tamper 탭 -->
+          <!-- Replay & Tamper tab -->
           <div id="detail-replay" class="detail-content">
             <div class="replay-container">
               <!-- Request Composer -->
@@ -91,7 +130,7 @@
                 </div>
 
                 <div class="replay-sections">
-                  <!-- Headers 편집 -->
+                  <!-- Edit Headers -->
                   <div class="replay-section">
                     <div class="replay-section-title" data-toggle="replay-headers-body">
                       <span class="arrow">&#9660;</span>
@@ -103,7 +142,7 @@
                     </div>
                   </div>
 
-                  <!-- Query Params 편집 -->
+                  <!-- Edit Query Params -->
                   <div class="replay-section">
                     <div class="replay-section-title" data-toggle="replay-params-body">
                       <span class="arrow">&#9660;</span>
@@ -115,7 +154,7 @@
                     </div>
                   </div>
 
-                  <!-- Body 편집 -->
+                  <!-- Edit Body -->
                   <div class="replay-section">
                     <div class="replay-section-title" data-toggle="replay-body-section">
                       <span class="arrow">&#9660;</span>
@@ -135,7 +174,7 @@
                 </div>
               </div>
 
-              <!-- Replay 결과 -->
+              <!-- Replay result -->
               <div class="replay-response" id="replay-response">
                 <div class="replay-response-header">
                   <span class="replay-response-title">Response</span>
@@ -157,7 +196,7 @@
                 </div>
               </div>
 
-              <!-- Replay 히스토리 -->
+              <!-- Replay history -->
               <div class="replay-history" id="replay-history">
                 <div class="replay-section-title" data-toggle="replay-history-body">
                   <span class="arrow">&#9660;</span>
@@ -174,9 +213,9 @@
       </div>
     </section>
 
-    <!-- Intercept 탭 -->
+    <!-- Intercept tab -->
     <section id="intercept" class="tab-content">
-      <!-- 상단: 컨트롤 바 -->
+      <!-- Top: Control bar -->
       <div class="toolbar icpt-toolbar">
         <select id="icpt-mode-select" title="Select intercept mode" style="padding:2px 6px;background:#fff;color:#333;border:1px solid #c4c4c4;border-radius:4px;font-size:12px">
           <option value="proxy">Proxy Mode</option>
@@ -201,7 +240,7 @@
         <button id="icpt-drop-all" class="btn btn-danger" title="Drop all paused requests">Drop All</button>
       </div>
 
-      <!-- Breakpoint 룰 -->
+      <!-- Breakpoint rules -->
       <div class="toolbar icpt-rules-bar">
         <span style="color:#666;font-size:12px">Auto-forward:</span>
         <div class="icpt-ext-filters">
@@ -215,19 +254,19 @@
           <label class="icpt-ext-check"><input type="checkbox" data-ext="ico" checked> ico</label>
         </div>
         <span style="color:#555;font-size:12px;margin-left:4px">+</span>
-        <input type="text" id="icpt-bypass-input" class="filter-input" placeholder="추가 bypass regex..." style="flex:1">
+        <input type="text" id="icpt-bypass-input" class="filter-input" placeholder="Additional bypass regex..." style="flex:1">
         <button id="icpt-bypass-apply" class="btn btn-xs">Apply</button>
         <span id="icpt-queue-badge" class="badge">0 paused</span>
       </div>
-      <!-- 단축키 안내 -->
+      <!-- Keyboard shortcuts -->
       <div class="toolbar icpt-shortcut-bar">
-        <span style="color:#555;font-size:11px">단축키: <kbd>F</kbd> Forward · <kbd>G</kbd> Forward Modified · <kbd>D</kbd> Drop · <kbd>R</kbd> Mock Response · <kbd>A</kbd> Forward All · <kbd>Q</kbd> Drop All</span>
+        <span style="color:#555;font-size:11px">Shortcuts: <kbd>F</kbd> Forward · <kbd>G</kbd> Forward Modified · <kbd>D</kbd> Drop · <kbd>R</kbd> Mock Response · <kbd>A</kbd> Forward All · <kbd>Q</kbd> Drop All</span>
       </div>
 
-      <!-- 메인: Request/Response 좌우 분할 -->
+      <!-- Main: Request/Response left/right split -->
       <div class="icpt-main-area">
         <div class="icpt-dual-split">
-          <!-- 좌: Request -->
+          <!-- Left: Request -->
           <div class="icpt-side icpt-req-side" data-side="req">
             <div class="icpt-side-header">
               <span>Request</span>
@@ -236,7 +275,7 @@
             <div id="icpt-req-queue" class="icpt-queue-list"></div>
             <div class="icpt-side-editor">
               <div class="icpt-editor-placeholder" id="icpt-req-placeholder">
-                <p style="color:#999;font-size:12px">대기 중인 요청 없음</p>
+                <p style="color:#999;font-size:12px">No pending requests</p>
               </div>
               <div class="icpt-editor-content hidden" id="icpt-req-editor-content">
                 <div class="icpt-editor-topbar">
@@ -276,7 +315,7 @@
             </div>
           </div>
 
-          <!-- 우: Response -->
+          <!-- Right: Response -->
           <div class="icpt-side icpt-resp-side" data-side="resp">
             <div class="icpt-side-header">
               <span>Response</span>
@@ -285,7 +324,7 @@
             <div id="icpt-resp-queue" class="icpt-queue-list"></div>
             <div class="icpt-side-editor">
               <div class="icpt-editor-placeholder" id="icpt-resp-placeholder">
-                <p style="color:#999;font-size:12px">대기 중인 응답 없음</p>
+                <p style="color:#999;font-size:12px">No pending responses</p>
               </div>
               <div class="icpt-editor-content hidden" id="icpt-resp-editor-content">
                 <div class="icpt-editor-topbar">
@@ -320,7 +359,7 @@
           </div>
         </div>
 
-        <!-- 하단: 공유 로그 -->
+        <!-- Bottom: Shared log -->
         <div class="icpt-log-strip">
           <div class="icpt-log-header">
             <span>Log</span>
@@ -331,7 +370,7 @@
       </div>
     </section>
 
-    <!-- DOM 탭 -->
+    <!-- DOM tab -->
     <section id="dom" class="tab-content">
       <div class="toolbar">
         <button id="dom-inspect" class="btn btn-primary">Get DOM Tree</button>
@@ -343,7 +382,7 @@
       <div id="dom-info" class="info-panel"></div>
     </section>
 
-    <!-- Console 탭 -->
+    <!-- Console tab -->
     <section id="console" class="tab-content">
       <div class="toolbar">
         <button id="console-start" class="btn btn-primary">Start Capture</button>
@@ -364,7 +403,7 @@
       <div id="console-output" class="console-output"></div>
     </section>
 
-    <!-- Performance 탭 -->
+    <!-- Performance tab -->
     <section id="performance" class="tab-content">
       <div class="toolbar">
         <button id="perf-collect" class="btn btn-primary">Collect Metrics</button>
@@ -373,7 +412,7 @@
       <div id="perf-metrics" class="metrics-grid"></div>
     </section>
 
-    <!-- Storage 탭 -->
+    <!-- Storage tab -->
     <section id="storage" class="tab-content">
       <div class="toolbar">
         <button id="storage-load" class="btn btn-primary">Load Storage</button>

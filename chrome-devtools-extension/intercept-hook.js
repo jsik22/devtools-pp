@@ -1,22 +1,22 @@
-// intercept-hook.js - MAIN world에서 document_start에 실행
-// 페이지의 어떤 JS보다 먼저 fetch/XHR/form/link/beacon을 프록시로 교체
+// intercept-hook.js - runs in MAIN world at document_start
+// Replaces fetch/XHR/form/link/beacon with proxied versions before any page JS executes
 
 (function() {
   // ============================================================
-  // 원본 저장
+  // Save originals
   // ============================================================
   var origFetch = window.fetch;
   var OrigXHR = window.XMLHttpRequest;
   var origSendBeacon = navigator.sendBeacon.bind(navigator);
 
   // ============================================================
-  // 공유 상태
+  // Shared state
   // ============================================================
   window.__icptActive__ = false;
   window.__icptQueue__ = [];
   window.__icptDecisions__ = {};
 
-  // 결정 대기 공통 함수
+  // Common function to wait for a decision
   function waitForDecision(id, timeout, callback) {
     var checks = 0;
     var timer = setInterval(function() {
@@ -45,7 +45,7 @@
   }
 
   // ============================================================
-  // 1. fetch 프록시
+  // 1. fetch proxy
   // ============================================================
   window.fetch = function(input, init) {
     if (!window.__icptActive__) return origFetch.apply(this, arguments);
@@ -93,7 +93,7 @@
   };
 
   // ============================================================
-  // 2. XMLHttpRequest 프록시
+  // 2. XMLHttpRequest proxy
   // ============================================================
   window.XMLHttpRequest = function() {
     var xhr = new OrigXHR();
@@ -167,7 +167,7 @@
   window.XMLHttpRequest.DONE = 4;
 
   // ============================================================
-  // 3. <form> submit 인터셉트
+  // 3. <form> submit intercept
   // ============================================================
   document.addEventListener('submit', function(e) {
     if (!window.__icptActive__) return;
@@ -182,13 +182,13 @@
     var action = form.action || window.location.href;
     var formData = new FormData(form);
 
-    // FormData → 직렬화
+    // Serialize FormData
     var bodyText = '';
     var headers = {};
     var enctype = form.enctype || 'application/x-www-form-urlencoded';
 
     if (method === 'GET') {
-      // GET: query string에 추가
+      // GET: append to query string
       var url = new URL(action, window.location.href);
       formData.forEach(function(v, k) { url.searchParams.append(k, v); });
       action = url.toString();
@@ -199,7 +199,7 @@
       bodyText = params.toString();
       headers['Content-Type'] = 'application/x-www-form-urlencoded';
     } else if (enctype === 'multipart/form-data') {
-      // multipart는 문자열로 직렬화 어려움 → 키-값 목록으로 표시
+      // multipart is hard to serialize as string → show as key-value list
       var parts = [];
       formData.forEach(function(v, k) {
         if (v instanceof File) parts.push(k + '=[File: ' + v.name + ']');
@@ -216,16 +216,16 @@
     window.__icptQueue__.push({
       id: id, type: 'form', method: method, url: action,
       headers: headers, body: bodyText, timestamp: Date.now(),
-      _formRef: form  // 원본 form 참조 (forward 시 재사용)
+      _formRef: form  // Reference to original form (reused on forward)
     });
 
     waitForDecision(id, 600, function(d) {
       if (!d || d.action === 'forward') {
-        // 원본 form 그대로 submit
+        // Submit original form as-is
         form.removeEventListener('submit', arguments.callee);
         HTMLFormElement.prototype.submit.call(form);
       } else if (d.action === 'forward_modified') {
-        // 수정된 내용으로 fetch 실행
+        // Execute fetch with modified content
         var fetchInit = {
           method: d.method || method,
           headers: d.headers || headers,
@@ -236,12 +236,12 @@
         }
         var targetUrl = d.url || action;
         origFetch(targetUrl, fetchInit).then(function(resp) {
-          // form submit 결과는 보통 페이지 이동 → 응답 HTML로 이동
+          // form submit result is usually page navigation → navigate to response HTML
           if (resp.redirected) {
             window.location.href = resp.url;
           } else {
             return resp.text().then(function(html) {
-              // 같은 페이지에 결과 반영
+              // Render result on the same page
               if (resp.headers.get('content-type') && resp.headers.get('content-type').includes('text/html')) {
                 document.open();
                 document.write(html);
@@ -255,10 +255,10 @@
           window.location.href = targetUrl;
         });
       } else if (d.action === 'drop') {
-        // 아무것도 안 함 (요청 차단)
+        // Do nothing (request blocked)
         console.log('[DevTools++] Form submission dropped:', action);
       } else if (d.action === 'mock') {
-        // mock 응답을 페이지에 표시
+        // Render mock response on the page
         if (d.responseBody) {
           document.open();
           document.write(d.responseBody);
@@ -268,25 +268,25 @@
         HTMLFormElement.prototype.submit.call(form);
       }
     });
-  }, true); // capture phase로 등록 → 다른 핸들러보다 먼저 실행
+  }, true); // Registered at capture phase → runs before other handlers
 
   // ============================================================
-  // 4. <a> 링크 클릭 인터셉트
+  // 4. <a> link click intercept
   // ============================================================
   document.addEventListener('click', function(e) {
     if (!window.__icptActive__) return;
 
-    // 클릭된 요소에서 가장 가까운 <a> 찾기
+    // Find the nearest <a> from the clicked element
     var link = e.target.closest ? e.target.closest('a[href]') : null;
     if (!link) return;
 
     var href = link.href;
     if (!href) return;
 
-    // javascript:, #, mailto: 등은 무시
+    // Ignore javascript:, #, mailto:, etc.
     if (href.startsWith('javascript:') || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
 
-    // 새 탭 열기(target="_blank")도 무시 (사용자 의도 보존)
+    // Also ignore new tab opens (target="_blank") — preserve user intent
     if (link.target === '_blank') return;
 
     e.preventDefault();
@@ -312,7 +312,7 @@
   }, true);
 
   // ============================================================
-  // 5. navigator.sendBeacon 프록시
+  // 5. navigator.sendBeacon proxy
   // ============================================================
   navigator.sendBeacon = function(url, data) {
     if (!window.__icptActive__) return origSendBeacon(url, data);
@@ -331,25 +331,25 @@
       headers: {}, body: bodyText, timestamp: Date.now()
     });
 
-    // sendBeacon은 boolean 반환 → 즉시 true 반환하고 비동기로 처리
+    // sendBeacon returns boolean → return true immediately and handle async
     waitForDecision(id, 600, function(d) {
       if (!d || d.action === 'forward') {
         origSendBeacon(url, data);
       } else if (d.action === 'forward_modified') {
         origSendBeacon(d.url || url, d.body || data);
       }
-      // drop이면 아무것도 안 함
+      // do nothing on drop
     });
     return true;
   };
 
   // ============================================================
-  // 6. window.location 변경 인터셉트
+  // 6. window.location change intercept
   // ============================================================
   var origLocation = window.location;
   var locationDesc = Object.getOwnPropertyDescriptor(window, 'location');
 
-  // location.href setter 오버라이드
+  // Override location.href setter
   try {
     var origHrefDesc = Object.getOwnPropertyDescriptor(window.Location.prototype, 'href');
     if (origHrefDesc && origHrefDesc.set) {
@@ -371,17 +371,17 @@
             } else if (d.action === 'forward_modified') {
               origHrefSet.call(origLocation, d.url || val);
             }
-            // drop이면 아무것도 안 함
+            // do nothing on drop
           });
         },
         configurable: true
       });
     }
   } catch(e) {
-    // 일부 브라우저에서 location 오버라이드 불가 → 무시
+    // Some browsers do not allow overriding location → ignore
   }
 
-  // location.assign 오버라이드
+  // Override location.assign
   var origAssign = window.Location.prototype.assign;
   window.Location.prototype.assign = function(url) {
     if (!window.__icptActive__) return origAssign.call(this, url);
@@ -401,7 +401,7 @@
     });
   };
 
-  // location.replace 오버라이드
+  // Override location.replace
   var origReplace = window.Location.prototype.replace;
   window.Location.prototype.replace = function(url) {
     if (!window.__icptActive__) return origReplace.call(this, url);

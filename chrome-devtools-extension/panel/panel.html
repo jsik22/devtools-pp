@@ -13,9 +13,6 @@
         <button class="tab active" data-tab="sitemap">Site Map</button>
         <button class="tab" data-tab="network">Network</button>
         <button class="tab intercept-tab" data-tab="intercept">Intercept</button>
-        <button class="tab" data-tab="console">Console</button>
-        <button class="tab" data-tab="performance">Performance</button>
-        <button class="tab" data-tab="storage">Storage</button>
       </div>
     </header>
 
@@ -370,58 +367,6 @@
       </div>
     </section>
 
-    <!-- Console tab -->
-    <section id="console" class="tab-content">
-      <div class="toolbar">
-        <button id="console-start" class="btn btn-primary">Start Capture</button>
-        <button id="console-stop" class="btn btn-danger" disabled>Stop</button>
-        <button id="console-clear" class="btn">Clear</button>
-        <select id="console-level-filter">
-          <option value="all">All Levels</option>
-          <option value="log">Log</option>
-          <option value="warning">Warning</option>
-          <option value="error">Error</option>
-          <option value="info">Info</option>
-        </select>
-      </div>
-      <div class="toolbar">
-        <input type="text" id="console-input" placeholder="Execute JavaScript expression..." class="filter-input" style="flex:1">
-        <button id="console-execute" class="btn btn-primary">Execute</button>
-      </div>
-      <div id="console-output" class="console-output"></div>
-    </section>
-
-    <!-- Performance tab -->
-    <section id="performance" class="tab-content">
-      <div class="toolbar">
-        <button id="perf-collect" class="btn btn-primary">Collect Metrics</button>
-        <button id="perf-refresh" class="btn">Refresh</button>
-      </div>
-      <div id="perf-metrics" class="metrics-grid"></div>
-    </section>
-
-    <!-- Storage tab -->
-    <section id="storage" class="tab-content">
-      <div class="toolbar">
-        <button id="storage-load" class="btn btn-primary">Load Storage</button>
-        <select id="storage-type">
-          <option value="localStorage">Local Storage</option>
-          <option value="sessionStorage">Session Storage</option>
-          <option value="cookies">Cookies</option>
-        </select>
-      </div>
-      <div class="table-wrapper">
-        <table id="storage-table">
-          <thead>
-            <tr>
-              <th>Key</th>
-              <th>Value</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
   </div>
 
   <script src="panel.js"></script>

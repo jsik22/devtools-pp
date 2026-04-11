@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "DevTools++",
-  "version": "0.4.1",
-  "description": "Power-user extension for Chrome DevTools - network monitoring, request interception, DOM inspection, console capture",
+  "version": "0.5",
+  "description": "Power-user extension for Chrome DevTools - network monitoring, request interception, replay, site map",
   "permissions": [
     "debugger",
     "activeTab",

@@ -1630,9 +1630,12 @@ function showSetupHint() {
   }
 }
 
-// Convert wildcard URL filter to regex
-// Input: "*.site.com, api.example.com/v1/*"
-// Output: "(^https?://[^/]*\.site\.com)|(api\.example\.com/v1/.*)" (regex string)
+// Convert wildcard URL filter to regex.
+// Patterns are matched against host+pathname only (no protocol, no query/hash),
+// so query-string contents (e.g. tracker payloads carrying the page URL) cannot
+// pollute the match.
+// Input:  "*.site.com, api.example.com/v1/*"
+// Output: "(^[^/]*\.site\.com)|(api\.example\.com/v1/.*)" (regex string)
 function urlFilterToRegex(input) {
   if (!input) return '';
   const patterns = input.split(',').map(p => p.trim()).filter(Boolean);
@@ -1643,29 +1646,74 @@ function urlFilterToRegex(input) {
     let r = p.replace(/\*/g, PH);
     r = r.replace(/[.+?^${}()|[\]\\]/g, '\\$&'); // Escape regex special chars
     r = r.replace(new RegExp(PH.replace(/\x00/g, '\\x00'), 'g'), '.*'); // Placeholder → .*
-    // *.domain pattern matches with protocol (https://sub.domain)
+    // *.domain pattern: anchor to start of host (no protocol — we strip it before matching)
     if (p.startsWith('*.')) {
-      r = '^https?://[^/]*' + r.slice(2); // Remove leading .* and replace with [^/]*
+      r = '^[^/]*' + r.slice(2); // Remove leading .* and replace with [^/]*
     }
     return '(' + r + ')';
   });
   return regexParts.join('|');
 }
 
-// URL filter match test (cached)
-let _urlFilterCache = { input: '', regex: null };
-function testUrlFilter(url) {
-  const input = document.getElementById('icpt-url-filter').value.trim();
-  if (!input) return true; // No filter = pass all
-  if (_urlFilterCache.input !== input) {
-    const pattern = urlFilterToRegex(input);
-    try {
-      _urlFilterCache = { input, regex: pattern ? new RegExp(pattern, 'i') : null };
-    } catch {
-      _urlFilterCache = { input, regex: null };
-    }
+// Strip protocol/query/hash so the filter only sees host + pathname.
+// Falls back to the raw url if it can't be parsed.
+function _filterTarget(url) {
+  try {
+    const u = new URL(url);
+    return u.host + u.pathname;
+  } catch {
+    return url;
   }
-  return _urlFilterCache.regex ? _urlFilterCache.regex.test(url) : true;
+}
+
+// URL filter cache holds the *applied* filter, not the live input value.
+// Updated only via applyUrlFilter() (Apply button / Enter / startIntercept).
+let _urlFilterCache = { input: '', regex: null };
+
+function testUrlFilter(url) {
+  if (!_urlFilterCache.regex) return true; // No filter applied = pass all
+  return _urlFilterCache.regex.test(_filterTarget(url));
+}
+
+// Build regex + push to server. Called on Apply button / Enter / startIntercept.
+function applyUrlFilter() {
+  const input = document.getElementById('icpt-url-filter').value.trim();
+  const pattern = urlFilterToRegex(input);
+  try {
+    _urlFilterCache = { input, regex: pattern ? new RegExp(pattern, 'i') : null };
+  } catch {
+    _urlFilterCache = { input, regex: null };
+  }
+  // Push to proxy server (only meaningful while intercept is active)
+  if (interceptActive) {
+    sendToBg({
+      type: 'update_config',
+      config: {
+        urlFilter: pattern,
+        methodFilter: document.getElementById('icpt-method-filter').value,
+      }
+    });
+  }
+  refreshUrlFilterButtonState();
+  flashUrlFilterApply();
+}
+
+// Toggle dirty highlight on the Apply button when input != applied value.
+function refreshUrlFilterButtonState() {
+  const current = document.getElementById('icpt-url-filter').value.trim();
+  const btn = document.getElementById('icpt-url-filter-apply');
+  if (current !== _urlFilterCache.input) {
+    btn.classList.add('icpt-apply-dirty');
+  } else {
+    btn.classList.remove('icpt-apply-dirty');
+  }
+}
+
+// Brief green flash to confirm Apply succeeded.
+function flashUrlFilterApply() {
+  const btn = document.getElementById('icpt-url-filter-apply');
+  btn.classList.add('icpt-apply-flash');
+  setTimeout(() => btn.classList.remove('icpt-apply-flash'), 350);
 }
 
 // Handle intercepted request from the proxy
@@ -1839,9 +1887,19 @@ function startIntercept() {
   updateProxyStatus('idle', 'Proxy: Connecting...');
   // Apply extension checkboxes + user regex
   applyBypassRule();
+  // Whatever the user has typed in the URL filter is implicitly applied when
+  // intercept is turned on — they shouldn't have to click both buttons.
+  const urlFilterRaw = document.getElementById('icpt-url-filter').value.trim();
+  const urlFilterPattern = urlFilterToRegex(urlFilterRaw);
+  try {
+    _urlFilterCache = { input: urlFilterRaw, regex: urlFilterPattern ? new RegExp(urlFilterPattern, 'i') : null };
+  } catch {
+    _urlFilterCache = { input: urlFilterRaw, regex: null };
+  }
+  refreshUrlFilterButtonState();
+
   const combined = buildBypassPattern();
   const interceptResp = document.getElementById('icpt-resp').checked;
-  const urlFilterRaw = document.getElementById('icpt-url-filter').value.trim();
   const methodFilter = document.getElementById('icpt-method-filter').value;
   sendToBg({
     type: 'intercept_on',
@@ -1849,7 +1907,7 @@ function startIntercept() {
       port: 8899,
       bypassPatterns: combined ? [combined] : [],
       interceptResponse: interceptResp,
-      urlFilter: urlFilterToRegex(urlFilterRaw),
+      urlFilter: urlFilterPattern,
       methodFilter: methodFilter,
     }
   });
@@ -1865,26 +1923,29 @@ document.getElementById('icpt-resp').addEventListener('change', (e) => {
   }
 });
 
-// Real-time proxy update on URL filter / Method filter change
-function syncFiltersToProxy() {
+// Method filter syncs to proxy immediately on change. URL filter requires
+// explicit Apply (button or Enter) so the user always knows what's active.
+document.getElementById('icpt-method-filter').addEventListener('change', () => {
   if (interceptActive) {
-    const raw = document.getElementById('icpt-url-filter').value.trim();
     sendToBg({
       type: 'update_config',
       config: {
-        urlFilter: urlFilterToRegex(raw),
+        urlFilter: urlFilterToRegex(_urlFilterCache.input),
         methodFilter: document.getElementById('icpt-method-filter').value,
       }
     });
   }
-}
-// URL filter: apply 300ms after input stops (debounce)
-let urlFilterTimer = null;
-document.getElementById('icpt-url-filter').addEventListener('input', () => {
-  clearTimeout(urlFilterTimer);
-  urlFilterTimer = setTimeout(syncFiltersToProxy, 300);
 });
-document.getElementById('icpt-method-filter').addEventListener('change', syncFiltersToProxy);
+
+// URL filter: Apply on button click or Enter; mark dirty on any other input
+document.getElementById('icpt-url-filter-apply').addEventListener('click', applyUrlFilter);
+document.getElementById('icpt-url-filter').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    applyUrlFilter();
+  }
+});
+document.getElementById('icpt-url-filter').addEventListener('input', refreshUrlFilterButtonState);
 
 function stopIntercept() {
   interceptActive = false;

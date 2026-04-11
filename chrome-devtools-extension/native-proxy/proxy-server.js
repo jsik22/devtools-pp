@@ -31,10 +31,27 @@ class ProxyServer extends EventEmitter {
   _shouldBypass(reqUrl, method) {
     // Method filter: bypass if method doesn't match
     if (this.methodFilter && method && method.toUpperCase() !== this.methodFilter) return true;
-    // URL filter (include): bypass non-matching URLs if set
-    if (this.urlFilter && !this.urlFilter.test(reqUrl)) return true;
-    // Bypass pattern (exclude): bypass if matched
+    // URL filter (include): match against host+pathname only — never against the
+    // query string. Trackers (Google Analytics, Doubleclick, etc.) embed the
+    // origin page URL as a query parameter, which would otherwise cause naive
+    // substring matching to incorrectly include them.
+    if (this.urlFilter) {
+      const target = this._filterTarget(reqUrl);
+      if (!this.urlFilter.test(target)) return true;
+    }
+    // Bypass pattern (exclude): bypass if matched (still tested against full URL
+    // because bypass patterns commonly target file extensions in the query)
     return this.bypassPatterns.some(re => re.test(reqUrl));
+  }
+
+  // Strip protocol/query/hash so the URL filter only sees host + pathname.
+  _filterTarget(reqUrl) {
+    try {
+      const u = new URL(reqUrl);
+      return u.host + u.pathname;
+    } catch {
+      return reqUrl;
+    }
   }
 
   /**

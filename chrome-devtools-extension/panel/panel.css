@@ -1189,6 +1189,22 @@ tr.selected td {
   animation: icpt-pulse 1.5s ease-in-out infinite;
 }
 
+/* URL filter Apply button — dirty (unapplied) state */
+#icpt-url-filter-apply.icpt-apply-dirty {
+  background: #0078d4;
+  border-color: #005a9e;
+  color: #fff;
+  font-weight: 600;
+}
+
+/* URL filter Apply button — brief flash on successful apply */
+#icpt-url-filter-apply.icpt-apply-flash {
+  background: #0b7a3e;
+  border-color: #0b7a3e;
+  color: #fff;
+  transition: background 0.1s ease-in;
+}
+
 .icpt-scope-group {
   display: flex;
   gap: 10px;

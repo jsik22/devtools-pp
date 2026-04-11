@@ -2,3 +2,9 @@ node_modules/
 .claude/
 .DS_Store
 *.pem
+
+# Native Messaging host launcher (Windows) — hardcoded per-machine paths
+chrome-devtools-extension/native-proxy/native-messaging-host.bat
+
+# Build artifacts
+*.zip

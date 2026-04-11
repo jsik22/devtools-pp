@@ -1467,7 +1467,7 @@ origDetailTabHandler.forEach(tab => {
 });
 
 // ============================================================
-// 1c. Intercept Proxy (Proxy Mode + Legacy In-Page Mode)
+// 1c. Intercept (Proxy Mode via Native Messaging + local MITM)
 // ============================================================
 
 let interceptActive = false;
@@ -1479,8 +1479,6 @@ let selectedRespId = null;
 let activeSide = 'req'; // 'req' or 'resp' — shortcut target
 let interceptBypassRegex = null;
 let interceptIdCounter = 0;
-let interceptPollTimer = null;
-let interceptMode = 'proxy'; // 'proxy' or 'legacy'
 
 const icptToggleBtn = document.getElementById('icpt-toggle');
 const reqQueueEl = document.getElementById('icpt-req-queue');
@@ -1494,7 +1492,6 @@ const respEditorContent = document.getElementById('icpt-resp-editor-content');
 const reqPlaceholder = document.getElementById('icpt-req-placeholder');
 const respPlaceholder = document.getElementById('icpt-resp-placeholder');
 const interceptTabBtn = document.querySelector('.intercept-tab');
-const icptModeSelect = document.getElementById('icpt-mode-select');
 const icptProxyStatus = document.getElementById('icpt-proxy-status');
 
 // Switch activeSide on side panel click
@@ -1555,7 +1552,7 @@ function handleBgMessage(msg) {
 
     case 'native_disconnected':
       updateProxyStatus('error', 'Proxy: Disconnected');
-      if (interceptActive && interceptMode === 'proxy') {
+      if (interceptActive) {
         stopIntercept();
       }
       break;
@@ -1570,9 +1567,7 @@ function handleBgMessage(msg) {
       break;
 
     case 'request_intercepted':
-      if (interceptMode === 'proxy') {
-        handleProxyInterceptedRequest(msg);
-      }
+      handleProxyInterceptedRequest(msg);
       break;
 
     case 'response_captured':
@@ -1607,7 +1602,6 @@ connectBgPort();
 
 function updateProxyStatus(state, text) {
   icptProxyStatus.textContent = text;
-  icptProxyStatus.style.display = interceptMode === 'proxy' ? 'inline-block' : 'none';
   if (state === 'active') {
     icptProxyStatus.style.color = '#0b7a3e';
     icptProxyStatus.style.background = '#e6f4ea';
@@ -1627,7 +1621,7 @@ function showSetupHint() {
   if (placeholder) {
     placeholder.innerHTML = `<div style="text-align:center">
       <p style="color:#d32f2f;font-weight:600;margin-bottom:8px">Native Messaging host is not installed.</p>
-      <p style="color:#666;margin-bottom:12px">Proxy Mode requires a one-time setup.</p>
+      <p style="color:#666;margin-bottom:12px">Intercept requires a one-time setup.</p>
       <a href="${setupUrl}" target="_blank"
         style="display:inline-block;padding:8px 20px;background:#0078d4;color:#fff;border-radius:6px;text-decoration:none;font-weight:600;font-size:13px">
         Open Setup Guide
@@ -1674,7 +1668,7 @@ function testUrlFilter(url) {
   return _urlFilterCache.regex ? _urlFilterCache.regex.test(url) : true;
 }
 
-// Handle intercepted request in Proxy Mode
+// Handle intercepted request from the proxy
 function handleProxyInterceptedRequest(msg) {
   const methodFilter = document.getElementById('icpt-method-filter').value;
 
@@ -1738,17 +1732,6 @@ function handleResponseIntercepted(msg) {
   }
   renderRespQueue();
 }
-
-// Mode switching
-icptModeSelect.addEventListener('change', () => {
-  if (interceptActive) {
-    alert('Cannot change mode while intercept is active. Please turn Intercept OFF first.');
-    icptModeSelect.value = interceptMode;
-    return;
-  }
-  interceptMode = icptModeSelect.value;
-  icptProxyStatus.style.display = interceptMode === 'proxy' ? 'inline-block' : 'none';
-});
 
 // Editor tab switching (scoped by side)
 document.querySelectorAll('.icpt-editor-tabs').forEach(tabBar => {
@@ -1839,8 +1822,7 @@ function applyBypassRule() {
     alert('Invalid regex: ' + e.message);
     return;
   }
-  // In Proxy mode, also send bypass pattern to server
-  if (interceptMode === 'proxy' && interceptActive) {
+  if (interceptActive) {
     sendToBg({
       type: 'update_config',
       config: { bypassPatterns: combined ? [combined] : [] }
@@ -1848,22 +1830,12 @@ function applyBypassRule() {
   }
 }
 
-// Start intercept (branch by mode)
 function startIntercept() {
   interceptActive = true;
   icptToggleBtn.textContent = 'Intercept ON';
   icptToggleBtn.className = 'btn btn-intercept-on';
   interceptTabBtn.classList.add('intercepting');
-  icptModeSelect.disabled = true;
 
-  if (interceptMode === 'proxy') {
-    startProxyIntercept();
-  } else {
-    startLegacyIntercept();
-  }
-}
-
-function startProxyIntercept() {
   updateProxyStatus('idle', 'Proxy: Connecting...');
   // Apply extension checkboxes + user regex
   applyBypassRule();
@@ -1885,7 +1857,7 @@ function startProxyIntercept() {
 
 // Real-time update when Response checkbox changes
 document.getElementById('icpt-resp').addEventListener('change', (e) => {
-  if (interceptActive && interceptMode === 'proxy') {
+  if (interceptActive) {
     sendToBg({
       type: 'update_config',
       config: { interceptResponse: e.target.checked }
@@ -1895,7 +1867,7 @@ document.getElementById('icpt-resp').addEventListener('change', (e) => {
 
 // Real-time proxy update on URL filter / Method filter change
 function syncFiltersToProxy() {
-  if (interceptActive && interceptMode === 'proxy') {
+  if (interceptActive) {
     const raw = document.getElementById('icpt-url-filter').value.trim();
     sendToBg({
       type: 'update_config',
@@ -1914,115 +1886,21 @@ document.getElementById('icpt-url-filter').addEventListener('input', () => {
 });
 document.getElementById('icpt-method-filter').addEventListener('change', syncFiltersToProxy);
 
-function startLegacyIntercept() {
-  // Legacy monkey-patch approach
-  chrome.devtools.inspectedWindow.eval('typeof window.__icptActive__', (result) => {
-    const activate = () => {
-      chrome.devtools.inspectedWindow.eval('window.__icptActive__ = true');
-      interceptPollTimer = setInterval(pollInterceptQueue, 150);
-    };
-
-    if (result === 'boolean') {
-      activate();
-    } else {
-      injectInterceptHookViaEval(activate);
-    }
-  });
-}
-
-function injectInterceptHookViaEval(callback) {
-  var scriptUrl = chrome.runtime.getURL('intercept-hook.js');
-  chrome.devtools.inspectedWindow.eval(
-    '(function(){' +
-    'if(typeof window.__icptActive__!=="undefined")return;' +
-    'var s=document.createElement("script");' +
-    's.src="' + scriptUrl + '";' +
-    'document.documentElement.appendChild(s);' +
-    's.onload=function(){s.remove()};' +
-    '})()',
-    function() { if (callback) setTimeout(callback, 100); }
-  );
-}
-
-// Stop intercept (branch by mode)
 function stopIntercept() {
   interceptActive = false;
   icptToggleBtn.textContent = 'Intercept OFF';
   icptToggleBtn.className = 'btn btn-intercept-off';
   interceptTabBtn.classList.remove('intercepting');
-  icptModeSelect.disabled = false;
 
   // Forward all remaining queue items
   forwardAll();
 
-  if (interceptMode === 'proxy') {
-    sendToBg({ type: 'intercept_off' });
-    updateProxyStatus('idle', 'Proxy: Stopped');
-  } else {
-    if (interceptPollTimer) { clearInterval(interceptPollTimer); interceptPollTimer = null; }
-    chrome.devtools.inspectedWindow.eval('window.__icptActive__ = false; window.__icptQueue__ = []');
-  }
+  sendToBg({ type: 'intercept_off' });
+  updateProxyStatus('idle', 'Proxy: Stopped');
 }
 
-// Legacy mode only: polling
-function pollInterceptQueue() {
-  if (!interceptActive || interceptMode !== 'legacy') return;
-
-  chrome.devtools.inspectedWindow.eval(
-    '(function(){ var q = window.__icptQueue__ || []; window.__icptQueue__ = []; return JSON.stringify(q); })()',
-    (result) => {
-      if (!result) return;
-      try {
-        const items = JSON.parse(result);
-        items.forEach(item => {
-          const methodFilter = document.getElementById('icpt-method-filter').value;
-
-          if (methodFilter && item.method !== methodFilter) {
-            sendInterceptDecision(item.id, { action: 'forward' });
-            addInterceptLog('bypassed', item.method, item.url, 'req');
-            return;
-          }
-          if (!testUrlFilter(item.url)) {
-            sendInterceptDecision(item.id, { action: 'forward' });
-            addInterceptLog('bypassed', item.method, item.url, 'req');
-            return;
-          }
-          if (interceptBypassRegex && interceptBypassRegex.test(item.url)) {
-            sendInterceptDecision(item.id, { action: 'forward' });
-            addInterceptLog('bypassed', item.method, item.url, 'req');
-            return;
-          }
-
-          const legacyItem = {
-            id: item.id,
-            reqType: item.type || 'fetch',
-            method: item.method,
-            url: item.url,
-            headers: item.headers || {},
-            postData: item.body || '',
-          };
-          reqQueue.push(legacyItem);
-          if (!selectedReqId) {
-            selectedReqId = legacyItem.id;
-            showReqEditor(legacyItem);
-          }
-          renderReqQueue();
-        });
-      } catch {}
-    }
-  );
-}
-
-// Send decision (branch by mode)
 function sendInterceptDecision(id, decision) {
-  if (interceptMode === 'proxy') {
-    sendToBg({ type: 'decision', id, ...decision });
-  } else {
-    const decisionJson = JSON.stringify(decision).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    chrome.devtools.inspectedWindow.eval(
-      `window.__icptDecisions__['${id}'] = JSON.parse('${decisionJson}')`
-    );
-  }
+  sendToBg({ type: 'decision', id, ...decision });
 }
 
 // ---- Queue Rendering ----

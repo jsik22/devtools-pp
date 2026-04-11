@@ -1,11 +1,10 @@
 {
   "manifest_version": 3,
   "name": "DevTools++",
-  "version": "0.5",
+  "version": "0.6",
   "description": "Power-user extension for Chrome DevTools - network monitoring, request interception, replay, site map",
   "permissions": [
     "activeTab",
-    "scripting",
     "nativeMessaging",
     "proxy"
   ],
@@ -29,10 +28,6 @@
   "host_permissions": [
     "<all_urls>"
   ],
-  "web_accessible_resources": [{
-    "resources": ["intercept-hook.js"],
-    "matches": ["<all_urls>"]
-  }],
   "options_page": "setup.html",
   "content_scripts": []
 }

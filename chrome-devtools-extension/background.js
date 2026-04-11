@@ -9,28 +9,7 @@ let nativePort = null;
 const panelPorts = new Map(); // tabId -> port
 
 // ============================================================
-// 1. Content script registration (legacy mode preserved)
-// ============================================================
-chrome.scripting.registerContentScripts([{
-  id: 'intercept-hook',
-  matches: ['<all_urls>'],
-  js: ['intercept-hook.js'],
-  runAt: 'document_start',
-  world: 'MAIN',
-  allFrames: true,
-}]).catch(() => {
-  chrome.scripting.updateContentScripts([{
-    id: 'intercept-hook',
-    matches: ['<all_urls>'],
-    js: ['intercept-hook.js'],
-    runAt: 'document_start',
-    world: 'MAIN',
-    allFrames: true,
-  }]).catch(() => {});
-});
-
-// ============================================================
-// 2. Panel connection management
+// 1. Panel connection management
 // ============================================================
 chrome.runtime.onConnect.addListener((port) => {
   if (!port.name.startsWith('panel-')) return;
@@ -53,7 +32,7 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 // ============================================================
-// 3. Native Messaging connection
+// 2. Native Messaging connection
 // ============================================================
 function connectNative() {
   if (nativePort) return true;
@@ -105,7 +84,7 @@ function broadcastToPanels(msg) {
 }
 
 // ============================================================
-// 4. Panel message handling
+// 3. Panel message handling
 // ============================================================
 function handlePanelMessage(tabId, msg) {
   switch (msg.type) {
@@ -140,7 +119,7 @@ function handlePanelMessage(tabId, msg) {
 }
 
 // ============================================================
-// 5. Chrome Proxy Settings management
+// 4. Chrome Proxy Settings management
 // ============================================================
 function setProxySettings(port) {
   chrome.proxy.settings.set({
@@ -186,7 +165,7 @@ function resetProxySettings() {
 }
 
 // ============================================================
-// 6. Setup page: check_native handler
+// 5. Setup page: check_native handler
 // ============================================================
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type !== 'check_native') return;
@@ -225,7 +204,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // ============================================================
-// 7. Proxy error listener
+// 6. Proxy error listener
 // ============================================================
 chrome.proxy.onProxyError.addListener((details) => {
   broadcastToPanels({

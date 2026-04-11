@@ -146,5 +146,5 @@ echo   Proxy Port   : 8899 (default)
 echo ============================================
 echo.
 echo Restart Chrome, then open DevTools++ Intercept tab
-echo and select "Proxy Mode".
+echo and click "Intercept OFF" to start.
 echo.

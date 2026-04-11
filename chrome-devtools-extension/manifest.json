@@ -4,10 +4,8 @@
   "version": "0.5",
   "description": "Power-user extension for Chrome DevTools - network monitoring, request interception, replay, site map",
   "permissions": [
-    "debugger",
     "activeTab",
     "scripting",
-    "storage",
     "nativeMessaging",
     "proxy"
   ],

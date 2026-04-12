@@ -743,6 +743,7 @@ chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
     responseBody: null,
     responseBodyLoaded: false,
     responseBase64: false,
+    initiator: harEntry._initiator || null,
     _harEntry: harEntry, // HAR entry reference (for body loading)
   };
 
@@ -848,6 +849,7 @@ function showDetail(req) {
   renderPayload(req);
   renderResponseBody(req);
   renderPreview(req);
+  renderInitiator(req);
   populateReplayForm(req);
 }
 
@@ -1052,6 +1054,245 @@ function renderPreview(req) {
 
   // Fallback: show raw text
   container.innerHTML = `<div class="response-body-content">${escapeHtml(truncate(req.responseBody, 10000))}</div>`;
+}
+
+// ============================================================
+// Initiator — Call stack trace + sensitive pattern detection
+// ============================================================
+
+const SENSITIVE_PATTERNS = [
+  { pattern: /otp|mfa|2fa|totp/i, label: 'OTP/MFA' },
+  { pattern: /auth|login|signin|signout|logout|session/i, label: 'Authentication' },
+  { pattern: /token|jwt|bearer/i, label: 'Token' },
+  { pattern: /valid|verif|check/i, label: 'Validation' },
+  { pattern: /admin|role|permission|privilege|access/i, label: 'Authorization' },
+  { pattern: /encrypt|decrypt|hash|sign|cipher|crypto/i, label: 'Crypto' },
+  { pattern: /password|passwd|secret|credential/i, label: 'Credential' },
+  { pattern: /upload|file|download/i, label: 'File Operation' },
+  { pattern: /redirect|navigate|location\.href/i, label: 'Navigation' },
+  { pattern: /pay|price|amount|billing|checkout/i, label: 'Payment' },
+];
+
+function detectSensitive(name) {
+  if (!name) return null;
+  for (const sp of SENSITIVE_PATTERNS) {
+    if (sp.pattern.test(name)) return sp.label;
+  }
+  return null;
+}
+
+function shortenUrl(url) {
+  try {
+    const u = new URL(url);
+    const path = u.pathname;
+    const segments = path.split('/');
+    return segments[segments.length - 1] || path;
+  } catch {
+    return url;
+  }
+}
+
+// Inline source viewer cache: url → source text
+const sourceCache = {};
+
+function fetchSource(url, callback) {
+  if (sourceCache[url] !== undefined) {
+    callback(sourceCache[url]);
+    return;
+  }
+  // Fetch via inspected page context (same-origin)
+  const expr = `fetch(${JSON.stringify(url)}).then(r=>r.ok?r.text():null).then(t=>{window.__dtpp_src=t}).catch(()=>{window.__dtpp_src=null})`;
+  chrome.devtools.inspectedWindow.eval(expr, () => {
+    const poll = setInterval(() => {
+      chrome.devtools.inspectedWindow.eval('window.__dtpp_src', (result, err) => {
+        if (err) { clearInterval(poll); callback(null); return; }
+        if (result !== undefined) {
+          clearInterval(poll);
+          chrome.devtools.inspectedWindow.eval('delete window.__dtpp_src');
+          sourceCache[url] = result;
+          callback(result);
+        }
+      });
+    }, 100);
+    // Timeout after 5s
+    setTimeout(() => { clearInterval(poll); callback(null); }, 5000);
+  });
+}
+
+function renderSourceViewer(container, source, targetLine) {
+  if (!source) {
+    container.innerHTML = '<div class="detail-loading">Failed to fetch source.</div>';
+    return;
+  }
+  const lines = source.split('\n');
+  const contextBefore = 10;
+  const contextAfter = 10;
+  const start = Math.max(0, targetLine - contextBefore);
+  const end = Math.min(lines.length, targetLine + contextAfter + 1);
+
+  let html = '<div class="source-viewer">';
+  if (start > 0) {
+    html += `<div class="source-line source-ellipsis">... (${start} lines above)</div>`;
+  }
+  for (let i = start; i < end; i++) {
+    const lineNum = i + 1; // 1-indexed display
+    const isTarget = i === targetLine;
+    const cls = isTarget ? 'source-line target-line' : 'source-line';
+    html += `<div class="${cls}"><span class="source-linenum">${lineNum}</span><span class="source-code">${escapeHtml(lines[i])}</span></div>`;
+  }
+  if (end < lines.length) {
+    html += `<div class="source-line source-ellipsis">... (${lines.length - end} lines below)</div>`;
+  }
+  html += '</div>';
+  container.innerHTML = html;
+
+  // Scroll target line into view
+  const targetEl = container.querySelector('.target-line');
+  if (targetEl) targetEl.scrollIntoView({ block: 'center' });
+}
+
+function renderInitiator(req) {
+  const container = document.getElementById('detail-initiator-body');
+
+  if (!req.initiator) {
+    container.innerHTML = '<div class="detail-loading">Initiator data not available.</div>';
+    return;
+  }
+
+  const init = req.initiator;
+  let html = '';
+
+  // Type badge
+  html += `<div class="initiator-type">Type: <strong>${escapeHtml(init.type || 'unknown')}</strong></div>`;
+
+  // Call stack
+  const frames = init.stack?.callFrames || [];
+  if (frames.length > 0) {
+    // Detect sensitive patterns in full stack
+    const hints = new Set();
+    frames.forEach(f => {
+      const label = detectSensitive(f.functionName);
+      if (label) hints.add(label);
+    });
+
+    if (hints.size > 0) {
+      html += '<div class="initiator-hints">';
+      for (const hint of hints) {
+        html += `<span class="initiator-hint">${escapeHtml(hint)}</span>`;
+      }
+      html += '</div>';
+    }
+
+    html += '<div class="initiator-stack-title">Call Stack</div>';
+    html += '<div class="initiator-stack">';
+    frames.forEach((f, i) => {
+      const funcName = f.functionName || '(anonymous)';
+      const fileName = shortenUrl(f.url || '');
+      const line = (f.lineNumber ?? -1) + 1; // 0-indexed → 1-indexed
+      const col = (f.columnNumber ?? 0) + 1;
+      const sensitive = detectSensitive(f.functionName);
+      const sensitiveCls = sensitive ? ' sensitive' : '';
+      const sourceLocation = f.url ? `${escapeHtml(fileName)}:${line}:${col}` : '';
+
+      html += `<div class="initiator-frame${sensitiveCls}" data-url="${escapeAttr(f.url || '')}" data-line="${f.lineNumber || 0}">`;
+      html += `<span class="frame-index">${i}</span>`;
+      html += `<span class="func-name">${escapeHtml(funcName)}</span>`;
+      if (sensitive) {
+        html += `<span class="sensitive-badge">${escapeHtml(sensitive)}</span>`;
+      }
+      if (sourceLocation) {
+        html += `<span class="source-link" title="${escapeAttr(f.url + ':' + line)}">${sourceLocation}</span>`;
+      }
+      html += '</div>';
+    });
+    html += '</div>';
+  } else if (init.url) {
+    // Parser-initiated (e.g. <script src>, <link>, <img>)
+    html += `<div class="initiator-parser">Initiated by: <span class="source-link" data-url="${escapeAttr(init.url)}" data-line="${init.lineNumber || 0}">${escapeHtml(init.url)}${init.lineNumber != null ? ':' + (init.lineNumber + 1) : ''}</span></div>`;
+  } else {
+    html += '<div class="detail-loading">No call stack available.</div>';
+  }
+
+  // Inline source viewer placeholder
+  html += '<div id="initiator-source-viewer"></div>';
+
+  container.innerHTML = html;
+
+  function showInlineSource(url, lineNum) {
+    container.querySelectorAll('.initiator-frame').forEach(f => f.classList.remove('active'));
+    const activeFrame = container.querySelector(`.initiator-frame[data-url="${CSS.escape(url)}"][data-line="${lineNum}"]`);
+    if (activeFrame) activeFrame.classList.add('active');
+
+    const viewer = document.getElementById('initiator-source-viewer');
+    const header = `${escapeHtml(shortenUrl(url))}:${lineNum + 1}`;
+    viewer.innerHTML = `<div class="source-viewer-header">${header}</div><div class="detail-loading">Loading source...</div>`;
+    fetchSource(url, (source) => {
+      if (source) {
+        renderSourceViewer(viewer, source, lineNum);
+      } else {
+        viewer.innerHTML = `<div class="source-viewer-header">${header}</div><div class="detail-loading">Source not available (cross-origin or network error).</div>`;
+      }
+    });
+  }
+
+  // Frame body click → inline source viewer
+  container.querySelectorAll('.initiator-frame').forEach(el => {
+    const url = el.dataset.url;
+    if (!url) return;
+    el.style.cursor = 'pointer';
+    el.addEventListener('click', (e) => {
+      // If source-link was clicked, let its own handler take over
+      if (e.target.closest('.source-link')) return;
+      e.stopPropagation();
+      const lineNum = parseInt(el.dataset.line || '0', 10);
+      showInlineSource(url, lineNum);
+    });
+  });
+
+  // Source link click → try Sources tab, fallback to inline
+  container.querySelectorAll('.initiator-frame .source-link').forEach(link => {
+    const frame = link.closest('.initiator-frame');
+    const url = frame?.dataset.url;
+    if (!url) return;
+    link.style.cursor = 'pointer';
+    link.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const lineNum = parseInt(frame.dataset.line || '0', 10);
+
+      chrome.devtools.inspectedWindow.getResources((resources) => {
+        const exists = resources.some(r => r.url === url);
+        if (exists) {
+          chrome.devtools.panels.openResource(url, lineNum, () => {});
+        } else {
+          // Resource not in Sources — show inline with notice
+          showInlineSource(url, lineNum);
+          const viewer = document.getElementById('initiator-source-viewer');
+          const notice = document.createElement('div');
+          notice.className = 'source-viewer-notice';
+          notice.textContent = 'Resource not found in Sources panel — showing fetched source.';
+          viewer.insertBefore(notice, viewer.firstChild.nextSibling);
+        }
+      });
+    });
+  });
+
+  // Parser-initiated source link click
+  container.querySelectorAll('.initiator-parser .source-link[data-url]').forEach(link => {
+    const url = link.dataset.url;
+    if (!url) return;
+    link.style.cursor = 'pointer';
+    link.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const lineNum = parseInt(link.dataset.line || '0', 10);
+      chrome.devtools.inspectedWindow.getResources((resources) => {
+        if (resources.some(r => r.url === url)) {
+          chrome.devtools.panels.openResource(url, lineNum, () => {});
+        } else {
+          showInlineSource(url, lineNum);
+        }
+      });
+    });
+  });
 }
 
 function syntaxHighlightJson(str) {

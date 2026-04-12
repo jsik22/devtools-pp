@@ -1218,7 +1218,7 @@ function renderInitiator(req) {
 
   container.innerHTML = html;
 
-  function showInlineSource(url, lineNum) {
+  function showInlineSource(url, lineNum, notice) {
     container.querySelectorAll('.initiator-frame').forEach(f => f.classList.remove('active'));
     const activeFrame = container.querySelector(`.initiator-frame[data-url="${CSS.escape(url)}"][data-line="${lineNum}"]`);
     if (activeFrame) activeFrame.classList.add('active');
@@ -1231,6 +1231,12 @@ function renderInitiator(req) {
         renderSourceViewer(viewer, source, lineNum);
       } else {
         viewer.innerHTML = `<div class="source-viewer-header">${header}</div><div class="detail-loading">Source not available (cross-origin or network error).</div>`;
+      }
+      if (notice) {
+        const noticeEl = document.createElement('div');
+        noticeEl.className = 'source-viewer-notice';
+        noticeEl.textContent = notice;
+        viewer.insertBefore(noticeEl, viewer.children[1]);
       }
     });
   }
@@ -1265,12 +1271,8 @@ function renderInitiator(req) {
           chrome.devtools.panels.openResource(url, lineNum, () => {});
         } else {
           // Resource not in Sources — show inline with notice
-          showInlineSource(url, lineNum);
-          const viewer = document.getElementById('initiator-source-viewer');
-          const notice = document.createElement('div');
-          notice.className = 'source-viewer-notice';
-          notice.textContent = 'Resource not found in Sources panel — showing fetched source.';
-          viewer.insertBefore(notice, viewer.firstChild.nextSibling);
+          showInlineSource(url, lineNum,
+            'Resource not found in Sources panel — showing fetched source. Click the source link again to open in Sources (the fetch request makes it available).');
         }
       });
     });

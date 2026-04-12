@@ -20,6 +20,47 @@ document.querySelectorAll('.tab').forEach(tab => {
 
 const sitemapTree = {};  // host → { children: { path: { children: {}, requests: [] } } }
 let sitemapSelectedNode = null; // { host, path }
+let targetHost = null;
+let externalGroupExpanded = false;
+const expandedNodes = new Set(); // tracks expanded tree node keys (e.g. "host:/path")
+
+function ensureTargetInTree() {
+  if (targetHost && !sitemapTree[targetHost]) {
+    sitemapTree[targetHost] = { children: {}, requests: [] };
+  }
+}
+
+function detectTargetHost() {
+  chrome.devtools.inspectedWindow.eval('location.host', (result, err) => {
+    if (!err && result) {
+      targetHost = result;
+      ensureTargetInTree();
+      renderSitemapTree();
+      updateSitemapStats();
+    }
+  });
+}
+detectTargetHost();
+chrome.devtools.network.onNavigated.addListener((url) => {
+  let newHost;
+  try {
+    newHost = new URL(url).host;
+  } catch {
+    detectTargetHost();
+    return;
+  }
+  if (newHost !== targetHost) {
+    Object.keys(sitemapTree).forEach(k => delete sitemapTree[k]);
+    sitemapSelectedNode = null;
+    expandedNodes.clear();
+    externalGroupExpanded = false;
+    sitemapDetail.classList.add('hidden');
+    targetHost = newHost;
+  }
+  ensureTargetInTree();
+  renderSitemapTree();
+  updateSitemapStats();
+});
 const sitemapSearch = document.getElementById('sitemap-search');
 const sitemapTypeFilter = document.getElementById('sitemap-type-filter');
 const sitemapStatusFilter = document.getElementById('sitemap-status-filter');
@@ -29,10 +70,23 @@ const sitemapDetailPath = document.getElementById('sitemap-detail-path');
 const sitemapDetailList = document.getElementById('sitemap-detail-list');
 const sitemapStats = document.getElementById('sitemap-stats');
 
-document.getElementById('sitemap-scan').addEventListener('click', scanPage);
+const sitemapScanBtn = document.getElementById('sitemap-scan');
+sitemapScanBtn.addEventListener('click', scanPage);
+
+function updateScanPageButton() {
+  if (sitemapSelectedNode && targetHost && sitemapSelectedNode.host !== targetHost) {
+    sitemapScanBtn.disabled = true;
+    sitemapScanBtn.title = 'Scan Page is only available for the target host';
+  } else {
+    sitemapScanBtn.disabled = false;
+    sitemapScanBtn.title = '';
+  }
+}
 document.getElementById('sitemap-clear').addEventListener('click', () => {
   Object.keys(sitemapTree).forEach(k => delete sitemapTree[k]);
   sitemapSelectedNode = null;
+  expandedNodes.clear();
+  externalGroupExpanded = false;
   renderSitemapTree();
   sitemapDetail.classList.add('hidden');
   updateSitemapStats();
@@ -320,24 +374,68 @@ function renderSitemapTree() {
     return;
   }
 
-  for (const host of hosts) {
-    const hostNode = sitemapTree[host];
-    if (!nodeHasFilteredRequests(hostNode)) continue;
-    const hostEl = buildTreeNode(host, hostNode, host, '');
+  // Target host always shown first
+  if (targetHost) {
+    ensureTargetInTree();
+    const hostNode = sitemapTree[targetHost];
+    const hostEl = buildTreeNode(targetHost, hostNode, targetHost, '', true);
     if (hostEl) sitemapTreeEl.appendChild(hostEl);
+  }
+
+  // External hosts grouped
+  const externalHosts = hosts.filter(h => h !== targetHost && nodeHasFilteredRequests(sitemapTree[h]));
+  if (externalHosts.length > 0) {
+    const extWrapper = document.createElement('div');
+    extWrapper.className = 'sitemap-external-group';
+
+    const extRow = document.createElement('div');
+    extRow.className = 'sitemap-node sitemap-external-header';
+    const extToggle = document.createElement('span');
+    extToggle.className = 'sitemap-node-toggle';
+    extToggle.textContent = externalGroupExpanded ? '▼' : '▶';
+    extRow.appendChild(extToggle);
+    const extIcon = document.createElement('span');
+    extIcon.className = 'sitemap-node-icon';
+    extIcon.textContent = '📡';
+    extRow.appendChild(extIcon);
+    const extLabel = document.createElement('span');
+    extLabel.className = 'sitemap-node-label sitemap-external-label';
+    extLabel.textContent = `External (${externalHosts.length})`;
+    extRow.appendChild(extLabel);
+    extWrapper.appendChild(extRow);
+
+    const extChildren = document.createElement('div');
+    extChildren.className = externalGroupExpanded ? 'sitemap-children' : 'sitemap-children collapsed';
+    for (const host of externalHosts) {
+      const hostEl = buildTreeNode(host, sitemapTree[host], host, '');
+      if (hostEl) extChildren.appendChild(hostEl);
+    }
+    extWrapper.appendChild(extChildren);
+
+    function toggleExternal(e) {
+      if (e) e.stopPropagation();
+      externalGroupExpanded = !externalGroupExpanded;
+      extChildren.classList.toggle('collapsed', !externalGroupExpanded);
+      extToggle.textContent = externalGroupExpanded ? '▼' : '▶';
+    }
+    extToggle.addEventListener('click', toggleExternal);
+    extRow.addEventListener('click', () => toggleExternal(null));
+
+    sitemapTreeEl.appendChild(extWrapper);
   }
 
   // Restore selection state
   if (sitemapSelectedNode) {
     renderSitemapDetail();
   }
+  updateScanPageButton();
 }
 
-function buildTreeNode(label, node, host, currentPath) {
+function buildTreeNode(label, node, host, currentPath, forceShow) {
   const hasChildren = Object.keys(node.children).length > 0;
   const hasOwnRequests = node.requests.filter(matchesSitemapFilters).length > 0;
 
-  if (!nodeHasFilteredRequests(node)) return null;
+  if (!forceShow && !nodeHasFilteredRequests(node)) return null;
 
   const wrapper = document.createElement('div');
 
@@ -352,9 +450,11 @@ function buildTreeNode(label, node, host, currentPath) {
   if (isSelected) row.classList.add('selected');
 
   // Toggle icon
+  const nodeKey = host + ':' + fullPath;
+  const isExpanded = expandedNodes.has(nodeKey);
   const toggle = document.createElement('span');
   toggle.className = 'sitemap-node-toggle';
-  toggle.textContent = hasChildren ? '▶' : '';
+  toggle.textContent = hasChildren ? (isExpanded ? '▼' : '▶') : '';
   row.appendChild(toggle);
 
   // Icon
@@ -396,9 +496,9 @@ function buildTreeNode(label, node, host, currentPath) {
 
   wrapper.appendChild(row);
 
-  // Children container (collapsed by default)
+  // Children container (restore expanded state)
   const childrenEl = document.createElement('div');
-  childrenEl.className = 'sitemap-children collapsed';
+  childrenEl.className = isExpanded ? 'sitemap-children' : 'sitemap-children collapsed';
 
   const sortedChildren = Object.keys(node.children).sort();
   for (const childName of sortedChildren) {
@@ -414,8 +514,9 @@ function buildTreeNode(label, node, host, currentPath) {
   // Event: toggle
   toggle.addEventListener('click', (e) => {
     e.stopPropagation();
-    childrenEl.classList.toggle('collapsed');
-    toggle.textContent = childrenEl.classList.contains('collapsed') ? '▶' : '▼';
+    const collapsed = childrenEl.classList.toggle('collapsed');
+    toggle.textContent = collapsed ? '▶' : '▼';
+    if (collapsed) expandedNodes.delete(nodeKey); else expandedNodes.add(nodeKey);
   });
 
   // Event: node click → detail panel

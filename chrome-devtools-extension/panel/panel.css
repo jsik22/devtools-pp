@@ -498,17 +498,25 @@ tr.selected td {
   font-size: 12px;
 }
 
-.btn-quick {
-  background: #e6f4ea;
-  border-color: #0b7a3e;
-  color: #0b7a3e;
+.btn-state {
   padding: 5px 14px;
   font-size: 12px;
   font-weight: 600;
+  background: #e6f4ea;
+  border-color: #0b7a3e;
+  color: #0b7a3e;
+  cursor: default;
 }
 
-.btn-quick:hover {
-  background: #c8e6c9;
+.btn-state.modified {
+  background: #fff3e0;
+  border-color: #e65100;
+  color: #e65100;
+  cursor: pointer;
+}
+
+.btn-state.modified:hover {
+  background: #ffe0b2;
 }
 
 .replay-sections {

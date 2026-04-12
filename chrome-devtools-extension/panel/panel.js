@@ -747,6 +747,7 @@ function showDetail(req) {
   renderPayload(req);
   renderResponseBody(req);
   renderPreview(req);
+  populateReplayForm(req);
 }
 
 function makeSectionHtml(title, id, rows) {
@@ -1019,14 +1020,20 @@ document.querySelectorAll('.replay-resp-tab').forEach(tab => {
 });
 
 document.getElementById('replay-send').addEventListener('click', executeReplay);
-document.getElementById('replay-quick').addEventListener('click', executeQuickReplay);
+document.getElementById('replay-state').addEventListener('click', () => {
+  if (!replayOriginalSnapshot) return;
+  const req = selectedRequestId ? networkRequestMap.get(selectedRequestId) : null;
+  if (req) populateReplayForm(req);
+});
 document.getElementById('replay-add-header').addEventListener('click', (e) => {
   e.stopPropagation();
   addKvRow('replay-headers-list', '', '', true);
+  checkReplayModified();
 });
 document.getElementById('replay-add-param').addEventListener('click', (e) => {
   e.stopPropagation();
   addKvRow('replay-params-list', '', '', true);
+  checkReplayModified();
 });
 document.getElementById('replay-format-body').addEventListener('click', (e) => {
   e.stopPropagation();
@@ -1040,6 +1047,59 @@ document.getElementById('replay-clear-history').addEventListener('click', (e) =>
 
 // Sync query params when URL changes
 document.getElementById('replay-url').addEventListener('blur', syncParamsFromUrl);
+
+// Replay form state tracking
+let replayOriginalSnapshot = null;
+
+function captureKvSnapshot(listId) {
+  const rows = document.querySelectorAll(`#${listId} .replay-kv-row`);
+  const entries = [];
+  rows.forEach(row => {
+    const enabled = row.querySelector('.kv-toggle').checked;
+    const name = row.querySelector('.kv-name').value;
+    const value = row.querySelector('.kv-value').value;
+    entries.push([enabled, name, value]);
+  });
+  return entries;
+}
+
+function captureReplaySnapshot() {
+  return JSON.stringify({
+    method: document.getElementById('replay-method').value,
+    url: document.getElementById('replay-url').value,
+    body: document.getElementById('replay-body').value,
+    bodyType: document.getElementById('replay-body-type').value,
+    headers: captureKvSnapshot('replay-headers-list'),
+    params: captureKvSnapshot('replay-params-list'),
+  });
+}
+
+function checkReplayModified() {
+  const stateBtn = document.getElementById('replay-state');
+  if (!replayOriginalSnapshot) {
+    stateBtn.textContent = 'Original';
+    stateBtn.classList.remove('modified');
+    return;
+  }
+  const current = captureReplaySnapshot();
+  const modified = current !== replayOriginalSnapshot;
+  stateBtn.textContent = modified ? 'Modified' : 'Original';
+  stateBtn.classList.toggle('modified', modified);
+}
+
+// Attach change detection to replay form inputs
+['replay-method', 'replay-body-type'].forEach(id => {
+  document.getElementById(id).addEventListener('change', checkReplayModified);
+});
+['replay-url', 'replay-body'].forEach(id => {
+  document.getElementById(id).addEventListener('input', checkReplayModified);
+});
+// Event delegation for KV row changes (headers, params)
+['replay-headers-list', 'replay-params-list'].forEach(id => {
+  const el = document.getElementById(id);
+  el.addEventListener('input', checkReplayModified);
+  el.addEventListener('change', checkReplayModified);
+});
 
 // Populate form with selected request data when Replay tab activates
 function populateReplayForm(req) {
@@ -1088,6 +1148,9 @@ function populateReplayForm(req) {
     bodyEl.value = '';
     bodyTypeEl.value = 'none';
   }
+
+  replayOriginalSnapshot = captureReplaySnapshot();
+  checkReplayModified();
 }
 
 function addKvRow(listId, name, value, enabled) {
@@ -1106,7 +1169,10 @@ function addKvRow(listId, name, value, enabled) {
     row.classList.toggle('disabled', !toggle.checked);
   });
 
-  row.querySelector('.kv-remove').addEventListener('click', () => row.remove());
+  row.querySelector('.kv-remove').addEventListener('click', () => {
+    row.remove();
+    checkReplayModified();
+  });
 
   // Sync URL when query param changes
   if (listId === 'replay-params-list') {
@@ -1185,14 +1251,6 @@ function buildReplayRequest() {
   const hasBody = method !== 'GET' && method !== 'HEAD' && bodyType !== 'none' && body;
 
   return { method, url, headers, body: hasBody ? body : null };
-}
-
-function executeQuickReplay() {
-  // Resend original request as-is
-  const req = selectedRequestId ? networkRequestMap.get(selectedRequestId) : null;
-  if (!req) return;
-  populateReplayForm(req);
-  executeReplay();
 }
 
 function executeReplay() {

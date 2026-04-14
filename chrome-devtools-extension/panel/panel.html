@@ -14,6 +14,12 @@
         <button class="tab" data-tab="network">Network</button>
         <button class="tab intercept-tab" data-tab="intercept">Intercept</button>
       </div>
+      <div class="global-scope-bar">
+        <label for="global-scope-input" class="global-scope-label" title="Host+path pattern. Wildcards: *. Multiple patterns: comma-separated. Empty = all in scope.">Scope</label>
+        <input type="text" id="global-scope-input" class="filter-input global-scope-input" placeholder="*.site.com, api.example.com/v1/* — empty = all in scope">
+        <button id="global-scope-apply" class="btn" title="Apply scope (Enter)">Apply</button>
+        <button id="global-scope-clear" class="btn btn-xs" title="Clear scope (show all)">Clear</button>
+      </div>
     </header>
 
     <!-- Site Map tab -->
@@ -22,7 +28,6 @@
         <button id="sitemap-scan" class="btn btn-primary">Scan Page</button>
         <button id="sitemap-clear" class="btn">Clear</button>
         <span id="sitemap-stats" class="badge">0 hosts · 0 endpoints</span>
-        <input type="text" id="sitemap-search" placeholder="Search URL..." class="filter-input" style="flex:1">
         <select id="sitemap-type-filter">
           <option value="">All Types</option>
           <option value="api">API (json/xml)</option>
@@ -62,7 +67,6 @@
         <button id="network-stop" class="btn btn-danger" disabled>Stop</button>
         <button id="network-clear" class="btn">Clear</button>
         <span id="network-count" class="badge">0 requests</span>
-        <input type="text" id="network-filter" placeholder="URL filter..." class="filter-input">
       </div>
       <div class="network-split">
         <div class="table-wrapper" id="network-list-pane">
@@ -224,8 +228,6 @@
           <label class="icpt-check"><input type="checkbox" id="icpt-req" checked> Request</label>
           <label class="icpt-check"><input type="checkbox" id="icpt-resp"> Response</label>
         </div>
-        <input type="text" id="icpt-url-filter" class="filter-input" placeholder="URL filter (*.site.com, api.example.com/v1/*, ...)" style="flex:1">
-        <button id="icpt-url-filter-apply" class="btn" title="Apply URL filter (Enter)">Apply</button>
         <select id="icpt-method-filter">
           <option value="">All Methods</option>
           <option value="GET">GET</option>

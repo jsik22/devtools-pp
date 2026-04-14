@@ -61,7 +61,6 @@ chrome.devtools.network.onNavigated.addListener((url) => {
   renderSitemapTree();
   updateSitemapStats();
 });
-const sitemapSearch = document.getElementById('sitemap-search');
 const sitemapTypeFilter = document.getElementById('sitemap-type-filter');
 const sitemapStatusFilter = document.getElementById('sitemap-status-filter');
 const sitemapTreeEl = document.getElementById('sitemap-tree');
@@ -96,7 +95,6 @@ document.getElementById('sitemap-detail-close').addEventListener('click', () => 
   sitemapDetail.classList.add('hidden');
   renderSitemapTree();
 });
-sitemapSearch.addEventListener('input', renderSitemapTree);
 sitemapTypeFilter.addEventListener('change', renderSitemapTree);
 sitemapStatusFilter.addEventListener('change', renderSitemapTree);
 
@@ -323,9 +321,6 @@ function updateSitemapStats() {
 }
 
 function matchesSitemapFilters(req) {
-  const search = sitemapSearch.value.trim().toLowerCase();
-  if (search && !req.url.toLowerCase().includes(search)) return false;
-
   const typeF = sitemapTypeFilter.value;
   if (typeF && classifyMimeType(req.mimeType) !== typeF) return false;
 
@@ -675,14 +670,12 @@ let networkIdCounter = 0;
 
 const networkTable = document.querySelector('#network-table tbody');
 const networkCount = document.getElementById('network-count');
-const networkFilter = document.getElementById('network-filter');
 const networkDetail = document.getElementById('network-detail');
 const networkSplit = document.querySelector('.network-split');
 
 document.getElementById('network-start').addEventListener('click', startNetworkMonitoring);
 document.getElementById('network-stop').addEventListener('click', stopNetworkMonitoring);
 document.getElementById('network-clear').addEventListener('click', clearNetwork);
-networkFilter.addEventListener('input', renderNetworkTable);
 
 // Detail panel tab switching
 document.querySelectorAll('.detail-tab').forEach(tab => {
@@ -706,6 +699,10 @@ function closeDetail() {
 
 // chrome.devtools.network event listener (always active, no attach needed)
 chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
+  // Global scope gate — out-of-scope requests are ignored entirely
+  // (not added to Site Map or Network lists). Empty scope = all in scope.
+  if (!inGlobalScope(harEntry.request.url)) return;
+
   const reqId = 'net_' + (++networkIdCounter);
   const r = harEntry.request;
   const resp = harEntry.response;
@@ -793,13 +790,8 @@ function fetchResponseBody(req) {
 }
 
 function renderNetworkTable() {
-  const filter = networkFilter.value.toLowerCase();
-  const filtered = filter
-    ? networkRequests.filter(r => r.url.toLowerCase().includes(filter))
-    : networkRequests;
-
-  networkCount.textContent = `${filtered.length} requests`;
-  networkTable.innerHTML = filtered.map(r => {
+  networkCount.textContent = `${networkRequests.length} requests`;
+  networkTable.innerHTML = networkRequests.map(r => {
     const statusClass = r.status >= 400 ? 'status-error'
       : r.status >= 300 ? 'status-redirect'
       : r.status >= 200 ? 'status-ok' : '';
@@ -2068,25 +2060,28 @@ function _filterTarget(url) {
   }
 }
 
-// URL filter cache holds the *applied* filter, not the live input value.
-// Updated only via applyUrlFilter() (Apply button / Enter / startIntercept).
-let _urlFilterCache = { input: '', regex: null };
+// Global scope — single source of truth for URL filtering across Site Map,
+// Network monitoring, and Intercept. Applied at collection time: out-of-scope
+// requests never enter Site Map / Network lists, and the proxy bypasses them
+// for Intercept. Empty scope = everything in scope.
+// Only updated via applyGlobalScope() (Apply button / Enter / startIntercept).
+let globalScope = { input: '', regex: null };
 
-function testUrlFilter(url) {
-  if (!_urlFilterCache.regex) return true; // No filter applied = pass all
-  return _urlFilterCache.regex.test(_filterTarget(url));
+function inGlobalScope(url) {
+  if (!globalScope.regex) return true;
+  return globalScope.regex.test(_filterTarget(url));
 }
 
-// Build regex + push to server. Called on Apply button / Enter / startIntercept.
-function applyUrlFilter() {
-  const input = document.getElementById('icpt-url-filter').value.trim();
+// Build regex from input, update the scope, push to proxy (if intercepting),
+// and refresh any views that depend on the scope.
+function applyGlobalScope() {
+  const input = document.getElementById('global-scope-input').value.trim();
   const pattern = urlFilterToRegex(input);
   try {
-    _urlFilterCache = { input, regex: pattern ? new RegExp(pattern, 'i') : null };
+    globalScope = { input, regex: pattern ? new RegExp(pattern, 'i') : null };
   } catch {
-    _urlFilterCache = { input, regex: null };
+    globalScope = { input, regex: null };
   }
-  // Push to proxy server (only meaningful while intercept is active)
   if (interceptActive) {
     sendToBg({
       type: 'update_config',
@@ -2096,27 +2091,38 @@ function applyUrlFilter() {
       }
     });
   }
-  refreshUrlFilterButtonState();
-  flashUrlFilterApply();
+  refreshGlobalScopeButtonState();
+  flashGlobalScopeApply();
 }
 
 // Toggle dirty highlight on the Apply button when input != applied value.
-function refreshUrlFilterButtonState() {
-  const current = document.getElementById('icpt-url-filter').value.trim();
-  const btn = document.getElementById('icpt-url-filter-apply');
-  if (current !== _urlFilterCache.input) {
-    btn.classList.add('icpt-apply-dirty');
+function refreshGlobalScopeButtonState() {
+  const current = document.getElementById('global-scope-input').value.trim();
+  const btn = document.getElementById('global-scope-apply');
+  if (current !== globalScope.input) {
+    btn.classList.add('scope-apply-dirty');
   } else {
-    btn.classList.remove('icpt-apply-dirty');
+    btn.classList.remove('scope-apply-dirty');
   }
 }
 
 // Brief green flash to confirm Apply succeeded.
-function flashUrlFilterApply() {
-  const btn = document.getElementById('icpt-url-filter-apply');
-  btn.classList.add('icpt-apply-flash');
-  setTimeout(() => btn.classList.remove('icpt-apply-flash'), 350);
+function flashGlobalScopeApply() {
+  const btn = document.getElementById('global-scope-apply');
+  btn.classList.add('scope-apply-flash');
+  setTimeout(() => btn.classList.remove('scope-apply-flash'), 350);
 }
+
+// Global scope bar event wiring
+document.getElementById('global-scope-apply').addEventListener('click', applyGlobalScope);
+document.getElementById('global-scope-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); applyGlobalScope(); }
+});
+document.getElementById('global-scope-input').addEventListener('input', refreshGlobalScopeButtonState);
+document.getElementById('global-scope-clear').addEventListener('click', () => {
+  document.getElementById('global-scope-input').value = '';
+  applyGlobalScope();
+});
 
 // Handle intercepted request from the proxy
 function handleProxyInterceptedRequest(msg) {
@@ -2128,8 +2134,10 @@ function handleProxyInterceptedRequest(msg) {
     addInterceptLog('bypassed', msg.method, msg.url, 'req');
     return;
   }
-  // URL filter (wildcard/multi-pattern)
-  if (!testUrlFilter(msg.url)) {
+  // Global scope gate (defense in depth — the proxy already filters server-side
+  // via update_config, but catches any races where a request is dispatched
+  // before the config update lands)
+  if (!inGlobalScope(msg.url)) {
     sendInterceptDecision(msg.id, { action: 'forward' });
     addInterceptLog('bypassed', msg.method, msg.url, 'req');
     return;
@@ -2289,16 +2297,16 @@ function startIntercept() {
   updateProxyStatus('idle', 'Proxy: Connecting...');
   // Apply extension checkboxes + user regex
   applyBypassRule();
-  // Whatever the user has typed in the URL filter is implicitly applied when
-  // intercept is turned on — they shouldn't have to click both buttons.
-  const urlFilterRaw = document.getElementById('icpt-url-filter').value.trim();
-  const urlFilterPattern = urlFilterToRegex(urlFilterRaw);
+  // Whatever is in the global scope input is implicitly applied when intercept
+  // starts — the user shouldn't need to click Apply separately.
+  const scopeInput = document.getElementById('global-scope-input').value.trim();
+  const scopePattern = urlFilterToRegex(scopeInput);
   try {
-    _urlFilterCache = { input: urlFilterRaw, regex: urlFilterPattern ? new RegExp(urlFilterPattern, 'i') : null };
+    globalScope = { input: scopeInput, regex: scopePattern ? new RegExp(scopePattern, 'i') : null };
   } catch {
-    _urlFilterCache = { input: urlFilterRaw, regex: null };
+    globalScope = { input: scopeInput, regex: null };
   }
-  refreshUrlFilterButtonState();
+  refreshGlobalScopeButtonState();
 
   const combined = buildBypassPattern();
   const interceptResp = document.getElementById('icpt-resp').checked;
@@ -2309,7 +2317,7 @@ function startIntercept() {
       port: 8899,
       bypassPatterns: combined ? [combined] : [],
       interceptResponse: interceptResp,
-      urlFilter: urlFilterPattern,
+      urlFilter: scopePattern,
       methodFilter: methodFilter,
     }
   });
@@ -2325,29 +2333,19 @@ document.getElementById('icpt-resp').addEventListener('change', (e) => {
   }
 });
 
-// Method filter syncs to proxy immediately on change. URL filter requires
+// Method filter syncs to proxy immediately on change. Global scope requires
 // explicit Apply (button or Enter) so the user always knows what's active.
 document.getElementById('icpt-method-filter').addEventListener('change', () => {
   if (interceptActive) {
     sendToBg({
       type: 'update_config',
       config: {
-        urlFilter: urlFilterToRegex(_urlFilterCache.input),
+        urlFilter: urlFilterToRegex(globalScope.input),
         methodFilter: document.getElementById('icpt-method-filter').value,
       }
     });
   }
 });
-
-// URL filter: Apply on button click or Enter; mark dirty on any other input
-document.getElementById('icpt-url-filter-apply').addEventListener('click', applyUrlFilter);
-document.getElementById('icpt-url-filter').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    applyUrlFilter();
-  }
-});
-document.getElementById('icpt-url-filter').addEventListener('input', refreshUrlFilterButtonState);
 
 function stopIntercept() {
   interceptActive = false;

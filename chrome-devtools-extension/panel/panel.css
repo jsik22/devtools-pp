@@ -59,6 +59,30 @@ header h1 {
   border-bottom-color: #0078d4;
 }
 
+.global-scope-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #e1e1e1;
+}
+
+.global-scope-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 0 4px;
+  cursor: help;
+}
+
+.global-scope-input {
+  flex: 1;
+  min-width: 0;
+}
+
 .tab-content {
   display: none;
   flex: 1;
@@ -1378,16 +1402,16 @@ tr.selected td {
   animation: icpt-pulse 1.5s ease-in-out infinite;
 }
 
-/* URL filter Apply button — dirty (unapplied) state */
-#icpt-url-filter-apply.icpt-apply-dirty {
+/* Global scope Apply button — dirty (unapplied) state */
+#global-scope-apply.scope-apply-dirty {
   background: #0078d4;
   border-color: #005a9e;
   color: #fff;
   font-weight: 600;
 }
 
-/* URL filter Apply button — brief flash on successful apply */
-#icpt-url-filter-apply.icpt-apply-flash {
+/* Global scope Apply button — brief flash on successful apply */
+#global-scope-apply.scope-apply-flash {
   background: #0b7a3e;
   border-color: #0b7a3e;
   color: #fff;

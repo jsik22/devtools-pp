@@ -24,6 +24,10 @@ class ProxyServer extends EventEmitter {
     this._idCounter = 0;
   }
 
+  // Lowercase header name used by the extension's declarativeNetRequest rule
+  // to mark requests that originated from the inspected DevTools tab.
+  static get TAG_HEADER() { return 'x-devtoolspp-tab'; }
+
   _makeId() {
     return 'proxy_' + Date.now().toString(36) + '_' + (++this._idCounter);
   }
@@ -184,8 +188,19 @@ class ProxyServer extends EventEmitter {
       fullUrl = `${proto}://${host}${req.url}`;
     }
 
-    // If intercept not active or bypass matches, forward immediately
-    if (!this.interceptActive || this._shouldBypass(fullUrl, req.method)) {
+    // Tab scoping: the extension injects X-DevToolsPP-Tab on every request
+    // from the inspected tab via declarativeNetRequest. Requests without this
+    // header come from other tabs / service workers / extensions and must be
+    // forwarded untouched. Always strip the header so origin servers never
+    // see it.
+    const hasTabTag = req.headers[ProxyServer.TAG_HEADER] != null;
+    if (hasTabTag) {
+      delete req.headers[ProxyServer.TAG_HEADER];
+    }
+
+    // Forward immediately if: intercept off, request not from inspected tab,
+    // or a bypass rule matches
+    if (!this.interceptActive || !hasTabTag || this._shouldBypass(fullUrl, req.method)) {
       this._forwardRequest(req.method, fullUrl, req.headers, body, res);
       return;
     }

@@ -23,6 +23,10 @@ chrome.runtime.onConnect.addListener((port) => {
 
   port.onDisconnect.addListener(() => {
     panelPorts.delete(tabId);
+    // Always drop this tab's DNR tag rule — leaving it in place while the
+    // panel is gone would leak the X-DevToolsPP-Tab header to origin servers
+    // if the browser kept using the still-active proxy settings.
+    removeTabTagRule(tabId);
     // Stop proxy when all panels are closed
     if (panelPorts.size === 0 && nativePort) {
       sendToNative({ type: 'intercept_off' });
@@ -90,11 +94,15 @@ function handlePanelMessage(tabId, msg) {
   switch (msg.type) {
     case 'intercept_on':
       connectNative();
+      // Tag requests from this inspected tab before the proxy starts routing,
+      // so the proxy never sees an untagged (racing) request from it.
+      addTabTagRule(tabId);
       sendToNative({ type: 'intercept_on', config: msg.config || {} });
       // setProxySettings is called when proxy_started message is received (onMessage listener)
       break;
 
     case 'intercept_off':
+      removeTabTagRule(tabId);
       sendToNative({ type: 'intercept_off' });
       resetProxySettings();
       break;
@@ -165,7 +173,60 @@ function resetProxySettings() {
 }
 
 // ============================================================
-// 5. Setup page: check_native handler
+// 5. Tab-scoped request tagging via declarativeNetRequest
+// Only requests from the inspected tab carry an X-DevToolsPP-Tab header,
+// so the local proxy can gate interception on tab ownership. Requests from
+// other tabs, service workers, or extensions never carry the header and
+// are bypassed by the proxy. The proxy strips the header before forwarding
+// to the origin server.
+// ============================================================
+const DNR_RULE_BASE = 10000;
+const TAG_HEADER_NAME = 'X-DevToolsPP-Tab';
+const DNR_RESOURCE_TYPES = [
+  'main_frame', 'sub_frame', 'stylesheet', 'script', 'image', 'font',
+  'object', 'xmlhttprequest', 'ping', 'csp_report', 'media', 'websocket',
+  'webtransport', 'webbundle', 'other',
+];
+
+async function addTabTagRule(tabId) {
+  const ruleId = DNR_RULE_BASE + tabId;
+  try {
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [ruleId],
+      addRules: [{
+        id: ruleId,
+        priority: 1,
+        action: {
+          type: 'modifyHeaders',
+          requestHeaders: [
+            { header: TAG_HEADER_NAME, operation: 'set', value: String(tabId) },
+          ],
+        },
+        condition: {
+          tabIds: [tabId],
+          resourceTypes: DNR_RESOURCE_TYPES,
+        },
+      }],
+    });
+  } catch (err) {
+    broadcastToPanels({
+      type: 'native_error',
+      message: 'DNR tag rule add failed: ' + err.message,
+    });
+  }
+}
+
+async function removeTabTagRule(tabId) {
+  const ruleId = DNR_RULE_BASE + tabId;
+  try {
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [ruleId],
+    });
+  } catch {}
+}
+
+// ============================================================
+// 6. Setup page: check_native handler
 // ============================================================
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type !== 'check_native') return;
@@ -204,7 +265,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // ============================================================
-// 6. Proxy error listener
+// 7. Proxy error listener
 // ============================================================
 chrome.proxy.onProxyError.addListener((details) => {
   broadcastToPanels({

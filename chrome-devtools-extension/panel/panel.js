@@ -1942,8 +1942,11 @@ function handleBgMessage(msg) {
       break;
 
     case 'proxy_stopped':
-    case 'intercept_paused':
       updateProxyStatus('idle', 'Proxy: Stopped');
+      break;
+
+    case 'intercept_paused':
+      updateProxyStatus('idle', 'Proxy: Paused');
       break;
 
     case 'native_disconnected':
@@ -2291,24 +2294,17 @@ function applyBypassRule() {
 }
 
 function startIntercept() {
+  // Apply global scope before setting interceptActive — applyGlobalScope()
+  // skips the update_config push when interceptActive is false, which is
+  // correct here because we send the scope in the intercept_on config below.
+  applyGlobalScope();
+  applyBypassRule();
+
   interceptActive = true;
   icptToggleBtn.textContent = 'Intercept ON';
   icptToggleBtn.className = 'btn btn-intercept-on';
   interceptTabBtn.classList.add('intercepting');
-
   updateProxyStatus('idle', 'Proxy: Connecting...');
-  // Apply extension checkboxes + user regex
-  applyBypassRule();
-  // Whatever is in the global scope input is implicitly applied when intercept
-  // starts — the user shouldn't need to click Apply separately.
-  const scopeInput = document.getElementById('global-scope-input').value.trim();
-  const scopePattern = urlFilterToRegex(scopeInput);
-  try {
-    globalScope = { input: scopeInput, regex: scopePattern ? new RegExp(scopePattern, 'i') : null };
-  } catch {
-    globalScope = { input: scopeInput, regex: null };
-  }
-  refreshGlobalScopeButtonState();
 
   const combined = buildBypassPattern();
   const interceptResp = document.getElementById('icpt-resp').checked;
@@ -2319,7 +2315,7 @@ function startIntercept() {
       port: 8899,
       bypassPatterns: combined ? [combined] : [],
       interceptResponse: interceptResp,
-      urlFilter: scopePattern,
+      urlFilter: urlFilterToRegex(globalScope.input),
       methodFilter: methodFilter,
     }
   });

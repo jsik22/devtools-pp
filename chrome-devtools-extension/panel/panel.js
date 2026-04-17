@@ -638,7 +638,7 @@ function sendToReplay(req) {
 
   // Open detail panel + Replay tab
   networkDetail.classList.remove('hidden');
-  networkSplit.classList.add('has-detail');
+  networkSplit.classList.add('detail-open');
   document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.detail-content').forEach(c => c.classList.remove('active'));
   document.querySelector('[data-detail="replay"]').classList.add('active');
@@ -1095,14 +1095,10 @@ function fetchSource(url, callback) {
   // Fetch via inspected page context (same-origin)
   const expr = `fetch(${JSON.stringify(url)}).then(r=>r.ok?r.text():null).then(t=>{window.__dtpp_src=t}).catch(()=>{window.__dtpp_src=null})`;
   chrome.devtools.inspectedWindow.eval(expr, () => {
-    let done = false;
     const poll = setInterval(() => {
-      if (done) return;
       chrome.devtools.inspectedWindow.eval('window.__dtpp_src', (result, err) => {
-        if (done) return;
-        if (err) { done = true; clearInterval(poll); callback(null); return; }
+        if (err) { clearInterval(poll); callback(null); return; }
         if (result !== undefined) {
-          done = true;
           clearInterval(poll);
           chrome.devtools.inspectedWindow.eval('delete window.__dtpp_src');
           sourceCache[url] = result;
@@ -1111,7 +1107,7 @@ function fetchSource(url, callback) {
       });
     }, 100);
     // Timeout after 5s
-    setTimeout(() => { if (!done) { done = true; clearInterval(poll); callback(null); } }, 5000);
+    setTimeout(() => { clearInterval(poll); callback(null); }, 5000);
   });
 }
 
@@ -1854,7 +1850,8 @@ function escapeAttr(str) {
 }
 
 // Auto-populate Replay form on detail tab switch
-document.querySelectorAll('.detail-tab').forEach(tab => {
+const origDetailTabHandler = document.querySelectorAll('.detail-tab');
+origDetailTabHandler.forEach(tab => {
   tab.addEventListener('click', () => {
     if (tab.dataset.detail === 'replay' && selectedRequestId) {
       const req = networkRequestMap.get(selectedRequestId);
@@ -1875,6 +1872,7 @@ let selectedReqId = null;
 let selectedRespId = null;
 let activeSide = 'req'; // 'req' or 'resp' — shortcut target
 let interceptBypassRegex = null;
+let interceptIdCounter = 0;
 
 const icptToggleBtn = document.getElementById('icpt-toggle');
 const reqQueueEl = document.getElementById('icpt-req-queue');
@@ -1942,11 +1940,8 @@ function handleBgMessage(msg) {
       break;
 
     case 'proxy_stopped':
-      updateProxyStatus('idle', 'Proxy: Stopped');
-      break;
-
     case 'intercept_paused':
-      updateProxyStatus('idle', 'Proxy: Paused');
+      updateProxyStatus('idle', 'Proxy: Stopped');
       break;
 
     case 'native_disconnected':
@@ -2015,18 +2010,18 @@ function updateProxyStatus(state, text) {
 
 function showSetupHint() {
   const setupUrl = chrome.runtime.getURL('setup.html');
-  const hint = `<div style="text-align:center">
-    <p style="color:#d32f2f;font-weight:600;margin-bottom:8px">Native Messaging host is not installed.</p>
-    <p style="color:#666;margin-bottom:12px">Intercept requires a one-time setup.</p>
-    <a href="${setupUrl}" target="_blank"
-      style="display:inline-block;padding:8px 20px;background:#0078d4;color:#fff;border-radius:6px;text-decoration:none;font-weight:600;font-size:13px">
-      Open Setup Guide
-    </a>
-  </div>`;
-  const reqPlaceholder = document.getElementById('icpt-req-placeholder');
-  if (reqPlaceholder) reqPlaceholder.innerHTML = hint;
-  const respPlaceholder = document.getElementById('icpt-resp-placeholder');
-  if (respPlaceholder) respPlaceholder.innerHTML = hint;
+  const editor = document.getElementById('icpt-editor');
+  const placeholder = editor.querySelector('.icpt-editor-placeholder');
+  if (placeholder) {
+    placeholder.innerHTML = `<div style="text-align:center">
+      <p style="color:#d32f2f;font-weight:600;margin-bottom:8px">Native Messaging host is not installed.</p>
+      <p style="color:#666;margin-bottom:12px">Intercept requires a one-time setup.</p>
+      <a href="${setupUrl}" target="_blank"
+        style="display:inline-block;padding:8px 20px;background:#0078d4;color:#fff;border-radius:6px;text-decoration:none;font-weight:600;font-size:13px">
+        Open Setup Guide
+      </a>
+    </div>`;
+  }
 }
 
 // Convert wildcard URL filter to regex.
@@ -2294,17 +2289,24 @@ function applyBypassRule() {
 }
 
 function startIntercept() {
-  // Apply global scope before setting interceptActive — applyGlobalScope()
-  // skips the update_config push when interceptActive is false, which is
-  // correct here because we send the scope in the intercept_on config below.
-  applyGlobalScope();
-  applyBypassRule();
-
   interceptActive = true;
   icptToggleBtn.textContent = 'Intercept ON';
   icptToggleBtn.className = 'btn btn-intercept-on';
   interceptTabBtn.classList.add('intercepting');
+
   updateProxyStatus('idle', 'Proxy: Connecting...');
+  // Apply extension checkboxes + user regex
+  applyBypassRule();
+  // Whatever is in the global scope input is implicitly applied when intercept
+  // starts — the user shouldn't need to click Apply separately.
+  const scopeInput = document.getElementById('global-scope-input').value.trim();
+  const scopePattern = urlFilterToRegex(scopeInput);
+  try {
+    globalScope = { input: scopeInput, regex: scopePattern ? new RegExp(scopePattern, 'i') : null };
+  } catch {
+    globalScope = { input: scopeInput, regex: null };
+  }
+  refreshGlobalScopeButtonState();
 
   const combined = buildBypassPattern();
   const interceptResp = document.getElementById('icpt-resp').checked;
@@ -2315,7 +2317,7 @@ function startIntercept() {
       port: 8899,
       bypassPatterns: combined ? [combined] : [],
       interceptResponse: interceptResp,
-      urlFilter: urlFilterToRegex(globalScope.input),
+      urlFilter: scopePattern,
       methodFilter: methodFilter,
     }
   });
@@ -2652,7 +2654,7 @@ function renderInterceptLog() {
     const cls = 'log-' + l.action;
     let shortUrl;
     try { shortUrl = new URL(l.url).pathname; } catch { shortUrl = l.url; }
-    const time = l.time.toLocaleTimeString(undefined, { hour12: false });
+    const time = l.time.toLocaleTimeString('ko-KR', { hour12: false });
     const hasResp = l.id && capturedResponses.has(l.id);
     const respStatus = l.responseStatus ? `<span style="color:${l.responseStatus < 400 ? '#0b7a3e' : '#d32f2f'};min-width:28px">${l.responseStatus}</span>` : '';
     const clickAttr = hasResp ? `data-resp-id="${l.id}" style="cursor:pointer"` : '';

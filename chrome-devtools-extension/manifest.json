@@ -7,7 +7,7 @@
     "activeTab",
     "nativeMessaging",
     "proxy",
-    "declarativeNetRequest"
+    "declarativeNetRequestWithHostAccess"
   ],
   "devtools_page": "devtools.html",
   "background": {
@@ -29,5 +29,6 @@
   "host_permissions": [
     "<all_urls>"
   ],
-  "options_page": "setup.html"
+  "options_page": "setup.html",
+  "content_scripts": []
 }

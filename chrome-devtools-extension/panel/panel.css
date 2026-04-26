@@ -31,27 +31,31 @@ header {
 }
 
 header h1 {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
   color: #1e1e1e;
   margin: 0;
   flex-shrink: 0;
 }
 
+.title-name { color: #4285F4; }
+.title-plus1 { color: #EA4335; }
+.title-plus2 { color: #FBBC04; }
+
 .tabs {
   display: flex;
-  gap: 2px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
 .tab {
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
   color: #666;
-  padding: 6px 16px;
+  padding: 3px 12px;
   cursor: pointer;
   font-size: 12px;
-  border-bottom: 2px solid transparent;
   transition: all 0.15s;
 }
 
@@ -61,8 +65,10 @@ header h1 {
 }
 
 .tab.active {
-  color: #1e1e1e;
-  border-bottom-color: #0078d4;
+  color: #1A73E8;
+  background: #E8F0FE;
+  border-color: #C5D9FB;
+  font-weight: 500;
 }
 
 .global-scope-bar {
@@ -1391,24 +1397,23 @@ tr.selected td {
    Intercept Proxy
    ============================================================ */
 
-.intercept-tab {
-  color: #d32f2f !important;
-  font-weight: 600;
-}
-
-.intercept-tab.active {
-  border-bottom-color: #d32f2f !important;
-}
-
-.intercept-tab.intercepting {
-  color: #fff !important;
+/* When intercept is ON, show a small pulsing red dot before the tab label
+   without overriding the tab's font color. */
+.intercept-tab.intercepting::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
   background: #d32f2f;
+  margin-right: 6px;
+  vertical-align: middle;
   animation: icpt-pulse 1.5s ease-in-out infinite;
 }
 
 @keyframes icpt-pulse {
-  0%, 100% { background: #d32f2f; }
-  50% { background: #e57373; }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
 .icpt-toolbar {

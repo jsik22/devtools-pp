@@ -496,17 +496,17 @@ class ProxyServer extends EventEmitter {
       this.forwardAllPending();
       this.interceptActive = false;
       if (this.server) {
-        this.server.close(() => {
-          this.server = null;
-          resolve();
-        });
-        // Force close after 3s
-        setTimeout(() => {
+        const forceTimer = setTimeout(() => {
           if (this.server) {
             this.server = null;
             resolve();
           }
         }, 3000);
+        this.server.close(() => {
+          clearTimeout(forceTimer);
+          this.server = null;
+          resolve();
+        });
       } else {
         resolve();
       }

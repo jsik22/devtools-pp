@@ -1151,6 +1151,18 @@ tr.selected td {
   border-radius: 8px;
 }
 
+.sitemap-scope-select {
+  flex-shrink: 0;
+  margin-left: 8px;
+  font-size: 10px;
+  padding: 1px 4px;
+  visibility: hidden;
+}
+.sitemap-node:hover > .sitemap-scope-select,
+.sitemap-scope-select:focus {
+  visibility: visible;
+}
+
 .sitemap-node-methods {
   flex-shrink: 0;
   margin-left: 6px;

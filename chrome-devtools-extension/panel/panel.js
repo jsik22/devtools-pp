@@ -489,6 +489,44 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
     row.appendChild(countEl);
   }
 
+  // Host-only: "Set Scope" dropdown on hover — pin this domain (or its
+  // wildcard form) as the global scope.
+  if (isHost) {
+    const scopeSelect = document.createElement('select');
+    scopeSelect.className = 'btn btn-xs sitemap-scope-select';
+    scopeSelect.title = `Set global scope based on ${host}`;
+
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Set Scope';
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    scopeSelect.appendChild(placeholder);
+
+    const exactOpt = document.createElement('option');
+    exactOpt.value = `${host}/*`;
+    exactOpt.textContent = `Exact: ${host}`;
+    scopeSelect.appendChild(exactOpt);
+
+    const wildcard = wildcardHost(host);
+    if (wildcard) {
+      const wildcardOpt = document.createElement('option');
+      wildcardOpt.value = `${wildcard}/*`;
+      wildcardOpt.textContent = `Wildcard: ${wildcard}`;
+      scopeSelect.appendChild(wildcardOpt);
+    }
+
+    scopeSelect.addEventListener('click', (e) => e.stopPropagation());
+    scopeSelect.addEventListener('change', (e) => {
+      e.stopPropagation();
+      const pattern = scopeSelect.value;
+      if (pattern) applyScopePattern(pattern);
+      scopeSelect.value = '';
+    });
+
+    row.appendChild(scopeSelect);
+  }
+
   wrapper.appendChild(row);
 
   // Children container (restore expanded state)
@@ -2098,6 +2136,26 @@ function applyGlobalScope() {
   }
   refreshGlobalScopeButtonState();
   flashGlobalScopeApply();
+}
+
+// Apply an arbitrary scope pattern (used by Site Map "Set Scope" dropdown).
+function applyScopePattern(pattern) {
+  document.getElementById('global-scope-input').value = pattern;
+  applyGlobalScope();
+}
+
+// Wildcard form of a host: drop the leftmost label for 3+ part hosts
+// (www.site.com -> *.site.com), or prepend *. for 2-part hosts
+// (site.com -> *.site.com, meaning subdomains). Returns null for IPs,
+// single-label hosts, and anything we can't safely wildcard.
+function wildcardHost(host) {
+  if (!host) return null;
+  if (/^[\d.]+$/.test(host)) return null; // IPv4
+  if (host.includes(':')) return null; // IPv6 or host:port
+  const parts = host.split('.');
+  if (parts.length < 2) return null; // e.g. "localhost"
+  if (parts.length === 2) return `*.${host}`;
+  return `*.${parts.slice(1).join('.')}`;
 }
 
 // Toggle dirty highlight on the Apply button when input != applied value.

@@ -1918,7 +1918,6 @@ const icptToggleBtn = document.getElementById('icpt-toggle');
 const reqQueueEl = document.getElementById('icpt-req-queue');
 const respQueueEl = document.getElementById('icpt-resp-queue');
 const icptLogEl = document.getElementById('icpt-log');
-const icptQueueBadge = document.getElementById('icpt-queue-badge');
 const reqBadge = document.getElementById('icpt-req-badge');
 const respBadge = document.getElementById('icpt-resp-badge');
 const reqEditorContent = document.getElementById('icpt-req-editor-content');
@@ -2038,17 +2037,12 @@ function handleBgMessage(msg) {
 connectBgPort();
 
 function updateProxyStatus(state, text) {
-  icptProxyStatus.textContent = text;
-  if (state === 'active') {
-    icptProxyStatus.style.color = '#0b7a3e';
-    icptProxyStatus.style.background = '#e6f4ea';
-  } else if (state === 'error') {
-    icptProxyStatus.style.color = '#d32f2f';
-    icptProxyStatus.style.background = '#fef2f2';
-  } else {
-    icptProxyStatus.style.color = '#666';
-    icptProxyStatus.style.background = '#f3f3f3';
-  }
+  // Strip the redundant "Proxy: " prefix used by callers — the pill already
+  // sits next to the Intercept toggle, so its context is clear.
+  icptProxyStatus.textContent = text.replace(/^Proxy:\s*/, '') || text;
+  icptProxyStatus.classList.remove('status-active', 'status-warn', 'status-error');
+  if (state === 'active') icptProxyStatus.classList.add('status-active');
+  else if (state === 'error') icptProxyStatus.classList.add('status-error');
 }
 
 function showSetupHint() {
@@ -2292,6 +2286,12 @@ document.getElementById('icpt-drop-all').addEventListener('click', dropAll);
 document.getElementById('icpt-clear-log').addEventListener('click', () => { interceptLog.length = 0; renderInterceptLog(); });
 document.getElementById('icpt-bypass-apply').addEventListener('click', applyBypassRule);
 
+// Toggle the auto-forward / bypass rules row (collapsed by default).
+document.getElementById('icpt-rules-toggle').addEventListener('click', () => {
+  const bar = document.querySelector('.icpt-rules-bar');
+  bar.classList.toggle('hidden');
+});
+
 // Intercept keyboard shortcuts (F/G/D/R/A/Q) — activeSide based
 document.addEventListener('keydown', (e) => {
   const interceptSection = document.getElementById('intercept');
@@ -2424,7 +2424,6 @@ function sendInterceptDecision(id, decision) {
 function updateBadges() {
   reqBadge.textContent = reqQueue.length;
   respBadge.textContent = respQueue.length;
-  icptQueueBadge.textContent = (reqQueue.length + respQueue.length) + ' paused';
 }
 
 function renderQueueItems(queue, el, selectedId, side) {

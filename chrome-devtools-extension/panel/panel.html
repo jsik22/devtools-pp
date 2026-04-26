@@ -17,7 +17,7 @@
       <div class="global-scope-bar">
         <label for="global-scope-input" class="global-scope-label" title="Host+path pattern. Wildcards: *. Multiple patterns: comma-separated. Empty = all in scope.">Scope</label>
         <input type="text" id="global-scope-input" class="filter-input global-scope-input" placeholder="*.site.com, api.example.com/v1/* — empty = all in scope">
-        <button id="global-scope-apply" class="btn" title="Apply scope (Enter)">Apply</button>
+        <button id="global-scope-apply" class="btn btn-xs" title="Apply scope (Enter)">Apply</button>
         <button id="global-scope-clear" class="btn btn-xs" title="Clear scope (show all)">Clear</button>
       </div>
     </header>
@@ -222,10 +222,10 @@
 
     <!-- Intercept tab -->
     <section id="intercept" class="tab-content">
-      <!-- Top: Control bar -->
+      <!-- Top: Control bar (single row; secondary controls collapse into Rules popover) -->
       <div class="toolbar icpt-toolbar">
         <button id="icpt-toggle" class="btn btn-intercept-off">Intercept OFF</button>
-        <span id="icpt-proxy-status" style="font-size:12px;padding:2px 8px;border-radius:4px;background:#f3f3f3;color:#666;border:1px solid #d4d4d4">Proxy: Idle</span>
+        <span id="icpt-proxy-status" class="icpt-status-pill">Idle</span>
         <div class="icpt-scope-group">
           <label class="icpt-check"><input type="checkbox" id="icpt-req" checked> Request</label>
           <label class="icpt-check"><input type="checkbox" id="icpt-resp"> Response</label>
@@ -238,13 +238,17 @@
           <option value="PATCH">PATCH</option>
           <option value="DELETE">DELETE</option>
         </select>
-        <button id="icpt-forward-all" class="btn" title="Forward all paused requests">Forward All</button>
-        <button id="icpt-drop-all" class="btn btn-danger" title="Drop all paused requests">Drop All</button>
+        <span class="icpt-toolbar-spacer"></span>
+        <button id="icpt-forward-all" class="btn btn-xs" title="Forward all paused requests/responses (A)">Forward All</button>
+        <button id="icpt-drop-all" class="btn btn-xs btn-danger" title="Drop all paused requests/responses (Q)">Drop All</button>
+        <button id="icpt-rules-toggle" class="btn btn-xs" title="Auto-forward extensions and bypass rules">⚙ Rules</button>
+        <button id="icpt-shortcuts-help" class="btn btn-xs"
+          title="Shortcuts: F=Forward · G=Forward Modified · D=Drop · R=Mock Response · A=Forward All · Q=Drop All">?</button>
       </div>
 
-      <!-- Breakpoint rules -->
-      <div class="toolbar icpt-rules-bar">
-        <span style="color:#666;font-size:12px">Auto-forward:</span>
+      <!-- Auto-forward extensions + custom bypass regex (collapsed by default) -->
+      <div class="toolbar icpt-rules-bar hidden">
+        <span class="icpt-rules-label">Auto-forward:</span>
         <div class="icpt-ext-filters">
           <label class="icpt-ext-check"><input type="checkbox" data-ext="css" checked> css</label>
           <label class="icpt-ext-check"><input type="checkbox" data-ext="js" checked> js</label>
@@ -255,14 +259,9 @@
           <label class="icpt-ext-check"><input type="checkbox" data-ext="woff" checked> woff</label>
           <label class="icpt-ext-check"><input type="checkbox" data-ext="ico" checked> ico</label>
         </div>
-        <span style="color:#555;font-size:12px;margin-left:4px">+</span>
+        <span class="icpt-rules-plus">+</span>
         <input type="text" id="icpt-bypass-input" class="filter-input" placeholder="Additional bypass regex..." style="flex:1">
         <button id="icpt-bypass-apply" class="btn btn-xs">Apply</button>
-        <span id="icpt-queue-badge" class="badge">0 paused</span>
-      </div>
-      <!-- Keyboard shortcuts -->
-      <div class="toolbar icpt-shortcut-bar">
-        <span style="color:#555;font-size:11px">Shortcuts: <kbd>F</kbd> Forward · <kbd>G</kbd> Forward Modified · <kbd>D</kbd> Drop · <kbd>R</kbd> Mock Response · <kbd>A</kbd> Forward All · <kbd>Q</kbd> Drop All</span>
       </div>
 
       <!-- Main: Request/Response left/right split -->
@@ -332,9 +331,8 @@
               </div>
               <div class="icpt-editor-content hidden" id="icpt-resp-editor-content">
                 <div class="icpt-editor-topbar">
-                  <span id="icpt-resp-edit-method" style="font-weight:700;color:#0451a5;font-size:12px"></span>
+                  <span id="icpt-resp-edit-method" class="icpt-resp-method-tag"></span>
                   <input type="text" id="icpt-resp-edit-url" class="filter-input" style="flex:1" readonly>
-                  <span class="icpt-stage-badge icpt-stage-resp" style="font-size:10px">RESPONSE</span>
                 </div>
                 <div class="icpt-resp-status-bar">
                   <label style="color:#666;font-size:12px">Status:</label>

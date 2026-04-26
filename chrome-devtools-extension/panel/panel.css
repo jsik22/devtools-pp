@@ -1506,22 +1506,54 @@ tr.selected td {
   gap: 6px;
   background: #f8f8f8;
 }
-
-.icpt-shortcut-bar {
-  padding: 2px 12px;
-  gap: 6px;
-  background: #f0f0f0;
-  border-bottom: 1px solid #e0e0e0;
+.icpt-rules-bar.hidden {
+  display: none;
+}
+.icpt-rules-label {
+  color: #666;
+  font-size: 12px;
+}
+.icpt-rules-plus {
+  color: #555;
+  font-size: 12px;
+  margin-left: 4px;
 }
 
-.icpt-shortcut-bar kbd {
-  background: #fff;
-  border: 1px solid #ccc;
-  border-radius: 3px;
-  padding: 0 4px;
+/* Push the secondary actions (Forward All / Drop All / ⚙ / ?) to the right */
+.icpt-toolbar-spacer {
+  flex: 1;
+}
+
+/* Compact proxy status pill (replaces inline-styled badge) */
+.icpt-status-pill {
   font-size: 11px;
-  font-family: monospace;
-  box-shadow: 0 1px 0 #bbb;
+  padding: 1px 8px;
+  border-radius: 8px;
+  background: transparent;
+  color: #888;
+  border: 1px solid transparent;
+}
+.icpt-status-pill.status-active {
+  color: #0b7a3e;
+  background: #e6f5eb;
+  border-color: #b3dcc1;
+}
+.icpt-status-pill.status-warn {
+  color: #8a6d00;
+  background: #fff7e0;
+  border-color: #e5d28a;
+}
+.icpt-status-pill.status-error {
+  color: #d32f2f;
+  background: #fdecea;
+  border-color: #f3b9b3;
+}
+
+/* Response editor: method tag (no longer paired with a redundant RESPONSE badge) */
+.icpt-resp-method-tag {
+  font-weight: 700;
+  color: #0451a5;
+  font-size: 12px;
 }
 
 /* Split layout */
@@ -1676,16 +1708,6 @@ tr.selected td {
   flex-shrink: 0;
 }
 
-.icpt-stage-req {
-  background: #0078d4;
-  color: #fff;
-}
-
-.icpt-stage-resp {
-  background: #0b7a3e;
-  color: #fff;
-}
-
 /* Log items */
 .icpt-log-item {
   display: flex;
@@ -1752,14 +1774,6 @@ tr.selected td {
   border-radius: 4px;
   font-size: 12px;
   font-weight: 600;
-}
-
-.icpt-stage-badge {
-  font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 3px;
-  font-weight: 700;
-  flex-shrink: 0;
 }
 
 .icpt-editor-tabs {

@@ -2739,3 +2739,38 @@ function truncate(str, max) {
   return str.length > max ? str.substring(0, max) + '...' : str;
 }
 
+// Resizable split gutters: drag to resize the next sibling pane.
+function setupSplitGutter(gutter) {
+  const isVertical = gutter.classList.contains('split-gutter-v');
+  gutter.addEventListener('mousedown', (e) => {
+    const target = gutter.nextElementSibling;
+    if (!target || target.classList.contains('hidden')) return;
+    e.preventDefault();
+    const rect = target.getBoundingClientRect();
+    const startSize = isVertical ? rect.height : rect.width;
+    const startPos = isVertical ? e.clientY : e.clientX;
+    gutter.classList.add('dragging');
+    document.body.style.cursor = isVertical ? 'row-resize' : 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    function onMove(ev) {
+      const cur = isVertical ? ev.clientY : ev.clientX;
+      const newSize = Math.max(80, startSize - (cur - startPos));
+      target.style.flex = `0 0 ${newSize}px`;
+      if (isVertical) {
+        target.style.maxHeight = 'none';
+      }
+    }
+    function onUp() {
+      gutter.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+document.querySelectorAll('.split-gutter').forEach(setupSplitGutter);
+

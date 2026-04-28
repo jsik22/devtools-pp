@@ -325,6 +325,21 @@ tr:hover {
   border-bottom-color: #0078d4;
 }
 
+/* Source-mapped indicator on the Initiator tab — appears once async
+   enrichment finds at least one mapped frame. */
+.detail-tab.has-mapped::after {
+  content: '↑';
+  margin-left: 5px;
+  color: #1a73e8;
+  font-size: 10px;
+  font-weight: 700;
+  background: #E8F0FE;
+  border: 1px solid #C5D9FB;
+  border-radius: 3px;
+  padding: 0 4px;
+  line-height: 1.4;
+}
+
 .detail-close-btn {
   padding: 2px 8px;
   font-size: 12px;
@@ -448,6 +463,42 @@ tr:hover {
   text-decoration: underline;
 }
 
+/* When the script's source map decodes successfully, the link shows
+   the original location followed by the bundled one in muted text. */
+.source-link.mapped {
+  color: #1a73e8;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 480px;
+}
+.source-link .mapped-icon {
+  color: #1a73e8;
+  font-size: 10px;
+  font-weight: 700;
+}
+.source-link .mapped-loc {
+  font-weight: 500;
+}
+.source-link .bundled-loc {
+  color: #aaa;
+  font-size: 10px;
+  margin-left: 4px;
+}
+
+/* Header tag shown in the inline viewer when displaying mapped source */
+.source-viewer-mapped-tag {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #1a73e8;
+  background: #E8F0FE;
+  border: 1px solid #C5D9FB;
+  border-radius: 3px;
+  padding: 0 6px;
+}
+
 .initiator-parser {
   padding: 8px 12px;
   font-size: 12px;
@@ -554,6 +605,238 @@ tr:hover {
 
 .section-body.collapsed {
   display: none;
+}
+
+/* ============================================================
+   Auto-decode panel ("🔍 Decoded") at the bottom of detail tabs
+   ============================================================ */
+.decoded-section {
+  margin-top: 12px;
+  border-top: 2px solid #C5D9FB;
+  background: #fafbff;
+}
+.decoded-section .decoded-header {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1a73e8;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.decoded-count {
+  background: #E8F0FE;
+  color: #1a73e8;
+  border-radius: 8px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.decoded-list {
+  padding: 0 12px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.decoded-item {
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background: #fff;
+}
+.decoded-item summary {
+  padding: 6px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  list-style: none;
+  user-select: none;
+}
+.decoded-item summary::-webkit-details-marker { display: none; }
+.decoded-item summary::before {
+  content: '\25B6';
+  font-size: 9px;
+  color: #888;
+  margin-right: 2px;
+  transition: transform 0.1s;
+}
+.decoded-item[open] summary::before { content: '\25BC'; }
+.decoded-type-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #E8F0FE;
+  color: #1a73e8;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+.decoded-type-badge.type-jwt { background: #fce8e6; color: #c5221f; }
+.decoded-type-badge.type-base64 { background: #fef7e0; color: #b06000; }
+.decoded-type-badge.type-urlenc { background: #e6f4ea; color: #0b7a3e; }
+.decoded-type-badge.type-nested-json { background: #f3e8fd; color: #6a1b9a; }
+.decoded-type-badge.type-timestamp { background: #e8eaed; color: #5f6368; }
+.decoded-type-badge.type-notice { background: #fef7e0; color: #b06000; }
+
+.decoded-notice {
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fffbf2;
+  border-color: #f4dca0;
+  font-size: 12px;
+}
+.decoded-location {
+  color: #555;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.decoded-warning-badge {
+  font-size: 10px;
+  background: #fce8e6;
+  color: #c5221f;
+  border: 1px solid #f4b4b4;
+  border-radius: 3px;
+  padding: 0 6px;
+  flex-shrink: 0;
+}
+.decoded-content {
+  padding: 8px 12px;
+  border-top: 1px solid #f0f0f0;
+}
+.decoded-subblock {
+  font-size: 11px;
+  color: #555;
+  font-weight: 600;
+  margin: 6px 0 4px 0;
+}
+.decoded-subblock:first-child { margin-top: 0; }
+.decoded-pretty {
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+  background: #f7f8fa;
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin: 0 0 4px 0;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ============================================================
+   Response Pattern Detection — list badges + Detection detail tab
+   ============================================================ */
+
+/* Inline badge cluster shown in the network list "Scan" column */
+.scan-badges-cell {
+  font-size: 10px;
+  white-space: nowrap;
+}
+.scan-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  margin-right: 2px;
+  border: 1px solid transparent;
+  cursor: default;
+}
+.scan-badge-token     { background: #fce8e6; color: #c5221f; border-color: #f4b4b4; }
+.scan-badge-sensitive { background: #fce8e6; color: #c5221f; border-color: #f4b4b4; }
+.scan-badge-privilege { background: #fef7e0; color: #b06000; border-color: #f4dca0; }
+.scan-badge-pii       { background: #f3e8fd; color: #6a1b9a; border-color: #d6b8eb; }
+.scan-badge-leak      { background: #fff3e0; color: #c45a00; border-color: #f7c79b; }
+.scan-badge-idor      { background: #e8eaed; color: #3c4043; border-color: #c8cad0; }
+.scan-badge-check     { background: #e8f0fe; color: #1a73e8; border-color: #c5d9fb; }
+
+/* Detection tab indicator (count badge) */
+.detail-tab.has-findings {
+  font-weight: 600;
+}
+.detail-tab.has-findings::after {
+  content: attr(data-count);
+  margin-left: 5px;
+  background: #c5221f;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 0 6px;
+  line-height: 1.4;
+}
+
+/* Detection detail tab content */
+.detection-group {
+  margin-bottom: 14px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background: #fff;
+  overflow: hidden;
+}
+.detection-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #f7f8fa;
+  border-bottom: 1px solid #e0e0e0;
+  font-size: 12px;
+}
+.detection-group-count {
+  color: #666;
+  font-size: 11px;
+}
+.detection-findings {
+  padding: 4px 0;
+}
+.detection-finding {
+  padding: 6px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 12px;
+}
+.detection-finding:last-child {
+  border-bottom: none;
+}
+.detection-finding-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.detection-severity {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.4px;
+}
+.detection-severity.sev-high   { background: #fce8e6; color: #c5221f; }
+.detection-severity.sev-medium { background: #fef7e0; color: #b06000; }
+.detection-severity.sev-info   { background: #e8f0fe; color: #1a73e8; }
+.detection-location {
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  color: #555;
+  font-size: 11px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.detection-evidence {
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  color: #1e1e1e;
+  font-size: 11px;
+  margin-top: 4px;
+  padding-left: 12px;
+  word-break: break-all;
 }
 
 .header-row {
@@ -1338,7 +1621,7 @@ tr.selected td {
 }
 
 /* Scan Results */
-.scan-summary {
+.page-scan-summary {
   display: flex;
   gap: 16px;
   padding: 10px 12px;

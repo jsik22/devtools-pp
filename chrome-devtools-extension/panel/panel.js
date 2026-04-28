@@ -69,16 +69,16 @@ const sitemapDetailPath = document.getElementById('sitemap-detail-path');
 const sitemapDetailList = document.getElementById('sitemap-detail-list');
 const sitemapStats = document.getElementById('sitemap-stats');
 
-const sitemapScanBtn = document.getElementById('sitemap-scan');
-sitemapScanBtn.addEventListener('click', scanPage);
+const sitemapPageScanBtn = document.getElementById('sitemap-page-scan');
+sitemapPageScanBtn.addEventListener('click', runPageScan);
 
-function updateScanPageButton() {
+function updatePageScanButton() {
   if (sitemapSelectedNode && targetHost && sitemapSelectedNode.host !== targetHost) {
-    sitemapScanBtn.disabled = true;
-    sitemapScanBtn.title = 'Scan Page is only available for the target host';
+    sitemapPageScanBtn.disabled = true;
+    sitemapPageScanBtn.title = 'Page Scan is only available for the target host';
   } else {
-    sitemapScanBtn.disabled = false;
-    sitemapScanBtn.title = '';
+    sitemapPageScanBtn.disabled = false;
+    sitemapPageScanBtn.title = '';
   }
 }
 document.getElementById('sitemap-clear').addEventListener('click', () => {
@@ -109,8 +109,8 @@ function classifyMimeType(mimeType) {
   return 'other';
 }
 
-function scanPage() {
-  const btn = document.getElementById('sitemap-scan');
+function runPageScan() {
+  const btn = document.getElementById('sitemap-page-scan');
   btn.textContent = 'Scanning...';
   btn.disabled = true;
 
@@ -157,7 +157,7 @@ function scanPage() {
   `;
 
   chrome.devtools.inspectedWindow.eval(expression, (result, err) => {
-    btn.textContent = 'Scan Page';
+    btn.textContent = 'Page Scan';
     btn.disabled = false;
 
     if (err) return;
@@ -167,20 +167,20 @@ function scanPage() {
       // Dedup
       data.links = [...new Set(data.links)];
       data.scripts = [...new Set(data.scripts)];
-      showScanResults(data);
+      showPageScanResults(data);
     } catch { /* ignore parse errors */ }
   });
 }
 
-function showScanResults(data) {
+function showPageScanResults(data) {
   sitemapSelectedNode = null;
   sitemapDetail.classList.remove('hidden');
-  sitemapDetailPath.textContent = 'Scan Results';
+  sitemapDetailPath.textContent = 'Page Scan Results';
   sitemapDetailList.innerHTML = '';
 
   // Summary
   const summary = document.createElement('div');
-  summary.className = 'scan-summary';
+  summary.className = 'page-scan-summary';
   summary.innerHTML =
     `<div class="scan-stat"><span class="scan-stat-num">${data.links.length}</span> Links</div>` +
     `<div class="scan-stat"><span class="scan-stat-num">${data.forms.length}</span> Forms</div>` +
@@ -188,7 +188,7 @@ function showScanResults(data) {
   sitemapDetailList.appendChild(summary);
 
   // Links section
-  buildScanSection('Links', data.links, url => {
+  buildPageScanSection('Links', data.links, url => {
     const item = document.createElement('div');
     item.className = 'scan-item-row';
     const urlEl = document.createElement('span');
@@ -208,7 +208,7 @@ function showScanResults(data) {
   });
 
   // Forms section
-  buildScanSection('Forms', data.forms, form => {
+  buildPageScanSection('Forms', data.forms, form => {
     const wrapper = document.createElement('div');
     const item = document.createElement('div');
     item.className = 'scan-item-row';
@@ -249,7 +249,7 @@ function showScanResults(data) {
   });
 
   // Scripts section
-  buildScanSection('Scripts', data.scripts, url => {
+  buildPageScanSection('Scripts', data.scripts, url => {
     const item = document.createElement('div');
     item.className = 'scan-item-row scan-script';
     item.textContent = url;
@@ -258,7 +258,7 @@ function showScanResults(data) {
   });
 }
 
-function buildScanSection(title, items, renderItem) {
+function buildPageScanSection(title, items, renderItem) {
   if (items.length === 0) return;
   const header = document.createElement('div');
   header.className = 'scan-section-header';
@@ -423,7 +423,7 @@ function renderSitemapTree() {
   if (sitemapSelectedNode) {
     renderSitemapDetail();
   }
-  updateScanPageButton();
+  updatePageScanButton();
 }
 
 function buildTreeNode(label, node, host, currentPath, forceShow) {
@@ -782,6 +782,11 @@ chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
     _harEntry: harEntry, // HAR entry reference (for body loading)
   };
 
+  // Initial scanner pass — runs against URL/headers/request body and the
+  // response status. Body-side findings come on a second pass once the
+  // body is loaded below.
+  req.scanResults = scanRequest(req);
+
   // Site Map always collects
   addToSitemap(req);
 
@@ -790,6 +795,30 @@ chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
   networkRequests.push(req);
   networkRequestMap.set(reqId, req);
   renderNetworkTable();
+
+  // Eagerly load the body for text-like responses so the scanner can
+  // see body-side findings without waiting for the user to click in.
+  if (scanShouldEagerLoadBody(req) && !req.responseBodyLoaded) {
+    harEntry.getContent((content, encoding) => {
+      if (content == null) return;
+      req.responseBody = content;
+      req.responseBase64 = encoding === 'base64';
+      req.responseBodyLoaded = true;
+      // Re-scan with body
+      req.scanResults = scanRequest(req);
+      // Update only this row's badge cell to avoid full re-render
+      const row = networkTable.querySelector(`tr[data-request-id="${CSS.escape(req.requestId)}"]`);
+      if (row) {
+        const cell = row.querySelector('.scan-badges-cell');
+        if (cell) cell.innerHTML = renderScanBadgesInline(req.scanResults);
+      }
+      // If this row is currently selected, refresh detail panels too
+      if (selectedRequestId === req.requestId) {
+        renderResponseBody(req);
+        renderDetection(req);
+      }
+    });
+  }
 });
 
 function startNetworkMonitoring() {
@@ -841,33 +870,62 @@ function renderNetworkTable() {
       <td>${escapeHtml(r.type)}</td>
       <td>${r.size}</td>
       <td>${r.time}</td>
+      <td class="scan-badges-cell">${renderScanBadgesInline(r.scanResults)}</td>
     </tr>`;
   }).join('');
 
   // Row click event
   networkTable.querySelectorAll('tr').forEach(row => {
     row.addEventListener('click', () => {
-      const reqId = row.dataset.requestId;
-      const req = networkRequestMap.get(reqId);
-      if (!req) return;
-
-      // Update selection state
-      networkTable.querySelectorAll('tr.selected').forEach(r => r.classList.remove('selected'));
-      row.classList.add('selected');
-      selectedRequestId = reqId;
-
-      // Show detail panel
-      networkDetail.classList.remove('hidden');
-      networkSplit.classList.add('has-detail');
-      showDetail(req);
-
-      // Try loading body if not loaded yet
-      if (!req.responseBodyLoaded) {
-        fetchResponseBody(req);
-      }
+      selectNetworkRequest(row.dataset.requestId, { scroll: false });
     });
   });
 }
+
+// Move selection to a request, open the detail panel, and (optionally)
+// scroll the row into view. Shared by click handlers and keyboard nav.
+function selectNetworkRequest(reqId, opts) {
+  const req = networkRequestMap.get(reqId);
+  if (!req) return;
+  networkTable.querySelectorAll('tr.selected').forEach(r => r.classList.remove('selected'));
+  const row = networkTable.querySelector(`tr[data-request-id="${CSS.escape(reqId)}"]`);
+  if (row) {
+    row.classList.add('selected');
+    if (opts && opts.scroll) row.scrollIntoView({ block: 'nearest' });
+  }
+  selectedRequestId = reqId;
+  networkDetail.classList.remove('hidden');
+  networkSplit.classList.add('has-detail');
+  showDetail(req);
+  if (!req.responseBodyLoaded) fetchResponseBody(req);
+}
+
+// ↑/↓ keyboard navigation through the request list while the Network
+// tab is active. Suppresses the browser's default scroll so the keys
+// move the selection instead.
+document.addEventListener('keydown', (e) => {
+  const networkSection = document.getElementById('network');
+  if (!networkSection || !networkSection.classList.contains('active')) return;
+  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+  // Don't hijack the keys while the user is typing in a form field.
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  if (networkRequests.length === 0) return;
+  e.preventDefault();
+  const currentIdx = selectedRequestId
+    ? networkRequests.findIndex(r => r.requestId === selectedRequestId)
+    : -1;
+  let newIdx;
+  if (currentIdx < 0) {
+    newIdx = e.key === 'ArrowDown' ? 0 : networkRequests.length - 1;
+  } else if (e.key === 'ArrowUp') {
+    newIdx = Math.max(0, currentIdx - 1);
+  } else {
+    newIdx = Math.min(networkRequests.length - 1, currentIdx + 1);
+  }
+  if (newIdx === currentIdx) return;
+  selectNetworkRequest(networkRequests[newIdx].requestId, { scroll: true });
+});
 
 // ============================================================
 // Network Detail Panel
@@ -880,6 +938,7 @@ function showDetail(req) {
   renderResponseBody(req);
   renderPreview(req);
   renderInitiator(req);
+  renderDetection(req);
   populateReplayForm(req);
 }
 
@@ -966,6 +1025,13 @@ function renderHeaders(req) {
   } else {
     reqContainer.innerHTML = '';
   }
+
+  // Auto-decode pass over both header sets
+  const findings = [
+    ...autoDecodeScanHeaders(req.responseHeaders, 'Response header'),
+    ...autoDecodeScanHeaders(req.requestHeaders, 'Request header'),
+  ];
+  renderDecodedSection(document.getElementById('detail-headers'), findings);
 }
 
 function renderPayload(req) {
@@ -1021,20 +1087,39 @@ function renderPayload(req) {
   } else {
     bodyContainer.innerHTML = '';
   }
+
+  // Auto-decode: query params + request body
+  const findings = [];
+  try {
+    const url = new URL(req.url);
+    for (const [k, v] of url.searchParams) {
+      if (findings.length >= AUTODECODE_MAX_FINDINGS) break;
+      const f = detectInString(v);
+      if (f) findings.push({ ...f, location: `Query: ${k}` });
+    }
+  } catch { /* malformed URL */ }
+  if (req.requestPostData) {
+    findings.push(...autoDecodeScanBody(req.requestPostData, 'Request body'));
+  }
+  renderDecodedSection(document.getElementById('detail-payload'), findings);
 }
 
 function renderResponseBody(req) {
   const container = document.getElementById('detail-response-body');
+  const tabPane = document.getElementById('detail-response');
   if (!req.responseBodyLoaded) {
     container.innerHTML = '<div class="detail-loading">Loading response body...</div>';
+    renderDecodedSection(tabPane, []);
     return;
   }
   if (req.responseBody === null || req.responseBody === undefined) {
     container.innerHTML = '<div class="detail-loading">Response body not available.</div>';
+    renderDecodedSection(tabPane, []);
     return;
   }
   if (req.responseBase64) {
     container.innerHTML = `<div class="response-body-content" style="color:#999">[Base64 encoded data - ${formatBytes(req.responseBody.length)} encoded]</div>`;
+    renderDecodedSection(tabPane, []);
     return;
   }
 
@@ -1047,6 +1132,8 @@ function renderResponseBody(req) {
   } catch {
     container.innerHTML = `<div class="response-body-content">${escapeHtml(body)}</div>`;
   }
+
+  renderDecodedSection(tabPane, autoDecodeScanBody(req.responseBody, 'Response body'));
 }
 
 function renderPreview(req) {
@@ -1130,7 +1217,38 @@ function fetchSource(url, callback) {
     callback(sourceCache[url]);
     return;
   }
-  // Fetch via inspected page context (same-origin)
+  // Inline data URIs — decode directly, no I/O needed.
+  if (url.startsWith('data:')) {
+    const text = decodeDataUri(url);
+    sourceCache[url] = text;
+    callback(text);
+    return;
+  }
+  // DevTools resources first — covers webpack-internal://, eval'd virtual
+  // scripts, and avoids re-fetching things the page already loaded
+  // (works for cross-origin scripts too, where fetch() would CORS-fail).
+  chrome.devtools.inspectedWindow.getResources((resources) => {
+    const res = resources && resources.find(r => r.url === url);
+    if (res) {
+      res.getContent((content, encoding) => {
+        if (content != null) {
+          const text = encoding === 'base64' ? atob(content) : content;
+          sourceCache[url] = text;
+          callback(text);
+          return;
+        }
+        fetchSourceViaPage(url, callback);
+      });
+      return;
+    }
+    fetchSourceViaPage(url, callback);
+  });
+}
+
+// Fallback: ask the inspected page to fetch() the URL. Used when the
+// DevTools resource cache doesn't have it (e.g. .map files the page
+// itself didn't load).
+function fetchSourceViaPage(url, callback) {
   const expr = `fetch(${JSON.stringify(url)}).then(r=>r.ok?r.text():null).then(t=>{window.__dtpp_src=t}).catch(()=>{window.__dtpp_src=null})`;
   chrome.devtools.inspectedWindow.eval(expr, () => {
     let done = false;
@@ -1148,8 +1266,162 @@ function fetchSource(url, callback) {
         }
       });
     }, 100);
-    // Timeout after 5s
     setTimeout(() => { if (!done) { done = true; clearInterval(poll); callback(null); } }, 5000);
+  });
+}
+
+// ============================================================
+// Source map decoder (Initiator integration)
+// ============================================================
+// Decodes v3 source maps lazily so a stack frame at bundle.js:1:12345
+// can be displayed as Auth.tsx:42:5. Self-contained — no external
+// library — and forgiving: a missing/broken map just leaves the
+// frame showing the bundled location like before.
+
+const VLQ_BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+// Decode one VLQ value starting at pos. Returns [value, nextPos].
+// VLQ chars are base64; bit 5 (0x20) marks continuation, bit 0 of the
+// assembled value is the sign bit.
+function decodeVlq(str, pos) {
+  let result = 0;
+  let shift = 0;
+  let continuation = true;
+  while (continuation) {
+    if (pos >= str.length) throw new Error('Truncated VLQ');
+    const ch = str[pos++];
+    const digit = VLQ_BASE64.indexOf(ch);
+    if (digit < 0) throw new Error('Invalid VLQ char: ' + ch);
+    continuation = (digit & 32) !== 0;
+    result |= (digit & 31) << shift;
+    shift += 5;
+  }
+  const negative = (result & 1) === 1;
+  result >>>= 1;
+  return [negative ? -result : result, pos];
+}
+
+// Parse a v3 "mappings" string. Returns segments[generatedLine] = sorted
+// list of { generatedColumn, sourceIndex, originalLine, originalColumn }.
+// Source/line/column indices are delta-encoded across the whole map;
+// generatedColumn resets per line.
+function parseMappings(mappings) {
+  const lines = mappings.split(';');
+  const result = [];
+  let sourceIndex = 0, originalLine = 0, originalColumn = 0;
+  for (const lineStr of lines) {
+    let generatedColumn = 0;
+    const segments = [];
+    let pos = 0;
+    while (pos < lineStr.length) {
+      // A segment ends at ',' or end of line
+      const fields = [];
+      while (pos < lineStr.length && lineStr[pos] !== ',') {
+        const [v, newPos] = decodeVlq(lineStr, pos);
+        fields.push(v);
+        pos = newPos;
+      }
+      if (fields.length >= 1) generatedColumn += fields[0];
+      // 4 or 5 fields = mapped to a source. 1 field = unmapped marker.
+      if (fields.length >= 4) {
+        sourceIndex += fields[1];
+        originalLine += fields[2];
+        originalColumn += fields[3];
+        segments.push({ generatedColumn, sourceIndex, originalLine, originalColumn });
+      }
+      if (lineStr[pos] === ',') pos++;
+    }
+    result.push(segments);
+  }
+  return result;
+}
+
+// Binary search for the largest segment with generatedColumn <= column
+// on the given generated line. Returns the segment or null.
+function lookupMapping(segments, line, column) {
+  if (line < 0 || line >= segments.length) return null;
+  const lineSegs = segments[line];
+  if (!lineSegs || lineSegs.length === 0) return null;
+  let lo = 0, hi = lineSegs.length - 1, found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (lineSegs[mid].generatedColumn <= column) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return found >= 0 ? lineSegs[found] : null;
+}
+
+// scriptUrl → parsed map { sources, sourcesContent, segments, mapUrl } or null.
+const sourceMapCache = {};
+
+// Decode a "data:[<mediatype>][;base64],<data>" URI into text. Returns
+// null if it can't be parsed or decoded.
+function decodeDataUri(uri) {
+  const m = uri.match(/^data:([^,]*),([\s\S]*)$/);
+  if (!m) return null;
+  try {
+    return /;base64/i.test(m[1]) ? atob(m[2]) : decodeURIComponent(m[2]);
+  } catch {
+    return null;
+  }
+}
+
+// Parse a v3 source map JSON string into the cache-friendly shape we use
+// elsewhere. Returns null on any structural problem (unsupported
+// version, index map, malformed JSON).
+function parseSourceMapText(text, mapUrl) {
+  try {
+    const map = JSON.parse(text);
+    if (map.version !== 3) return null;
+    if (map.sections) return null; // Index maps — out of MVP scope.
+    return {
+      sources: map.sources || [],
+      sourcesContent: map.sourcesContent || [],
+      segments: parseMappings(map.mappings || ''),
+      mapUrl,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Fetch a script's source map (resolved from //# sourceMappingURL=) and
+// parse it. Cached. Falls through with null on any failure — callers
+// should treat that as "no mapping, use bundled location". Handles both
+// external .map URLs and inline data: URIs (eval-source-map style).
+function getSourceMap(scriptUrl, callback) {
+  if (sourceMapCache[scriptUrl] !== undefined) {
+    callback(sourceMapCache[scriptUrl]);
+    return;
+  }
+  fetchSource(scriptUrl, (source) => {
+    if (!source) { sourceMapCache[scriptUrl] = null; callback(null); return; }
+    const tail = source.length > 4096 ? source.slice(-4096) : source;
+    const m = tail.match(/\/\/[#@]\s*sourceMappingURL=([^\s'"]+)/);
+    if (!m) { sourceMapCache[scriptUrl] = null; callback(null); return; }
+    const rawMapUrl = m[1].trim();
+
+    // Inline map — common in webpack's eval-source-map and similar dev modes.
+    if (rawMapUrl.startsWith('data:')) {
+      const text = decodeDataUri(rawMapUrl);
+      const parsed = text ? parseSourceMapText(text, rawMapUrl) : null;
+      sourceMapCache[scriptUrl] = parsed;
+      callback(parsed);
+      return;
+    }
+
+    let mapUrl;
+    try { mapUrl = new URL(rawMapUrl, scriptUrl).href; }
+    catch { sourceMapCache[scriptUrl] = null; callback(null); return; }
+    fetchSource(mapUrl, (mapText) => {
+      const parsed = mapText ? parseSourceMapText(mapText, mapUrl) : null;
+      sourceMapCache[scriptUrl] = parsed;
+      callback(parsed);
+    });
   });
 }
 
@@ -1187,6 +1459,14 @@ function renderSourceViewer(container, source, targetLine) {
 
 function renderInitiator(req) {
   const container = document.getElementById('detail-initiator-body');
+
+  // Reset the tab indicator — async source-map enrichment will re-add
+  // it if any frame in the new request maps successfully.
+  const initiatorTabBtn = document.querySelector('.detail-tab[data-detail="initiator"]');
+  if (initiatorTabBtn) {
+    initiatorTabBtn.classList.remove('has-mapped');
+    initiatorTabBtn.removeAttribute('title');
+  }
 
   if (!req.initiator) {
     container.innerHTML = '<div class="detail-loading">Initiator data not available.</div>';
@@ -1228,7 +1508,7 @@ function renderInitiator(req) {
       const sensitiveCls = sensitive ? ' sensitive' : '';
       const sourceLocation = f.url ? `${escapeHtml(fileName)}:${line}:${col}` : '';
 
-      html += `<div class="initiator-frame${sensitiveCls}" data-url="${escapeAttr(f.url || '')}" data-line="${f.lineNumber || 0}">`;
+      html += `<div class="initiator-frame${sensitiveCls}" data-url="${escapeAttr(f.url || '')}" data-line="${f.lineNumber || 0}" data-col="${f.columnNumber || 0}">`;
       html += `<span class="frame-index">${i}</span>`;
       html += `<span class="func-name">${escapeHtml(funcName)}</span>`;
       if (sensitive) {
@@ -1252,12 +1532,41 @@ function renderInitiator(req) {
 
   container.innerHTML = html;
 
-  function showInlineSource(url, lineNum, notice) {
+  function showInlineSource(url, lineNum, colNum, notice) {
     container.querySelectorAll('.initiator-frame').forEach(f => f.classList.remove('active'));
     const activeFrame = container.querySelector(`.initiator-frame[data-url="${CSS.escape(url)}"][data-line="${lineNum}"]`);
     if (activeFrame) activeFrame.classList.add('active');
 
     const viewer = document.getElementById('initiator-source-viewer');
+
+    // Prefer the mapped original source when the script has a parsed
+    // map and sourcesContent[] inlines the file. Falls through to the
+    // bundled fetch otherwise.
+    const map = sourceMapCache[url];
+    if (map) {
+      const mapping = lookupMapping(map.segments, lineNum, colNum || 0);
+      if (mapping) {
+        const original = map.sourcesContent[mapping.sourceIndex];
+        const sourceName = map.sources[mapping.sourceIndex];
+        if (original && sourceName) {
+          const display = sourceName.split('/').pop() || sourceName;
+          viewer.innerHTML =
+            `<div class="source-viewer-header">${escapeHtml(display)}:${mapping.originalLine + 1}` +
+            `<span class="source-viewer-mapped-tag">↑ source-mapped from ${escapeHtml(shortenUrl(url))}</span></div>`;
+          const body = document.createElement('div');
+          viewer.appendChild(body);
+          renderSourceViewer(body, original, mapping.originalLine);
+          if (notice) {
+            const noticeEl = document.createElement('div');
+            noticeEl.className = 'source-viewer-notice';
+            noticeEl.textContent = notice;
+            viewer.insertBefore(noticeEl, viewer.children[1]);
+          }
+          return;
+        }
+      }
+    }
+
     const header = `${escapeHtml(shortenUrl(url))}:${lineNum + 1}`;
     viewer.innerHTML = `<div class="source-viewer-header">${header}</div><div class="detail-loading">Loading source...</div>`;
     fetchSource(url, (source) => {
@@ -1285,11 +1594,14 @@ function renderInitiator(req) {
       if (e.target.closest('.source-link')) return;
       e.stopPropagation();
       const lineNum = parseInt(el.dataset.line || '0', 10);
-      showInlineSource(url, lineNum);
+      const colNum = parseInt(el.dataset.col || '0', 10);
+      showInlineSource(url, lineNum, colNum);
     });
   });
 
-  // Source link click → try Sources tab, fallback to inline
+  // Source link click → try Sources tab, fallback to inline. If the
+  // script has a usable source map, prefer the mapped inline view —
+  // Sources panel only knows about the bundled file.
   container.querySelectorAll('.initiator-frame .source-link').forEach(link => {
     const frame = link.closest('.initiator-frame');
     const url = frame?.dataset.url;
@@ -1298,14 +1610,23 @@ function renderInitiator(req) {
     link.addEventListener('click', (e) => {
       e.stopPropagation();
       const lineNum = parseInt(frame.dataset.line || '0', 10);
+      const colNum = parseInt(frame.dataset.col || '0', 10);
+
+      const map = sourceMapCache[url];
+      if (map) {
+        const mapping = lookupMapping(map.segments, lineNum, colNum);
+        if (mapping && map.sourcesContent[mapping.sourceIndex]) {
+          showInlineSource(url, lineNum, colNum);
+          return;
+        }
+      }
 
       chrome.devtools.inspectedWindow.getResources((resources) => {
         const exists = resources.some(r => r.url === url);
         if (exists) {
           chrome.devtools.panels.openResource(url, lineNum, () => {});
         } else {
-          // Resource not in Sources — show inline with notice
-          showInlineSource(url, lineNum,
+          showInlineSource(url, lineNum, colNum,
             'Resource not found in Sources panel — showing fetched source. Click the source link again to open in Sources (the fetch request makes it available).');
         }
       });
@@ -1324,7 +1645,63 @@ function renderInitiator(req) {
         if (resources.some(r => r.url === url)) {
           chrome.devtools.panels.openResource(url, lineNum, () => {});
         } else {
-          showInlineSource(url, lineNum);
+          showInlineSource(url, lineNum, 0);
+        }
+      });
+    });
+  });
+
+  // Async: enrich call-stack frames with source map info. Updates DOM
+  // when each script's map resolves. Cache means no repeat fetches.
+  if (frames.length > 0) enrichFramesWithSourceMaps(container, frames);
+}
+
+// For each unique script URL in the call stack, try to fetch & decode
+// its source map, then rewrite the frame's source-link to show the
+// mapped (original-file:line:col) location alongside the bundled one.
+function enrichFramesWithSourceMaps(container, frames) {
+  const urlToIndices = {};
+  frames.forEach((f, i) => {
+    if (!f.url) return;
+    if (!urlToIndices[f.url]) urlToIndices[f.url] = [];
+    urlToIndices[f.url].push(i);
+  });
+  let mappedCount = 0;
+  const totalFramesWithUrls = Object.values(urlToIndices).reduce((s, arr) => s + arr.length, 0);
+  Object.keys(urlToIndices).forEach(url => {
+    getSourceMap(url, (map) => {
+      if (!map) return;
+      const frameEls = container.querySelectorAll('.initiator-frame');
+      urlToIndices[url].forEach(idx => {
+        const frame = frames[idx];
+        const mapping = lookupMapping(
+          map.segments,
+          frame.lineNumber || 0,
+          frame.columnNumber || 0
+        );
+        if (!mapping) return;
+        const sourceName = map.sources[mapping.sourceIndex];
+        if (!sourceName) return;
+        const frameEl = frameEls[idx];
+        if (!frameEl) return;
+        const sourceLink = frameEl.querySelector('.source-link');
+        if (!sourceLink) return;
+        const display = sourceName.split('/').pop() || sourceName;
+        const mappedLoc = `${display}:${mapping.originalLine + 1}:${mapping.originalColumn + 1}`;
+        const bundledLoc = `${shortenUrl(frame.url)}:${(frame.lineNumber || 0) + 1}`;
+        sourceLink.classList.add('mapped');
+        sourceLink.title = `Original: ${sourceName}:${mapping.originalLine + 1}\nBundled: ${frame.url}:${(frame.lineNumber || 0) + 1}`;
+        sourceLink.innerHTML =
+          `<span class="mapped-icon">↑</span>` +
+          `<span class="mapped-loc">${escapeHtml(mappedLoc)}</span>` +
+          `<span class="bundled-loc">${escapeHtml(bundledLoc)}</span>`;
+        mappedCount++;
+        // Mark the Initiator tab so the user knows mapping happened
+        // even before they click into the tab.
+        const tabBtn = document.querySelector('.detail-tab[data-detail="initiator"]');
+        if (tabBtn) {
+          tabBtn.classList.add('has-mapped');
+          tabBtn.title = `Source-mapped frames: ${mappedCount} / ${totalFramesWithUrls}`;
         }
       });
     });
@@ -1360,6 +1737,621 @@ function renderJsonTree(obj, indent) {
     `${pad}  <span class="json-key">"${escapeHtml(k)}"</span>: ${renderJsonTree(obj[k], indent + 1)}`
   ).join(',\n');
   return `{\n${entries}\n${pad}}`;
+}
+
+// ============================================================
+// Auto Decode Layer — JWT, Base64, URL-enc, nested JSON, timestamp
+// ============================================================
+// Scans the active request's headers + body for common encodings and
+// surfaces a "🔍 Decoded" panel beneath the original view. Best-effort:
+// false positives are suppressed by strict format checks rather than
+// asking the user to disable detectors.
+
+const AUTODECODE_MAX_FINDINGS = 50;
+
+function decodeBase64Url(str) {
+  let s = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  return atob(s);
+}
+
+// Heuristic: most bytes printable ASCII (incl. \t \n \r). Used to keep
+// the Base64 detector from claiming arbitrary alphanumeric strings.
+function isPrintableMostly(str, threshold) {
+  if (str.length === 0) return false;
+  let printable = 0;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    if ((c >= 32 && c <= 126) || c === 9 || c === 10 || c === 13) printable++;
+  }
+  return printable / str.length >= (threshold || 0.95);
+}
+
+// Replace numeric epoch fields (exp/iat/nbf/auth_time) with ISO strings
+// alongside the original — used when displaying the JWT payload.
+function humanizeJwtTimestamps(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  const out = { ...payload };
+  ['exp', 'iat', 'nbf', 'auth_time'].forEach(f => {
+    if (typeof out[f] === 'number') {
+      out[`${f} (decoded)`] = new Date(out[f] * 1000).toISOString();
+    }
+  });
+  return out;
+}
+
+function detectJWT(str) {
+  if (typeof str !== 'string') return null;
+  const m = str.match(/^([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]*)$/);
+  if (!m) return null;
+  let header, payload;
+  try {
+    header = JSON.parse(decodeBase64Url(m[1]));
+    payload = JSON.parse(decodeBase64Url(m[2]));
+  } catch { return null; }
+  if (!header || typeof header !== 'object') return null;
+  if (!header.alg && !header.typ) return null;
+
+  const warnings = [];
+  if (typeof header.alg === 'string' && header.alg.toLowerCase() === 'none') {
+    warnings.push('Algorithm is "none" — token is unsigned and trivially forgeable.');
+  }
+  if (payload && typeof payload.exp === 'number') {
+    const expMs = payload.exp * 1000;
+    if (expMs < Date.now()) {
+      warnings.push(`Token expired at ${new Date(expMs).toISOString()}.`);
+    }
+  }
+  return {
+    type: 'jwt',
+    label: 'JWT',
+    header,
+    payload: humanizeJwtTimestamps(payload),
+    signature: m[3],
+    warnings,
+  };
+}
+
+function detectBase64(str) {
+  if (typeof str !== 'string') return null;
+  if (str.length < 8 || str.length > 8192) return null;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(str)) return null;
+  if (str.length % 4 !== 0) return null;
+  let decoded;
+  try { decoded = atob(str); } catch { return null; }
+  if (!isPrintableMostly(decoded, 0.95)) return null;
+  let asJson = null;
+  try {
+    const parsed = JSON.parse(decoded);
+    if (typeof parsed === 'object' && parsed !== null) asJson = parsed;
+  } catch { /* not JSON */ }
+  return { type: 'base64', label: 'Base64', decoded, asJson };
+}
+
+function detectUrlEncoded(str) {
+  if (typeof str !== 'string') return null;
+  // Require at least 2 escape sequences to avoid matching strings that
+  // happen to contain a single % literal.
+  if (!/(%[0-9A-Fa-f]{2}){2,}/.test(str)) return null;
+  let decoded;
+  try { decoded = decodeURIComponent(str); } catch { return null; }
+  if (decoded === str) return null;
+  return { type: 'urlenc', label: 'URL-encoded', decoded };
+}
+
+function detectNestedJson(str) {
+  if (typeof str !== 'string') return null;
+  const trimmed = str.trim();
+  if (trimmed.length < 2) return null;
+  if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return null;
+  let parsed;
+  try { parsed = JSON.parse(trimmed); } catch { return null; }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  return { type: 'nested-json', label: 'Nested JSON', parsed };
+}
+
+function detectUnixTimestamp(val) {
+  let n;
+  if (typeof val === 'number' && Number.isFinite(val)) {
+    n = val;
+  } else if (typeof val === 'string' && /^\d{10}(?:\d{3})?$/.test(val)) {
+    n = parseInt(val, 10);
+  } else {
+    return null;
+  }
+  let ms;
+  if (n >= 1e9 && n < 1e10) ms = n * 1000;        // 10-digit seconds (2001–2286)
+  else if (n >= 1e12 && n < 1e13) ms = n;          // 13-digit ms
+  else return null;
+  const date = new Date(ms);
+  if (isNaN(date.getTime())) return null;
+  return { type: 'timestamp', label: 'Unix timestamp', raw: n, date: date.toISOString() };
+}
+
+// Try detectors in priority order; return the first hit. JWT first
+// because its three-segment shape is unambiguous, then URL-enc and
+// nested JSON which have clear markers, then Base64 last (broadest).
+function detectInString(str) {
+  return detectJWT(str)
+    || detectUrlEncoded(str)
+    || detectNestedJson(str)
+    || detectBase64(str);
+}
+
+// Walk a parsed JSON value (object/array/leaf), collecting findings
+// with dotted-path locations. Numbers are checked for timestamps;
+// strings go through the full detector chain.
+function autoDecodeScanValue(value, path, findings) {
+  if (findings.length >= AUTODECODE_MAX_FINDINGS) return;
+  if (typeof value === 'string') {
+    const f = detectInString(value);
+    if (f) findings.push({ ...f, location: path || '(value)' });
+    return;
+  }
+  if (typeof value === 'number') {
+    const f = detectUnixTimestamp(value);
+    if (f) findings.push({ ...f, location: path || '(value)' });
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => autoDecodeScanValue(v, `${path}[${i}]`, findings));
+    return;
+  }
+  if (typeof value === 'object' && value !== null) {
+    for (const k of Object.keys(value)) {
+      autoDecodeScanValue(value[k], path ? `${path}.${k}` : k, findings);
+    }
+  }
+}
+
+// Scan a flat header map. Strips the "Bearer "/"Basic "/"Token " prefix
+// before running detectors — JWTs almost always live under one.
+function autoDecodeScanHeaders(headers, sourceLabel) {
+  const findings = [];
+  for (const [name, value] of Object.entries(headers || {})) {
+    if (findings.length >= AUTODECODE_MAX_FINDINGS) break;
+    if (typeof value !== 'string') continue;
+    let scanStr = value;
+    let prefix = '';
+    const auth = value.match(/^(Bearer|Basic|Token)\s+(.+)$/i);
+    if (auth) { prefix = auth[1]; scanStr = auth[2]; }
+    const f = detectInString(scanStr);
+    if (f) {
+      findings.push({
+        ...f,
+        location: `${sourceLabel}: ${name}${prefix ? ` (after "${prefix}")` : ''}`,
+      });
+    }
+  }
+  return findings;
+}
+
+// Scan a body string. Tries JSON first, then urlencoded form, then
+// raw string. Each branch calls scanValue/detectInString as appropriate.
+//
+// Bodies over 500KB are truncated to the first 50KB before scanning so
+// a single huge payload can't lock up the panel. The truncation is
+// surfaced to the user as a 'notice' finding so they know the result
+// is partial.
+const AUTODECODE_BODY_LIMIT = 512000;
+const AUTODECODE_BODY_TRUNCATE = 51200;
+
+function autoDecodeScanBody(bodyStr, sourceLabel) {
+  if (!bodyStr || typeof bodyStr !== 'string') return [];
+  const findings = [];
+  let scanStr = bodyStr;
+  if (bodyStr.length > AUTODECODE_BODY_LIMIT) {
+    scanStr = bodyStr.slice(0, AUTODECODE_BODY_TRUNCATE);
+    findings.push({
+      type: 'notice',
+      label: 'TRUNCATED',
+      location: `응답이 너무 커서 앞 ${(AUTODECODE_BODY_TRUNCATE / 1024) | 0}KB만 분석했습니다 (전체 ${(bodyStr.length / 1024).toFixed(1)}KB)`,
+    });
+  }
+  const trimmed = scanStr.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (typeof parsed === 'object' && parsed !== null) {
+        autoDecodeScanValue(parsed, sourceLabel, findings);
+        return findings;
+      }
+    } catch { /* fall through */ }
+  }
+  if (scanStr.includes('=') && /^[\w.~%-]+=[^&]*(&[\w.~%-]+=[^&]*)*$/.test(scanStr)) {
+    try {
+      const params = new URLSearchParams(scanStr);
+      for (const [k, v] of params) {
+        if (findings.length >= AUTODECODE_MAX_FINDINGS) break;
+        const f = detectInString(v);
+        if (f) findings.push({ ...f, location: `${sourceLabel}: ${k}` });
+      }
+      return findings;
+    } catch { /* fall through */ }
+  }
+  const f = detectInString(scanStr);
+  if (f) findings.push({ ...f, location: sourceLabel });
+  return findings;
+}
+
+// Replace any existing decoded section in `container` with one built
+// from `findings`. Empty findings → section is removed.
+function renderDecodedSection(container, findings) {
+  const existing = container.querySelector(':scope > .decoded-section');
+  if (existing) existing.remove();
+  if (!findings || findings.length === 0) return;
+  let html = `<div class="decoded-section">
+    <div class="decoded-header"><span>🔍 Decoded</span><span class="decoded-count">${findings.length}</span></div>
+    <div class="decoded-list">`;
+  findings.forEach(f => { html += renderDecodedFinding(f); });
+  html += '</div></div>';
+  container.insertAdjacentHTML('beforeend', html);
+}
+
+function renderDecodedFinding(f) {
+  // Plain notices (e.g. "TRUNCATED") render as a single non-expandable
+  // banner — no body, no chevron, no expandable details.
+  if (f.type === 'notice') {
+    return `<div class="decoded-item decoded-notice">
+      <span class="decoded-type-badge type-notice">${escapeHtml(f.label)}</span>
+      <span class="decoded-location">${escapeHtml(f.location || '')}</span>
+    </div>`;
+  }
+  const warnings = (f.warnings || []).map(w =>
+    `<span class="decoded-warning-badge">⚠️ ${escapeHtml(w)}</span>`
+  ).join('');
+  let body = '';
+  switch (f.type) {
+    case 'jwt': {
+      const headerStr = JSON.stringify(f.header, null, 2);
+      const payloadStr = JSON.stringify(f.payload, null, 2);
+      body = `<div class="decoded-subblock">Header</div>
+              <pre class="decoded-pretty">${syntaxHighlightJson(headerStr)}</pre>
+              <div class="decoded-subblock">Payload</div>
+              <pre class="decoded-pretty">${syntaxHighlightJson(payloadStr)}</pre>`;
+      break;
+    }
+    case 'base64': {
+      if (f.asJson) {
+        const s = JSON.stringify(f.asJson, null, 2);
+        body = `<div class="decoded-subblock">Decoded (JSON)</div>
+                <pre class="decoded-pretty">${syntaxHighlightJson(s)}</pre>`;
+      } else {
+        body = `<div class="decoded-subblock">Decoded</div>
+                <pre class="decoded-pretty">${escapeHtml(f.decoded)}</pre>`;
+      }
+      break;
+    }
+    case 'urlenc':
+      body = `<pre class="decoded-pretty">${escapeHtml(f.decoded)}</pre>`;
+      break;
+    case 'nested-json': {
+      const s = JSON.stringify(f.parsed, null, 2);
+      body = `<pre class="decoded-pretty">${syntaxHighlightJson(s)}</pre>`;
+      break;
+    }
+    case 'timestamp':
+      body = `<pre class="decoded-pretty">${escapeHtml(f.date)} (raw: ${f.raw})</pre>`;
+      break;
+  }
+  return `<details class="decoded-item" open>
+    <summary>
+      <span class="decoded-type-badge type-${f.type}">${escapeHtml(f.label)}</span>
+      <span class="decoded-location">${escapeHtml(f.location || '')}</span>
+      ${warnings}
+    </summary>
+    <div class="decoded-content">${body}</div>
+  </details>`;
+}
+
+// ============================================================
+// Response Pattern Detection — security-oriented findings on a request
+// ============================================================
+// Inspects URL, request body/headers, response body/status against a
+// fixed set of patterns (auth tokens, PII, internal info leaks, sensitive
+// fields, IDOR candidates, privilege params, suspicious responses) and
+// emits a list of findings stored on the request object as scanResults.
+// Body-dependent passes only run when the response body is available;
+// large bodies are truncated using the same limits as Auto Decode.
+
+const SCAN_BODY_LIMIT = AUTODECODE_BODY_LIMIT;
+const SCAN_BODY_TRUNCATE = AUTODECODE_BODY_TRUNCATE;
+
+// Mimetypes worth eagerly loading the response body for so the scan
+// can include body-side findings on the initial pass.
+function scanShouldEagerLoadBody(req) {
+  const m = req.mimeType || '';
+  if (!m) return false;
+  return /^(application\/(json|xml|x-www-form-urlencoded|javascript|graphql|ld\+json)|application\/[^;]*\+json|text\/)/i.test(m);
+}
+
+// Append a finding only if the same (category, location) hasn't been
+// seen yet. Keeps the per-request badge list and the detail panel
+// from filling with near-duplicates.
+function _scanAdd(findings, seen, finding) {
+  const key = `${finding.category}|${finding.location}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  findings.push(finding);
+}
+
+function _scanCheckPrivilegeKey(key) {
+  return /^(role|isAdmin|is_admin|admin|privilege|permission)$/i.test(key);
+}
+
+function _scanCheckIdorKey(key) {
+  return /^(id|userId|user_id|user-id)$/i.test(key);
+}
+
+function _scanCheckSensitiveKey(key) {
+  return /^(password|passwd|pwd|secret|private[_-]?key|client[_-]?secret)$/i.test(key);
+}
+
+function _scanCheckTokenKey(key) {
+  return /^(api[_-]?key|access[_-]?token|secret)$/i.test(key);
+}
+
+// Walk a parsed object/array, applying field-name-based detectors.
+function _scanWalkObject(obj, path, findings, seen) {
+  if (typeof obj !== 'object' || obj === null) return;
+  if (Array.isArray(obj)) {
+    obj.forEach((v, i) => _scanWalkObject(v, `${path}[${i}]`, findings, seen));
+    return;
+  }
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    const fullPath = path ? `${path}.${k}` : k;
+    const valStr = typeof v === 'string' ? v : (typeof v === 'number' ? String(v) : '');
+    if (typeof v === 'string' && v.length > 0) {
+      if (_scanCheckSensitiveKey(k)) {
+        _scanAdd(findings, seen, {
+          category: 'sensitive', badge: '🔴 sensitive', severity: 'high',
+          location: `response.body.${fullPath}`,
+          evidence: `${k}: ${v.length > 20 ? '(' + v.length + ' chars)' : v}`,
+        });
+      }
+      if (_scanCheckTokenKey(k)) {
+        _scanAdd(findings, seen, {
+          category: 'token', badge: '🔑 token', severity: 'high',
+          location: `response.body.${fullPath}`,
+          evidence: `${k}: ${valStr.length > 40 ? valStr.slice(0, 40) + '…' : valStr}`,
+        });
+      }
+    }
+    if (typeof v === 'object' && v !== null) {
+      _scanWalkObject(v, fullPath, findings, seen);
+    }
+  }
+}
+
+function scanRequest(req) {
+  const findings = [];
+  const seen = new Set();
+
+  // -------- Request URL: IDOR, privilege query params --------
+  try {
+    const url = new URL(req.url);
+    const segments = url.pathname.split('/').filter(Boolean);
+    for (const seg of segments) {
+      if (/^\d{3,}$/.test(seg)) {
+        _scanAdd(findings, seen, {
+          category: 'idor', badge: '🔢 IDOR', severity: 'info',
+          location: `request.url.path: /${seg}`,
+          evidence: req.url,
+        });
+        break;
+      }
+    }
+    for (const [k, v] of url.searchParams) {
+      if (_scanCheckIdorKey(k)) {
+        _scanAdd(findings, seen, {
+          category: 'idor', badge: '🔢 IDOR', severity: 'info',
+          location: `request.query.${k}`,
+          evidence: `${k}=${v}`,
+        });
+      }
+      if (_scanCheckPrivilegeKey(k)) {
+        _scanAdd(findings, seen, {
+          category: 'privilege', badge: '⚠️ privilege', severity: 'high',
+          location: `request.query.${k}`,
+          evidence: `${k}=${v}`,
+        });
+      }
+    }
+  } catch { /* malformed url */ }
+
+  // -------- Request body: privilege params --------
+  if (req.requestPostData && typeof req.requestPostData === 'string') {
+    let parsed = null;
+    try { parsed = JSON.parse(req.requestPostData); } catch {}
+    if (parsed && typeof parsed === 'object') {
+      const subFindings = [];
+      const subSeen = new Set();
+      // Walk for privilege keys
+      const walk = (o, p) => {
+        if (typeof o !== 'object' || o === null) return;
+        if (Array.isArray(o)) { o.forEach((v, i) => walk(v, `${p}[${i}]`)); return; }
+        for (const k of Object.keys(o)) {
+          const fp = p ? `${p}.${k}` : k;
+          if (_scanCheckPrivilegeKey(k)) {
+            _scanAdd(subFindings, subSeen, {
+              category: 'privilege', badge: '⚠️ privilege', severity: 'high',
+              location: `request.body.${fp}`,
+              evidence: `${k}: ${typeof o[k] === 'object' ? JSON.stringify(o[k]).slice(0, 60) : o[k]}`,
+            });
+          }
+          if (typeof o[k] === 'object' && o[k] !== null) walk(o[k], fp);
+        }
+      };
+      walk(parsed, '');
+      subFindings.forEach(f => _scanAdd(findings, seen, f));
+    } else {
+      try {
+        const params = new URLSearchParams(req.requestPostData);
+        for (const [k, v] of params) {
+          if (_scanCheckPrivilegeKey(k)) {
+            _scanAdd(findings, seen, {
+              category: 'privilege', badge: '⚠️ privilege', severity: 'high',
+              location: `request.body.${k}`,
+              evidence: `${k}=${v}`,
+            });
+          }
+        }
+      } catch { /* not form */ }
+    }
+  }
+
+  // -------- Response status: 401/403 with large body --------
+  if ((req.status === 401 || req.status === 403) &&
+      req.responseBody && typeof req.responseBody === 'string' &&
+      req.responseBody.length >= 1024) {
+    _scanAdd(findings, seen, {
+      category: 'check', badge: '🔍 check', severity: 'info',
+      location: `response.status=${req.status}, body=${req.responseBody.length}B`,
+      evidence: `Status ${req.status} typically returns a short error message; this body is unusually long.`,
+    });
+  }
+
+  // -------- Response body: token/PII/leak/sensitive --------
+  if (req.responseBody && typeof req.responseBody === 'string' && !req.responseBase64) {
+    let body = req.responseBody;
+    if (body.length > SCAN_BODY_LIMIT) body = body.slice(0, SCAN_BODY_TRUNCATE);
+
+    // JWT pattern (starts with eyJ — base64url of `{"`)
+    const jwtMatches = body.match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/);
+    if (jwtMatches) {
+      const tok = jwtMatches[0];
+      // Validate via existing detectJWT to avoid false positives
+      if (detectJWT(tok)) {
+        _scanAdd(findings, seen, {
+          category: 'token', badge: '🔑 token', severity: 'high',
+          location: `response.body (JWT-like)`,
+          evidence: tok.slice(0, 60) + (tok.length > 60 ? '…' : ''),
+        });
+      }
+    }
+
+    // Email
+    const emailMatch = body.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
+    if (emailMatch) {
+      _scanAdd(findings, seen, {
+        category: 'pii', badge: '👤 PII', severity: 'medium',
+        location: `response.body (email)`,
+        evidence: emailMatch[0],
+      });
+    }
+    // Korean phone numbers
+    const phoneMatch = body.match(/01[016789]-\d{3,4}-\d{4}/);
+    if (phoneMatch) {
+      _scanAdd(findings, seen, {
+        category: 'pii', badge: '👤 PII', severity: 'medium',
+        location: `response.body (phone)`,
+        evidence: phoneMatch[0],
+      });
+    }
+
+    // Internal IPv4
+    const ipMatch = body.match(/\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})\b/);
+    if (ipMatch) {
+      _scanAdd(findings, seen, {
+        category: 'leak', badge: '⚠️ leak', severity: 'medium',
+        location: `response.body (internal IP)`,
+        evidence: ipMatch[0],
+      });
+    }
+    // Stack-trace keywords
+    const stackMatch = body.match(/\b(at Function|at Object|Traceback|NullPointerException|SQLException|stack trace)\b/i);
+    if (stackMatch) {
+      _scanAdd(findings, seen, {
+        category: 'leak', badge: '⚠️ leak', severity: 'medium',
+        location: `response.body (stack trace)`,
+        evidence: stackMatch[0],
+      });
+    }
+    // Server paths
+    const pathMatch = body.match(/(\/var\/www|\/home\/[A-Za-z0-9_-]+|C:\\Users|\/etc\/(?:passwd|shadow|hosts))/);
+    if (pathMatch) {
+      _scanAdd(findings, seen, {
+        category: 'leak', badge: '⚠️ leak', severity: 'medium',
+        location: `response.body (server path)`,
+        evidence: pathMatch[0],
+      });
+    }
+
+    // Field-name-based scan — only meaningful for JSON
+    try {
+      const parsed = JSON.parse(body);
+      if (typeof parsed === 'object' && parsed !== null) {
+        _scanWalkObject(parsed, '', findings, seen);
+      }
+    } catch { /* not JSON */ }
+  }
+
+  return findings;
+}
+
+// Render the small badge cluster shown in the network list. Dedupes
+// to one badge per category, with a tooltip listing all evidences.
+function renderScanBadgesInline(scanResults) {
+  if (!scanResults || scanResults.length === 0) return '';
+  const byCat = {};
+  scanResults.forEach(f => {
+    if (!byCat[f.category]) byCat[f.category] = { badge: f.badge, evidences: [] };
+    byCat[f.category].evidences.push(f.location + (f.evidence ? ` — ${f.evidence}` : ''));
+  });
+  return Object.entries(byCat).map(([cat, info]) =>
+    `<span class="scan-badge scan-badge-${cat}" title="${escapeAttr(info.evidences.join('\n'))}">${escapeHtml(info.badge)}</span>`
+  ).join(' ');
+}
+
+function renderDetection(req) {
+  const container = document.getElementById('detail-detection-body');
+  const tabBtn = document.querySelector('.detail-tab[data-detail="detection"]');
+  if (tabBtn) {
+    tabBtn.classList.remove('has-findings');
+    tabBtn.removeAttribute('data-count');
+  }
+  if (!container) return;
+  const results = req.scanResults || [];
+  if (results.length === 0) {
+    container.innerHTML = '<div class="detail-loading">No scanner findings.</div>';
+    return;
+  }
+  if (tabBtn) {
+    tabBtn.classList.add('has-findings');
+    tabBtn.dataset.count = results.length;
+  }
+  // Group by category, then sort categories by max severity within
+  const sevOrder = { high: 0, medium: 1, info: 2 };
+  const groups = {};
+  results.forEach(f => {
+    if (!groups[f.category]) groups[f.category] = { badge: f.badge, items: [], maxSev: f.severity };
+    groups[f.category].items.push(f);
+    if (sevOrder[f.severity] < sevOrder[groups[f.category].maxSev]) {
+      groups[f.category].maxSev = f.severity;
+    }
+  });
+  const sortedCats = Object.entries(groups).sort((a, b) => sevOrder[a[1].maxSev] - sevOrder[b[1].maxSev]);
+  let html = '';
+  for (const [cat, g] of sortedCats) {
+    html += `<div class="detection-group">
+      <div class="detection-group-header">
+        <span class="scan-badge scan-badge-${cat}">${escapeHtml(g.badge)}</span>
+        <span class="detection-group-count">${g.items.length} finding${g.items.length === 1 ? '' : 's'}</span>
+      </div>
+      <div class="detection-findings">`;
+    for (const f of g.items) {
+      html += `<div class="detection-finding severity-${f.severity}">
+        <div class="detection-finding-top">
+          <span class="detection-severity sev-${f.severity}">${f.severity.toUpperCase()}</span>
+          <span class="detection-location">${escapeHtml(f.location)}</span>
+        </div>
+        <div class="detection-evidence">${escapeHtml(f.evidence || '')}</div>
+      </div>`;
+    }
+    html += `</div></div>`;
+  }
+  container.innerHTML = html;
 }
 
 // ============================================================

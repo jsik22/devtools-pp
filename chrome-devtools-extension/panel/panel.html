@@ -25,7 +25,7 @@
     <!-- Site Map tab -->
     <section id="sitemap" class="tab-content active">
       <div class="toolbar">
-        <button id="sitemap-scan" class="btn btn-primary">Scan Page</button>
+        <button id="sitemap-page-scan" class="btn btn-primary">Page Scan</button>
         <button id="sitemap-clear" class="btn">Clear</button>
         <span id="sitemap-stats" class="badge">0 hosts · 0 endpoints</span>
         <select id="sitemap-type-filter">
@@ -80,6 +80,7 @@
                 <th>Type</th>
                 <th>Size</th>
                 <th>Time</th>
+                <th>Detection</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -94,6 +95,7 @@
               <button class="detail-tab" data-detail="response">Response</button>
               <button class="detail-tab" data-detail="preview">Preview</button>
               <button class="detail-tab" data-detail="initiator">Initiator</button>
+              <button class="detail-tab" data-detail="detection">Detection</button>
               <button class="detail-tab replay-tab" data-detail="replay">Replay</button>
             </div>
             <button id="detail-close" class="btn detail-close-btn">X</button>
@@ -115,6 +117,9 @@
           </div>
           <div id="detail-initiator" class="detail-content">
             <div id="detail-initiator-body" class="detail-section"></div>
+          </div>
+          <div id="detail-detection" class="detail-content">
+            <div id="detail-detection-body" class="detail-section"></div>
           </div>
           <!-- Replay & Tamper tab -->
           <div id="detail-replay" class="detail-content">

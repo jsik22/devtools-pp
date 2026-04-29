@@ -757,6 +757,7 @@ tr:hover {
 .scan-badge-leak      { background: #fff3e0; color: #c45a00; border-color: #f7c79b; }
 .scan-badge-idor      { background: #e8eaed; color: #3c4043; border-color: #c8cad0; }
 .scan-badge-check     { background: #e8f0fe; color: #1a73e8; border-color: #c5d9fb; }
+.scan-badge-exposure  { background: #fef3cd; color: #856404; border-color: #f7d875; }
 
 /* Detection tab indicator (count badge) */
 .detail-tab.has-findings {

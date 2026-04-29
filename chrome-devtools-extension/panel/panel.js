@@ -2079,8 +2079,35 @@ function _scanCheckPrivilegeKey(key) {
   return /^(role|isAdmin|is_admin|admin|privilege|permission)$/i.test(key);
 }
 
+// Match ID-like parameter names. Three shapes are recognized so we catch
+// resource-ID parameters (userId, account_id, etc.) without firing on
+// English words that happen to end in "id" (paid, valid, said).
+//   1) "id" / "ID" exactly
+//   2) camelCase: <lowercase>I<d|D>$  — userId, orderId, accountID
+//   3) separator: _id / -id (any case)
 function _scanCheckIdorKey(key) {
-  return /^(id|userId|user_id|user-id)$/i.test(key);
+  if (/^id$/i.test(key)) return true;
+  if (/[a-z]I[dD]$/.test(key)) return true;
+  if (/[_-]id$/i.test(key)) return true;
+  return false;
+}
+
+// 4-digit year-range numbers (1900–2099) almost always come from date
+// segments (/2025/news, /archive/2024) rather than entity IDs. Excluded
+// from IDOR-by-path detection to cut false positives.
+function _scanIsYearLike(seg) {
+  if (seg.length !== 4) return false;
+  const n = parseInt(seg, 10);
+  return n >= 1900 && n <= 2099;
+}
+
+// Pull a "<software>/<x.y.z>" version disclosure out of Server /
+// X-Powered-By header values. Returns null if the value has no
+// version number attached (e.g. just "nginx" or "Express").
+function _scanExtractServerVersion(value) {
+  if (typeof value !== 'string') return null;
+  const m = value.match(/([A-Za-z][A-Za-z0-9.-]*)\/(\d+(?:\.\d+)+)/);
+  return m ? `${m[1]}/${m[2]}` : null;
 }
 
 function _scanCheckSensitiveKey(key) {
@@ -2133,7 +2160,7 @@ function scanRequest(req) {
     const url = new URL(req.url);
     const segments = url.pathname.split('/').filter(Boolean);
     for (const seg of segments) {
-      if (/^\d{3,}$/.test(seg)) {
+      if (/^\d{3,}$/.test(seg) && !_scanIsYearLike(seg)) {
         _scanAdd(findings, seen, {
           category: 'idor', badge: '🔢 IDOR', severity: 'info',
           location: `request.url.path: /${seg}`,
@@ -2160,31 +2187,43 @@ function scanRequest(req) {
     }
   } catch { /* malformed url */ }
 
-  // -------- Request body: privilege params --------
+  // -------- Request body: privilege + IDOR + sensitive params --------
   if (req.requestPostData && typeof req.requestPostData === 'string') {
     let parsed = null;
     try { parsed = JSON.parse(req.requestPostData); } catch {}
     if (parsed && typeof parsed === 'object') {
-      const subFindings = [];
-      const subSeen = new Set();
-      // Walk for privilege keys
       const walk = (o, p) => {
         if (typeof o !== 'object' || o === null) return;
         if (Array.isArray(o)) { o.forEach((v, i) => walk(v, `${p}[${i}]`)); return; }
         for (const k of Object.keys(o)) {
           const fp = p ? `${p}.${k}` : k;
+          const v = o[k];
+          const evi = typeof v === 'object' ? JSON.stringify(v).slice(0, 60) : v;
           if (_scanCheckPrivilegeKey(k)) {
-            _scanAdd(subFindings, subSeen, {
+            _scanAdd(findings, seen, {
               category: 'privilege', badge: '⚠️ privilege', severity: 'high',
               location: `request.body.${fp}`,
-              evidence: `${k}: ${typeof o[k] === 'object' ? JSON.stringify(o[k]).slice(0, 60) : o[k]}`,
+              evidence: `${k}: ${evi}`,
             });
           }
-          if (typeof o[k] === 'object' && o[k] !== null) walk(o[k], fp);
+          if (_scanCheckIdorKey(k)) {
+            _scanAdd(findings, seen, {
+              category: 'idor', badge: '🔢 IDOR', severity: 'info',
+              location: `request.body.${fp}`,
+              evidence: `${k}=${evi}`,
+            });
+          }
+          if (_scanCheckSensitiveKey(k) && typeof v === 'string' && v.length > 0) {
+            _scanAdd(findings, seen, {
+              category: 'sensitive', badge: '🔴 sensitive', severity: 'high',
+              location: `request.body.${fp}`,
+              evidence: `${k}: ${v.length > 20 ? '(' + v.length + ' chars)' : v}`,
+            });
+          }
+          if (typeof v === 'object' && v !== null) walk(v, fp);
         }
       };
       walk(parsed, '');
-      subFindings.forEach(f => _scanAdd(findings, seen, f));
     } else {
       try {
         const params = new URLSearchParams(req.requestPostData);
@@ -2196,20 +2235,54 @@ function scanRequest(req) {
               evidence: `${k}=${v}`,
             });
           }
+          if (_scanCheckIdorKey(k)) {
+            _scanAdd(findings, seen, {
+              category: 'idor', badge: '🔢 IDOR', severity: 'info',
+              location: `request.body.${k}`,
+              evidence: `${k}=${v}`,
+            });
+          }
+          if (_scanCheckSensitiveKey(k) && v.length > 0) {
+            _scanAdd(findings, seen, {
+              category: 'sensitive', badge: '🔴 sensitive', severity: 'high',
+              location: `request.body.${k}`,
+              evidence: `${k}: ${v.length > 20 ? '(' + v.length + ' chars)' : v}`,
+            });
+          }
         }
       } catch { /* not form */ }
     }
   }
 
   // -------- Response status: 401/403 with large body --------
+  // Skip text/html — SPAs serve their app shell / login page on auth
+  // failures, which is normal behavior, not a finding.
+  const isHtmlResp = (req.mimeType || '').toLowerCase().includes('text/html');
   if ((req.status === 401 || req.status === 403) &&
       req.responseBody && typeof req.responseBody === 'string' &&
-      req.responseBody.length >= 1024) {
+      req.responseBody.length >= 1024 &&
+      !isHtmlResp) {
     _scanAdd(findings, seen, {
       category: 'check', badge: '🔍 check', severity: 'info',
       location: `response.status=${req.status}, body=${req.responseBody.length}B`,
       evidence: `Status ${req.status} typically returns a short error message; this body is unusually long.`,
     });
+  }
+
+  // -------- Response headers: Server / X-Powered-By version disclosure --------
+  if (req.responseHeaders) {
+    for (const [name, value] of Object.entries(req.responseHeaders)) {
+      const lname = name.toLowerCase();
+      if (lname !== 'server' && lname !== 'x-powered-by') continue;
+      const ver = _scanExtractServerVersion(value);
+      if (ver) {
+        _scanAdd(findings, seen, {
+          category: 'exposure', badge: '📡 exposure', severity: 'medium',
+          location: `response.header.${name}`,
+          evidence: `${name}: ${ver}`,
+        });
+      }
+    }
   }
 
   // -------- Response body: token/PII/leak/sensitive --------
@@ -2231,14 +2304,21 @@ function scanRequest(req) {
       }
     }
 
-    // Email
+    // Email — skip @localhost and @<ipv4> forms (usually internal
+    // service references, not user PII)
     const emailMatch = body.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
     if (emailMatch) {
-      _scanAdd(findings, seen, {
-        category: 'pii', badge: '👤 PII', severity: 'medium',
-        location: `response.body (email)`,
-        evidence: emailMatch[0],
-      });
+      const email = emailMatch[0];
+      const domain = email.slice(email.indexOf('@') + 1);
+      const isLocalhost = /^localhost(:\d+)?$/i.test(domain);
+      const isIpv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(domain);
+      if (!isLocalhost && !isIpv4) {
+        _scanAdd(findings, seen, {
+          category: 'pii', badge: '👤 PII', severity: 'medium',
+          location: `response.body (email)`,
+          evidence: email,
+        });
+      }
     }
     // Korean phone numbers
     const phoneMatch = body.match(/01[016789]-\d{3,4}-\d{4}/);
@@ -2275,6 +2355,25 @@ function scanRequest(req) {
         category: 'leak', badge: '⚠️ leak', severity: 'medium',
         location: `response.body (server path)`,
         evidence: pathMatch[0],
+      });
+    }
+
+    // AWS access key ID — fixed AKIA prefix + 16 uppercase alphanumerics
+    const awsMatch = body.match(/\bAKIA[A-Z0-9]{16}\b/);
+    if (awsMatch) {
+      _scanAdd(findings, seen, {
+        category: 'exposure', badge: '📡 exposure', severity: 'high',
+        location: `response.body (AWS access key)`,
+        evidence: awsMatch[0],
+      });
+    }
+    // GitHub PAT — ghp_ / gho_ / ghs_ prefix + 36+ alphanumerics
+    const ghMatch = body.match(/\b(ghp|gho|ghs)_[A-Za-z0-9]{36,}\b/);
+    if (ghMatch) {
+      _scanAdd(findings, seen, {
+        category: 'exposure', badge: '📡 exposure', severity: 'high',
+        location: `response.body (GitHub PAT)`,
+        evidence: ghMatch[0].slice(0, 12) + '…',
       });
     }
 

@@ -474,8 +474,28 @@ function addToSitemap(req) {
     node.requests.push(req);
   }
 
-  renderSitemapTree();
+  scheduleSitemapRender();
   updateSitemapStats();
+}
+
+// Throttled tree render for the per-request hot path. Renders at most
+// once per animation frame, and defers rendering while the user has a
+// control inside the tree focused (open Set Scope <select>) so a
+// burst of incoming requests doesn't tear the dropdown down mid-click.
+let _sitemapRenderRaf = 0;
+function scheduleSitemapRender() {
+  if (_sitemapRenderRaf) return;
+  _sitemapRenderRaf = requestAnimationFrame(() => {
+    _sitemapRenderRaf = 0;
+    const active = document.activeElement;
+    if (active && active.closest && active.closest('.sitemap-tree')) {
+      // Try again next frame — defer until the user finishes
+      // interacting with the tree.
+      scheduleSitemapRender();
+      return;
+    }
+    renderSitemapTree();
+  });
 }
 
 function updateSitemapStats() {

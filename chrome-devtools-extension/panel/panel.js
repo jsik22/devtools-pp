@@ -1363,6 +1363,30 @@ function runIdle(fn) {
 // patterns without melting the renderer.
 const MAX_NETWORK_ROWS = 1000;
 
+// Initiator column badge — small text badge on each row reflecting
+// the kind of initiator data we have. After enrichFramesWithSourceMaps
+// runs and at least one frame maps to original source, the badge
+// upgrades to "↑ Mapped".
+function renderInitiatorBadge(r) {
+  if (r._sourcemapMapped) {
+    return '<span class="initiator-cell-badge initiator-cell-mapped">↑ Mapped</span>';
+  }
+  if (!r.initiator || !r.initiator.type) return '';
+  const t = r.initiator.type;
+  if (t === 'script') return '<span class="initiator-cell-badge initiator-cell-script">script</span>';
+  if (t === 'parser') return '<span class="initiator-cell-badge initiator-cell-parser">parser</span>';
+  return ''; // 'other' / unknown
+}
+
+function updateNetworkRowInitiator(req) {
+  const row = networkTable.querySelector(
+    `tr[data-request-id="${CSS.escape(req.requestId)}"]`
+  );
+  if (!row) return;
+  const cell = row.querySelector('.initiator-cell');
+  if (cell) cell.innerHTML = renderInitiatorBadge(req);
+}
+
 // Build a single <tr> for a request without touching the DOM. Returns
 // the element so callers can append/insert as they choose.
 function buildNetworkRow(r) {
@@ -1379,6 +1403,7 @@ function buildNetworkRow(r) {
     `<td>${escapeHtml(r.type)}</td>` +
     `<td>${r.size}</td>` +
     `<td>${r.time}</td>` +
+    `<td class="initiator-cell">${renderInitiatorBadge(r)}</td>` +
     `<td class="scan-badges-cell">${renderScanBadgesInline(r.scanResults)}</td>`;
   return tr;
 }
@@ -1451,11 +1476,17 @@ function flushPendingNetworkRows() {
 }
 
 // Click delegation on tbody — attached once at load so each new row
-// doesn't need its own listener.
+// doesn't need its own listener. Clicking the Initiator cell jumps
+// straight to the Initiator detail tab; everything else opens the
+// detail panel with whatever tab was last active.
 networkTable.addEventListener('click', (e) => {
   const row = e.target.closest('tr[data-request-id]');
   if (!row) return;
-  selectNetworkRequest(row.dataset.requestId, { scroll: false });
+  const wantInitiator = !!e.target.closest('.initiator-cell');
+  selectNetworkRequest(row.dataset.requestId, {
+    scroll: false,
+    activateTab: wantInitiator ? 'initiator' : null,
+  });
 });
 
 // Move selection to a request, open the detail panel, and (optionally)
@@ -1474,6 +1505,10 @@ function selectNetworkRequest(reqId, opts) {
   networkSplit.classList.add('has-detail');
   showDetail(req);
   if (!req.responseBodyLoaded) fetchResponseBody(req);
+  if (opts && opts.activateTab) {
+    const tabBtn = document.querySelector(`.detail-tab[data-detail="${opts.activateTab}"]`);
+    if (tabBtn) tabBtn.click();
+  }
 }
 
 // ↑/↓ keyboard navigation through the request list while the Network
@@ -2237,13 +2272,13 @@ function renderInitiator(req) {
 
   // Async: enrich call-stack frames with source map info. Updates DOM
   // when each script's map resolves. Cache means no repeat fetches.
-  if (frames.length > 0) enrichFramesWithSourceMaps(container, frames);
+  if (frames.length > 0) enrichFramesWithSourceMaps(container, frames, req);
 }
 
 // For each unique script URL in the call stack, try to fetch & decode
 // its source map, then rewrite the frame's source-link to show the
 // mapped (original-file:line:col) location alongside the bundled one.
-function enrichFramesWithSourceMaps(container, frames) {
+function enrichFramesWithSourceMaps(container, frames, req) {
   const urlToIndices = {};
   frames.forEach((f, i) => {
     if (!f.url) return;
@@ -2286,6 +2321,13 @@ function enrichFramesWithSourceMaps(container, frames) {
         if (tabBtn) {
           tabBtn.classList.add('has-mapped');
           tabBtn.title = `Source-mapped frames: ${mappedCount} / ${totalFramesWithUrls}`;
+        }
+        // Promote the row's Initiator cell to "↑ Mapped" on the first
+        // successful frame mapping. Flag persists on the req so the
+        // cell stays mapped across re-renders.
+        if (req && !req._sourcemapMapped) {
+          req._sourcemapMapped = true;
+          updateNetworkRowInitiator(req);
         }
       });
     });

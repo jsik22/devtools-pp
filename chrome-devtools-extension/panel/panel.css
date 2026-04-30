@@ -94,6 +94,25 @@ header h1 {
   min-width: 0;
 }
 
+/* Compact preference toggle that lives at the right end of the header. */
+.header-pref {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #666;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+  padding-left: 14px;
+  border-left: 1px solid #bbb;
+}
+.header-pref input {
+  margin: 0;
+  cursor: pointer;
+}
+
 .tab-content {
   display: none;
   flex: 1;

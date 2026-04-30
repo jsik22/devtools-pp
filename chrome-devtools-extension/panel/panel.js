@@ -4418,3 +4418,20 @@ function setupSplitGutter(gutter) {
 }
 document.querySelectorAll('.split-gutter').forEach(setupSplitGutter);
 
+// Persisted "Auto-start" toggle — when checked, Network monitoring
+// flips on as soon as this panel opens. Default off, so existing
+// users see no behavior change.
+(function initAutoStartMonitoring() {
+  const checkbox = document.getElementById('auto-start-monitoring');
+  if (!checkbox) return;
+  if (!chrome.storage || !chrome.storage.local) return;
+  chrome.storage.local.get(['autoStartMonitoring'], (result) => {
+    const enabled = !!(result && result.autoStartMonitoring);
+    checkbox.checked = enabled;
+    if (enabled && !networkMonitoring) startNetworkMonitoring();
+  });
+  checkbox.addEventListener('change', (e) => {
+    chrome.storage.local.set({ autoStartMonitoring: e.target.checked });
+  });
+})();
+

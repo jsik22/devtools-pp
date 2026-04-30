@@ -109,7 +109,7 @@ function startCrawl() {
   const text = document.getElementById('crawl-urls').value;
   const urls = preprocessCrawlUrls(text);
   if (urls.length === 0) {
-    showToast('유효한 URL이 없습니다.');
+    showToast('No valid URLs.');
     return;
   }
   const waitVal = parseInt(document.getElementById('crawl-wait').value, 10);
@@ -163,7 +163,7 @@ function completeCrawl() {
   const visited = crawlState.index;
   crawlState.active = false;
   resetCrawlUI();
-  showToast(`완료: ${visited}개 사이트 방문`);
+  showToast(`Visited ${visited} site${visited === 1 ? '' : 's'}.`);
   hideCrawlModal();
 }
 
@@ -224,7 +224,7 @@ _crawlImportFile.addEventListener('change', (e) => {
   // Soft size cap — 200-URL limit produces a tiny file in normal use,
   // so anything bigger than 256 KB is almost certainly the wrong file.
   if (file.size > 256 * 1024) {
-    showToast('파일이 너무 큽니다 (최대 256 KB)');
+    showToast('File too large (max 256 KB)');
     e.target.value = '';
     return;
   }
@@ -234,7 +234,7 @@ _crawlImportFile.addEventListener('change', (e) => {
     textarea.value = String(reader.result || '');
   };
   reader.onerror = () => {
-    showToast('파일을 읽을 수 없습니다');
+    showToast('Failed to read file');
   };
   reader.readAsText(file);
   // Reset so re-selecting the same filename re-fires the change event.
@@ -1141,18 +1141,18 @@ let _importIdCounter = 0;
 function _parseImportJson(text) {
   let data;
   try { data = JSON.parse(text); }
-  catch { return { error: '유효하지 않은 파일입니다 (JSON 파싱 실패)' }; }
+  catch { return { error: 'Invalid file (JSON parse failed)' }; }
   if (!data || typeof data !== 'object') {
-    return { error: '유효하지 않은 파일입니다' };
+    return { error: 'Invalid file' };
   }
   if (!data.exportedAt) {
-    return { error: '유효하지 않은 파일입니다 (exportedAt 누락)' };
+    return { error: 'Invalid file (missing exportedAt)' };
   }
   const items = Array.isArray(data.items) ? data.items
     : Array.isArray(data.requests) ? data.requests
     : null;
   if (!items) {
-    return { error: '유효하지 않은 파일입니다 (items / requests 배열 없음)' };
+    return { error: 'Invalid file (no items / requests array)' };
   }
   return { items };
 }
@@ -1204,7 +1204,7 @@ function _applyImport(reqs, mode, filename) {
   // full re-render keeps the cap logic simple for large imports.
   renderNetworkTable();
   showImportNotice(filename);
-  showToast(`${reqs.length}개 요청을 불러왔습니다 (${filename})`);
+  showToast(`Loaded ${reqs.length} request${reqs.length === 1 ? '' : 's'} (${filename})`);
 }
 
 function showImportNotice(filename) {
@@ -1247,10 +1247,10 @@ function importNetworkData(file) {
     const result = _parseImportJson(String(reader.result || ''));
     if (result.error) { showToast(result.error); return; }
     const reqs = result.items.map(_itemToReq);
-    if (reqs.length === 0) { showToast('파일에 요청이 없습니다'); return; }
+    if (reqs.length === 0) { showToast('No requests in file'); return; }
     if (networkRequests.length > 0) {
       showImportConfirm(
-        `현재 캡처된 ${networkRequests.length}개 요청이 있습니다. 어떻게 처리할까요?`,
+        `${networkRequests.length} request${networkRequests.length === 1 ? '' : 's'} already captured. What would you like to do?`,
         (choice) => {
           if (choice === 'cancel') return;
           _applyImport(reqs, choice, file.name);
@@ -1260,7 +1260,7 @@ function importNetworkData(file) {
       _applyImport(reqs, 'overwrite', file.name);
     }
   };
-  reader.onerror = () => showToast('파일을 읽을 수 없습니다');
+  reader.onerror = () => showToast('Failed to read file');
   reader.readAsText(file);
 }
 
@@ -1687,7 +1687,7 @@ function renderResponseBody(req) {
   // unloaded body means the source file simply didn't include it
   // (typical for Detection-only exports).
   if (req._imported && !req.responseBodyLoaded) {
-    container.innerHTML = '<div class="detail-loading">imported file에 포함되지 않은 데이터입니다</div>';
+    container.innerHTML = '<div class="detail-loading">Not included in the imported file</div>';
     renderDecodedSection(tabPane, []);
     return;
   }
@@ -2529,7 +2529,7 @@ function autoDecodeScanBody(bodyStr, sourceLabel) {
     findings.push({
       type: 'notice',
       label: 'TRUNCATED',
-      location: `응답이 너무 커서 앞 ${(AUTODECODE_BODY_TRUNCATE / 1024) | 0}KB만 분석했습니다 (전체 ${(bodyStr.length / 1024).toFixed(1)}KB)`,
+      location: `Response too large; analyzed first ${(AUTODECODE_BODY_TRUNCATE / 1024) | 0} KB (total ${(bodyStr.length / 1024).toFixed(1)} KB)`,
     });
   }
   const trimmed = scanStr.trim();
@@ -3242,110 +3242,107 @@ function renderScanBadgesInline(scanResults) {
 // hidden by default to avoid drowning the findings themselves.
 const DETECTION_CATEGORY_DESCRIPTIONS = {
   token:
-    `인증 토큰이 응답 본문에 포함되어 있습니다.
-토큰이 응답 본문에 평문으로 포함되면
-CDN 캐싱, 서버 로그, HAR 파일 공유 시
-의도치 않게 노출될 수 있습니다.
-Replay 탭에서 해당 토큰으로 다른 요청을
-재시도해서 접근 범위를 검토하세요.`,
+    `An authentication token appears in the response body.
+Tokens returned in the body can leak through CDN
+caching, server logs, or shared HAR files.
+Use the Replay tab to retry other requests with this
+token and see what it can access.`,
 
   sensitive:
-    `비밀번호 또는 민감한 자격증명이 감지되었습니다.
-응답에서 감지된 경우: 서버가 민감한 값을
-응답 본문에 포함하고 있습니다.
-요청에서 감지된 경우: 민감한 값이
-의도하지 않은 엔드포인트로 전송되고 있을 수 있습니다.
-해당 엔드포인트와 전송 경로를 검토하세요.`,
+    `A password or sensitive credential was detected.
+In the response: the server is including a sensitive
+value in the body.
+In the request: the value may be reaching an endpoint
+that shouldn't receive it.
+Review the endpoint and how the value is transmitted.`,
 
   pii:
-    `개인정보로 추정되는 값이 응답에 포함되어 있습니다.
-해당 정보가 인증 없이 접근 가능한지,
-또는 다른 사용자의 정보가 함께 반환되는지
-검토하세요.
-Replay 탭에서 인증 정보를 제거하거나
-다른 계정 정보로 수정 후 재요청해보세요.`,
+    `Likely personal information appears in the response.
+Check whether the data is accessible without
+authentication, or whether other users' data is
+returned alongside it.
+Use the Replay tab to retry with credentials removed
+or with a different account's identifiers.`,
 
   leak:
-    `내부 정보가 응답에 포함되어 있습니다.
-내부 IP, 서버 경로, 스택 트레이스 등은
-운영 환경에서 외부에 노출되지 않아야 합니다.
-의도적으로 잘못된 값을 입력해서
-추가 정보가 노출되는지 검토하세요.`,
+    `Internal information appears in the response.
+Internal IPs, server paths, stack traces, and similar
+data should not leak from a production environment.
+Try sending intentionally invalid input to see what
+additional details surface.`,
 
   exposure:
-    `서버 소프트웨어 버전 또는 민감한 키 정보가
-응답에 포함되어 있습니다.
-서버 버전 노출은 알려진 취약점을
-특정하는 데 활용될 수 있습니다.
-AWS 키나 GitHub PAT가 감지된 경우
-즉시 해당 키의 유효성과 권한 범위를 확인하세요.`,
+    `A server software version or a sensitive key was
+exposed in the response.
+Version disclosure helps attackers map known
+vulnerabilities to your stack.
+If an AWS key or GitHub PAT was detected, verify its
+validity and permission scope immediately.`,
 
   idor:
-    `직접 객체 참조가 가능한 ID 파라미터가 있습니다.
-Replay 탭에서 ID 값을 다른 값으로 수정 후
-재요청해서 다른 사용자의 데이터가
-반환되는지 검토하세요.`,
+    `An ID parameter looks like a direct object reference.
+Use the Replay tab to change the ID and resend the
+request to see whether another user's data comes
+back.`,
 
   privilege:
-    `권한 또는 역할 관련 파라미터가 있습니다.
-클라이언트가 전달하는 권한값을 서버가
-그대로 신뢰하는지 검토하세요.
-Replay 탭에서 값을 수정 후 재요청해보세요.
-예: role=user → role=admin
-    isAdmin=false → isAdmin=true`,
+    `A role or privilege parameter is being sent.
+Check whether the server trusts the client-supplied
+value as-is.
+Use the Replay tab to change the value and resend.
+e.g. role=user → role=admin
+     isAdmin=false → isAdmin=true`,
 
   session:
-    `세션 또는 인증 토큰이 요청 파라미터로
-전달되고 있습니다.
-세션 ID가 URL이나 요청 본문에 포함되면
-서버 로그나 브라우저 히스토리에 노출될 수 있습니다.
-다른 세션값으로 수정 후 재요청해서
-접근 제어가 올바르게 동작하는지 검토하세요.`,
+    `A session or auth token is being sent as a request
+parameter.
+Session IDs in URLs or request bodies can be exposed
+through server logs or browser history.
+Try a different session value and resend to confirm
+that access control is enforced correctly.`,
 
   sqli:
-    `SQL 쿼리에 영향을 줄 수 있는 파라미터입니다.
-Replay 탭에서 값을 수정 후 서버 응답이
-달라지는지 검토하세요.
-예: ' (따옴표 — 에러 응답 여부 확인)
-    1 AND 1=1 vs 1 AND 1=2 (참/거짓 응답 차이 확인)`,
+    `A parameter that could influence a SQL query.
+Use the Replay tab to change the value and watch how
+the server response differs.
+e.g. '  (single quote — does the server error out?)
+     1 AND 1=1 vs 1 AND 1=2  (true/false response delta?)`,
 
   lfi:
-    `파일 경로 또는 템플릿과 관련된 파라미터입니다.
-이 파라미터는 LFI 또는 SSTI 확인 포인트입니다.
-파라미터 값을 수정 후 서버 응답이
-달라지는지 검토하세요.
-예: ../../../etc/passwd (경로 탐색 확인)
-    {{7*7}} (템플릿 처리 여부 확인 — 49 반환 시 주의)`,
+    `A parameter that names a file path or template.
+Worth checking for LFI or SSTI.
+Modify the value and watch how the server responds.
+e.g. ../../../etc/passwd  (path traversal probe)
+     {{7*7}}  (template evaluation — returning 49 is a red flag)`,
 
   ssrf:
-    `외부 요청 또는 리다이렉트와 관련된 파라미터입니다.
-이 파라미터는 SSRF 또는 Open Redirect
-확인 포인트입니다.
-Replay 탭에서 값을 수정 후 재요청해보세요.
-예: https://169.254.169.254/ (AWS 메타데이터 확인)
-    //evil.com (외부 도메인 리다이렉트 확인)`,
+    `A parameter tied to an outbound request or redirect.
+Worth checking for SSRF or Open Redirect.
+Use the Replay tab to change the value and resend.
+e.g. https://169.254.169.254/  (AWS metadata probe)
+     //evil.com  (external-domain redirect probe)`,
 
   rce:
-    `명령 실행과 관련된 파라미터가 있습니다.
-파라미터 값을 수정 후 서버 동작이
-달라지는지 검토하세요.
-현재 값 외에 다른 값으로 수정했을 때
-응답 내용이나 처리 결과의 변화를 확인하세요.`,
+    `A parameter tied to command execution.
+Modify the value and check whether the server behaves
+differently.
+Watch the response body or downstream behavior for
+changes when the value moves away from its default.`,
 
   debug:
-    `디버그 또는 설정과 관련된 파라미터가 있습니다.
-이 파라미터의 값을 수정했을 때
-서버가 다른 동작을 하는지 검토하세요.
-예: debug=true 또는 debug=1 (디버그 모드 활성화 확인)
-    test=true (테스트 모드 전환 여부 확인)`,
+    `A debug or configuration parameter.
+Try changing it and see whether the server behaves
+differently.
+e.g. debug=true or debug=1  (turn on debug mode?)
+     test=true              (switch into a test mode?)`,
 
   check:
-    `인증 실패 응답(401/403)임에도
-응답 본문의 크기가 예상보다 큽니다.
-정상적인 인증 실패 응답은 짧은 에러 메시지만
-포함해야 합니다.
-응답 본문을 직접 확인해서 민감한 정보나
-데이터가 함께 반환되고 있는지 검토하세요.`,
+    `The response is 401/403 but the body is larger than
+expected.
+A normal auth-failure response should carry only a
+short error message.
+Inspect the body directly to see whether sensitive
+information or data leaks alongside the failure.`,
 };
 
 function renderDetection(req) {

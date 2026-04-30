@@ -72,6 +72,143 @@ const sitemapStats = document.getElementById('sitemap-stats');
 const sitemapPageScanBtn = document.getElementById('sitemap-page-scan');
 sitemapPageScanBtn.addEventListener('click', runPageScan);
 
+// Auto Crawl: drives the inspected tab through a list of URLs while
+// Network monitoring records everything. Useful for sweeping a known
+// set of targets in one sitting.
+const crawlState = {
+  active: false,
+  urls: [],
+  index: 0,
+  waitMs: 5000,
+  timeoutId: null,
+};
+
+function preprocessCrawlUrls(rawText) {
+  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+  const seen = new Set();
+  const urls = [];
+  for (const line of lines) {
+    let url = /^https?:\/\//i.test(line) ? line : 'https://' + line;
+    try { new URL(url); } catch { continue; }
+    if (seen.has(url)) continue;
+    seen.add(url);
+    urls.push(url);
+    if (urls.length >= 200) break;
+  }
+  return urls;
+}
+
+function showCrawlModal() {
+  document.getElementById('crawl-modal').classList.remove('hidden');
+}
+function hideCrawlModal() {
+  document.getElementById('crawl-modal').classList.add('hidden');
+}
+
+function startCrawl() {
+  const text = document.getElementById('crawl-urls').value;
+  const urls = preprocessCrawlUrls(text);
+  if (urls.length === 0) {
+    showToast('유효한 URL이 없습니다.');
+    return;
+  }
+  const waitVal = parseInt(document.getElementById('crawl-wait').value, 10);
+  const waitSec = Math.min(30, Math.max(1, isNaN(waitVal) ? 5 : waitVal));
+
+  // Auto-start network monitoring if not already on
+  if (!networkMonitoring) startNetworkMonitoring();
+
+  crawlState.active = true;
+  crawlState.urls = urls;
+  crawlState.index = 0;
+  crawlState.waitMs = waitSec * 1000;
+
+  // UI: lock inputs, swap Start → Stop, reveal progress block
+  document.getElementById('crawl-urls').disabled = true;
+  document.getElementById('crawl-wait').disabled = true;
+  document.getElementById('crawl-progress').classList.remove('hidden');
+  const btn = document.getElementById('crawl-start');
+  btn.textContent = 'Stop';
+  btn.className = 'btn btn-danger';
+
+  visitNextCrawl();
+}
+
+function visitNextCrawl() {
+  if (!crawlState.active) return;
+  if (crawlState.index >= crawlState.urls.length) {
+    completeCrawl();
+    return;
+  }
+  const url = crawlState.urls[crawlState.index];
+  updateCrawlProgress();
+  const expr = `location.href = ${JSON.stringify(url)}`;
+  chrome.devtools.inspectedWindow.eval(expr, () => {
+    // Errors (chrome:// URLs, blocked, etc.) — skip and continue.
+    if (!crawlState.active) return;
+    crawlState.index++;
+    crawlState.timeoutId = setTimeout(visitNextCrawl, crawlState.waitMs);
+  });
+}
+
+function stopCrawl() {
+  if (crawlState.timeoutId) clearTimeout(crawlState.timeoutId);
+  crawlState.timeoutId = null;
+  crawlState.active = false;
+  resetCrawlUI();
+}
+
+function completeCrawl() {
+  const visited = crawlState.index;
+  crawlState.active = false;
+  resetCrawlUI();
+  showToast(`완료: ${visited}개 사이트 방문`);
+  hideCrawlModal();
+}
+
+function resetCrawlUI() {
+  document.getElementById('crawl-urls').disabled = false;
+  document.getElementById('crawl-wait').disabled = false;
+  document.getElementById('crawl-progress').classList.add('hidden');
+  const btn = document.getElementById('crawl-start');
+  btn.textContent = 'Start';
+  btn.className = 'btn btn-primary';
+}
+
+function updateCrawlProgress() {
+  const total = crawlState.urls.length;
+  const idx = crawlState.index;
+  const url = crawlState.urls[idx] || '';
+  document.querySelector('.crawl-progress-fill').style.width =
+    `${(idx / total) * 100}%`;
+  document.querySelector('.crawl-progress-text').textContent = `${idx + 1}/${total}`;
+  document.querySelector('.crawl-current-url').textContent = url;
+}
+
+let _toastTimer = null;
+function showToast(msg) {
+  const toast = document.getElementById('dtpp-toast');
+  if (!toast) return;
+  toast.textContent = msg;
+  toast.classList.add('visible');
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => toast.classList.remove('visible'), 3000);
+}
+
+document.getElementById('sitemap-auto-crawl').addEventListener('click', showCrawlModal);
+document.getElementById('crawl-modal-close').addEventListener('click', () => {
+  if (crawlState.active) stopCrawl();
+  hideCrawlModal();
+});
+document.getElementById('crawl-cancel').addEventListener('click', () => {
+  if (crawlState.active) stopCrawl();
+  hideCrawlModal();
+});
+document.getElementById('crawl-start').addEventListener('click', () => {
+  if (crawlState.active) stopCrawl();
+  else startCrawl();
+});
+
 function updatePageScanButton() {
   if (sitemapSelectedNode && targetHost && sitemapSelectedNode.host !== targetHost) {
     sitemapPageScanBtn.disabled = true;
@@ -714,6 +851,7 @@ const networkSplit = document.querySelector('.network-split');
 document.getElementById('network-start').addEventListener('click', startNetworkMonitoring);
 document.getElementById('network-stop').addEventListener('click', stopNetworkMonitoring);
 document.getElementById('network-clear').addEventListener('click', clearNetwork);
+document.getElementById('network-export').addEventListener('click', exportDetectionResults);
 
 // Detail panel tab switching
 document.querySelectorAll('.detail-tab').forEach(tab => {
@@ -737,6 +875,11 @@ function closeDetail() {
 
 // chrome.devtools.network event listener (always active, no attach needed)
 chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
+  // Skip data: URIs entirely — they're inline payloads, not real
+  // network traffic, and a single page can produce hundreds of them
+  // (icons, etc.) that would only flood the list and slow scanning.
+  if (harEntry.request.url.startsWith('data:')) return;
+
   // Global scope gate — out-of-scope requests are ignored entirely
   // (not added to Site Map or Network lists). Empty scope = all in scope.
   if (!inGlobalScope(harEntry.request.url)) return;
@@ -794,29 +937,26 @@ chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
   if (!networkMonitoring) return;
   networkRequests.push(req);
   networkRequestMap.set(reqId, req);
-  renderNetworkTable();
+  scheduleAppendNetworkRow(req);
 
   // Eagerly load the body for text-like responses so the scanner can
   // see body-side findings without waiting for the user to click in.
+  // Queue caps concurrency; the body scan itself runs in idle time so
+  // a flood of requests doesn't block paint.
   if (scanShouldEagerLoadBody(req) && !req.responseBodyLoaded) {
-    harEntry.getContent((content, encoding) => {
+    queueBodyLoad(req, (content, encoding) => {
       if (content == null) return;
       req.responseBody = content;
       req.responseBase64 = encoding === 'base64';
       req.responseBodyLoaded = true;
-      // Re-scan with body
-      req.scanResults = scanRequest(req);
-      // Update only this row's badge cell to avoid full re-render
-      const row = networkTable.querySelector(`tr[data-request-id="${CSS.escape(req.requestId)}"]`);
-      if (row) {
-        const cell = row.querySelector('.scan-badges-cell');
-        if (cell) cell.innerHTML = renderScanBadgesInline(req.scanResults);
-      }
-      // If this row is currently selected, refresh detail panels too
-      if (selectedRequestId === req.requestId) {
-        renderResponseBody(req);
-        renderDetection(req);
-      }
+      runIdle(() => {
+        req.scanResults = scanRequest(req);
+        updateNetworkRowBadges(req);
+        if (selectedRequestId === req.requestId) {
+          renderResponseBody(req);
+          renderDetection(req);
+        }
+      });
     });
   }
 });
@@ -836,8 +976,74 @@ function stopNetworkMonitoring() {
 function clearNetwork() {
   networkRequests.length = 0;
   networkRequestMap.clear();
+  _pendingNetworkRows.length = 0;
+  if (_networkRenderRaf) { cancelAnimationFrame(_networkRenderRaf); _networkRenderRaf = 0; }
   closeDetail();
   renderNetworkTable();
+}
+
+// Export Detection findings as JSON. Slim format aimed at rule tuning:
+// only requests with findings, request metadata kept minimal, no
+// response bodies. Includes per-category / per-severity totals so
+// false-positive-heavy rules show up at a glance.
+function exportDetectionResults() {
+  const stats = {
+    totalRequests: networkRequests.length,
+    requestsWithFindings: 0,
+    byCategory: {},
+    bySeverity: {},
+  };
+  const items = [];
+  for (const r of networkRequests) {
+    const findings = r.scanResults || [];
+    if (findings.length === 0) continue;
+    stats.requestsWithFindings++;
+    for (const f of findings) {
+      stats.byCategory[f.category] = (stats.byCategory[f.category] || 0) + 1;
+      stats.bySeverity[f.severity] = (stats.bySeverity[f.severity] || 0) + 1;
+    }
+    items.push({
+      request: {
+        method: r.method,
+        url: r.url,
+        status: r.status,
+        statusText: r.statusText,
+        mimeType: r.mimeType,
+        type: r.type,
+      },
+      findings: findings.map(f => ({
+        category: f.category,
+        severity: f.severity,
+        location: f.location,
+        evidence: f.evidence,
+      })),
+    });
+  }
+
+  let extensionVersion = '';
+  try { extensionVersion = chrome.runtime.getManifest().version; } catch {}
+
+  const data = {
+    exportedAt: new Date().toISOString(),
+    extensionVersion,
+    targetHost: targetHost || '',
+    scope: globalScope.input || '',
+    stats,
+    items,
+  };
+
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const host = (targetHost || 'export').replace(/[^A-Za-z0-9.-]/g, '_');
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `devtoolspp-detection-${host}-${ts}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function fetchResponseBody(req) {
@@ -856,31 +1062,151 @@ function fetchResponseBody(req) {
   });
 }
 
-function renderNetworkTable() {
-  networkCount.textContent = `${networkRequests.length} requests`;
-  networkTable.innerHTML = networkRequests.map(r => {
-    const statusClass = r.status >= 400 ? 'status-error'
-      : r.status >= 300 ? 'status-redirect'
-      : r.status >= 200 ? 'status-ok' : '';
-    const selectedClass = r.requestId === selectedRequestId ? 'selected' : '';
-    return `<tr class="${selectedClass}" data-request-id="${escapeHtml(r.requestId)}">
-      <td><strong>${escapeHtml(r.method)}</strong></td>
-      <td title="${escapeHtml(r.url)}">${escapeHtml(truncateUrl(r.url))}</td>
-      <td class="${statusClass}">${r.status}</td>
-      <td>${escapeHtml(r.type)}</td>
-      <td>${r.size}</td>
-      <td>${r.time}</td>
-      <td class="scan-badges-cell">${renderScanBadgesInline(r.scanResults)}</td>
-    </tr>`;
-  }).join('');
+// Bounded-concurrency body loader. The DevTools getContent API isn't
+// great when fired hundreds of times at once, so eager loads queue up
+// here with a small concurrency cap. User-initiated fetches still go
+// through fetchResponseBody (no queue) for snappy detail-panel opens.
+const _bodyLoadQueue = [];
+let _activeBodyLoads = 0;
+const MAX_CONCURRENT_BODY_LOADS = 5;
 
-  // Row click event
-  networkTable.querySelectorAll('tr').forEach(row => {
-    row.addEventListener('click', () => {
-      selectNetworkRequest(row.dataset.requestId, { scroll: false });
+function queueBodyLoad(req, callback) {
+  _bodyLoadQueue.push({ req, callback });
+  processBodyLoadQueue();
+}
+
+function processBodyLoadQueue() {
+  while (_activeBodyLoads < MAX_CONCURRENT_BODY_LOADS && _bodyLoadQueue.length > 0) {
+    const { req, callback } = _bodyLoadQueue.shift();
+    if (req.responseBodyLoaded) {
+      // Body was loaded by a user click while waiting in the queue —
+      // hand the cached content back without another getContent call.
+      callback(req.responseBody, req.responseBase64 ? 'base64' : null);
+      continue;
+    }
+    if (!req._harEntry) {
+      callback(null, null);
+      continue;
+    }
+    _activeBodyLoads++;
+    req._harEntry.getContent((content, encoding) => {
+      _activeBodyLoads--;
+      try { callback(content, encoding); }
+      finally { processBodyLoadQueue(); }
     });
+  }
+}
+
+// Run a function during idle time so heavy scans don't block UI on
+// burst loads. Falls back to setTimeout in browsers without rIC.
+function runIdle(fn) {
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(fn, { timeout: 2000 });
+  } else {
+    setTimeout(fn, 0);
+  }
+}
+
+// Maximum visible rows in the network table — older rows are dropped
+// from the DOM (data stays in `networkRequests` for export and
+// addressing). On busy portal sites a thousand rows is enough to spot
+// patterns without melting the renderer.
+const MAX_NETWORK_ROWS = 1000;
+
+// Build a single <tr> for a request without touching the DOM. Returns
+// the element so callers can append/insert as they choose.
+function buildNetworkRow(r) {
+  const statusClass = r.status >= 400 ? 'status-error'
+    : r.status >= 300 ? 'status-redirect'
+    : r.status >= 200 ? 'status-ok' : '';
+  const tr = document.createElement('tr');
+  tr.dataset.requestId = r.requestId;
+  if (r.requestId === selectedRequestId) tr.classList.add('selected');
+  tr.innerHTML =
+    `<td><strong>${escapeHtml(r.method)}</strong></td>` +
+    `<td title="${escapeHtml(r.url)}">${escapeHtml(truncateUrl(r.url))}</td>` +
+    `<td class="${statusClass}">${r.status}</td>` +
+    `<td>${escapeHtml(r.type)}</td>` +
+    `<td>${r.size}</td>` +
+    `<td>${r.time}</td>` +
+    `<td class="scan-badges-cell">${renderScanBadgesInline(r.scanResults)}</td>`;
+  return tr;
+}
+
+function updateNetworkCount() {
+  const total = networkRequests.length;
+  if (total > MAX_NETWORK_ROWS) {
+    networkCount.textContent = `${total} requests · showing last ${MAX_NETWORK_ROWS}`;
+  } else {
+    networkCount.textContent = `${total} requests`;
+  }
+}
+
+// Trim oldest visible rows when the table exceeds MAX_NETWORK_ROWS.
+function enforceMaxNetworkRows() {
+  while (networkTable.children.length > MAX_NETWORK_ROWS) {
+    networkTable.removeChild(networkTable.firstChild);
+  }
+}
+
+// Update the badges cell of an existing row. No-op if the row was
+// already trimmed off the visible window.
+function updateNetworkRowBadges(req) {
+  const row = networkTable.querySelector(
+    `tr[data-request-id="${CSS.escape(req.requestId)}"]`
+  );
+  if (!row) return;
+  const cell = row.querySelector('.scan-badges-cell');
+  if (cell) cell.innerHTML = renderScanBadgesInline(req.scanResults);
+}
+
+// Full re-render — used only on clear / startup. Streaming events use
+// the append/batch path below to avoid O(n²) rebuilds.
+function renderNetworkTable() {
+  networkTable.innerHTML = '';
+  const fragment = document.createDocumentFragment();
+  const start = Math.max(0, networkRequests.length - MAX_NETWORK_ROWS);
+  for (let i = start; i < networkRequests.length; i++) {
+    fragment.appendChild(buildNetworkRow(networkRequests[i]));
+  }
+  networkTable.appendChild(fragment);
+  updateNetworkCount();
+}
+
+// Streaming append: incoming requests are queued and flushed once per
+// animation frame. Keeps a portal site's burst of hundreds of requests
+// from triggering hundreds of separate layout/paint cycles.
+const _pendingNetworkRows = [];
+let _networkRenderRaf = 0;
+
+function scheduleAppendNetworkRow(req) {
+  _pendingNetworkRows.push(req);
+  if (_networkRenderRaf) return;
+  _networkRenderRaf = requestAnimationFrame(() => {
+    _networkRenderRaf = 0;
+    flushPendingNetworkRows();
   });
 }
+
+function flushPendingNetworkRows() {
+  if (_pendingNetworkRows.length === 0) return;
+  const fragment = document.createDocumentFragment();
+  for (const r of _pendingNetworkRows) {
+    fragment.appendChild(buildNetworkRow(r));
+  }
+  _pendingNetworkRows.length = 0;
+  networkTable.appendChild(fragment);
+  enforceMaxNetworkRows();
+  updateNetworkCount();
+}
+
+// Click delegation on tbody — attached once at load so each new row
+// doesn't need its own listener.
+networkTable.addEventListener('click', (e) => {
+  const row = e.target.closest('tr[data-request-id]');
+  if (!row) return;
+  selectNetworkRequest(row.dataset.requestId, { scroll: false });
+});
 
 // Move selection to a request, open the detail panel, and (optionally)
 // scroll the row into view. Shared by click handlers and keyboard nav.
@@ -2110,6 +2436,132 @@ function _scanExtractServerVersion(value) {
   return m ? `${m[1]}/${m[2]}` : null;
 }
 
+// File extensions that look like TLDs in the email regex but are really
+// asset filenames (e.g. "logo@2x.png"). Used to suppress PII false
+// positives. Only includes extensions that are NOT also real TLDs —
+// `tv` / `me` / `io` are kept since they're legitimate domains.
+const EMAIL_FILE_EXT_DENY = new Set([
+  // Images
+  'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp', 'tiff', 'tif', 'avif',
+  // Documents
+  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'rtf', 'csv',
+  // Audio / video
+  'mp3', 'mp4', 'wav', 'avi', 'mov', 'webm', 'mkv', 'ogg', 'm4a', 'flac', 'aac',
+  // Archives
+  'zip', 'rar', 'tar', 'gz', 'tgz', 'bz2', '7z',
+  // Code / web assets
+  'js', 'jsx', 'ts', 'tsx', 'vue', 'css', 'scss', 'sass', 'less', 'html', 'htm', 'php',
+  // Data / config
+  'json', 'xml', 'yaml', 'yml', 'env', 'lock',
+  // Fonts
+  'woff', 'woff2', 'ttf', 'eot', 'otf',
+]);
+
+// HUNT-style parameter dictionary. Each category lists parameter names
+// historically associated with a vuln class — flags candidates worth
+// manual probing, not confirmed bugs. Inspired by Bugcrowd's HUNT.
+const HUNT_CATEGORIES = {
+  sqli: {
+    badge: '💉 SQLi', severity: 'high',
+    keywords: ['query', 'search', 'filter', 'sort', 'where', 'select', 'order',
+               'keyword', 'column', 'field', 'report', 'row', 'string', 'number'],
+  },
+  lfi: {
+    badge: '📁 LFI', severity: 'high',
+    keywords: ['file', 'path', 'dir', 'directory', 'document', 'template',
+               'include', 'page', 'doc', 'folder', 'root', 'pdf', 'pg', 'style'],
+  },
+  ssrf: {
+    badge: '🌐 SSRF', severity: 'high',
+    keywords: ['url', 'redirect', 'dest', 'destination', 'callback', 'return',
+               'next', 'host', 'domain', 'uri', 'continue', 'forward', 'window',
+               'navigate', 'open', 'feed', 'ref', 'return_url', 'redirect_uri',
+               'redirect_url'],
+  },
+  rce: {
+    badge: '💻 RCE', severity: 'high',
+    keywords: ['cmd', 'exec', 'command', 'shell', 'ping', 'execute',
+               'run', 'system', 'proc', 'process'],
+  },
+  debug: {
+    badge: '🔧 debug', severity: 'medium',
+    keywords: ['debug', 'test', 'dbg', 'config', 'toggle',
+               'enable', 'disable', 'reset', 'adm', 'cfg'],
+  },
+};
+
+// token (lowercased) → { category, badge, severity, matchedKeyword }
+// Compound keywords like "return_url" are split into tokens during build,
+// so the lookup map only ever holds single words.
+const HUNT_KEYWORD_MAP = (() => {
+  const map = new Map();
+  for (const [category, def] of Object.entries(HUNT_CATEGORIES)) {
+    for (const kw of def.keywords) {
+      const tokens = kw.toLowerCase().split(/[_-]/).filter(Boolean);
+      for (const tok of tokens) {
+        if (!map.has(tok)) {
+          map.set(tok, {
+            category, badge: def.badge, severity: def.severity, matchedKeyword: tok,
+          });
+        }
+      }
+    }
+  }
+  return map;
+})();
+
+// Split a parameter name into lowercase tokens. Handles camelCase
+// (filePath → file, path), snake_case (file_path), kebab-case
+// (file-path). Words like "profile"/"research" stay as a single token,
+// avoiding false positives against "file"/"search".
+function _scanTokenize(name) {
+  if (typeof name !== 'string') return [];
+  const snake = name.replace(/([a-z\d])([A-Z])/g, '$1_$2').toLowerCase();
+  return snake.split(/[_-]/).filter(Boolean);
+}
+
+function _scanMatchHunt(name) {
+  const tokens = _scanTokenize(name);
+  for (const tok of tokens) {
+    const hit = HUNT_KEYWORD_MAP.get(tok);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// Whether any finding has already been recorded at this location, in
+// any category. Used to skip HUNT additions when IDOR/privilege/sensitive
+// already flagged the same parameter.
+function _scanLocationHasFinding(seen, location) {
+  for (const key of seen) {
+    const sepIdx = key.indexOf('|');
+    if (sepIdx >= 0 && key.slice(sepIdx + 1) === location) return true;
+  }
+  return false;
+}
+
+// Run HUNT match against a parameter name and add a finding if it hits
+// AND no prior finding exists at the same location.
+function _scanAddHunt(findings, seen, location, paramName, value) {
+  if (_scanLocationHasFinding(seen, location)) return;
+  const hit = _scanMatchHunt(paramName);
+  if (!hit) return;
+  let evidence = `matched "${hit.matchedKeyword}" in "${paramName}"`;
+  if (value !== undefined && value !== null && value !== '') {
+    const vs = typeof value === 'object'
+      ? JSON.stringify(value).slice(0, 40)
+      : String(value).slice(0, 40);
+    evidence += ` = ${vs}`;
+  }
+  _scanAdd(findings, seen, {
+    category: hit.category,
+    badge: hit.badge,
+    severity: hit.severity,
+    location,
+    evidence,
+  });
+}
+
 function _scanCheckSensitiveKey(key) {
   return /^(password|passwd|pwd|secret|private[_-]?key|client[_-]?secret)$/i.test(key);
 }
@@ -2184,6 +2636,7 @@ function scanRequest(req) {
           evidence: `${k}=${v}`,
         });
       }
+      _scanAddHunt(findings, seen, `request.query.${k}`, k, v);
     }
   } catch { /* malformed url */ }
 
@@ -2220,6 +2673,7 @@ function scanRequest(req) {
               evidence: `${k}: ${v.length > 20 ? '(' + v.length + ' chars)' : v}`,
             });
           }
+          _scanAddHunt(findings, seen, `request.body.${fp}`, k, v);
           if (typeof v === 'object' && v !== null) walk(v, fp);
         }
       };
@@ -2249,6 +2703,7 @@ function scanRequest(req) {
               evidence: `${k}: ${v.length > 20 ? '(' + v.length + ' chars)' : v}`,
             });
           }
+          _scanAddHunt(findings, seen, `request.body.${k}`, k, v);
         }
       } catch { /* not form */ }
     }
@@ -2304,15 +2759,18 @@ function scanRequest(req) {
       }
     }
 
-    // Email — skip @localhost and @<ipv4> forms (usually internal
-    // service references, not user PII)
+    // Email — skip @localhost, @<ipv4>, and TLDs that are really file
+    // extensions (e.g. "logo@2x.png" matches the regex but is just a
+    // Retina asset filename, not PII).
     const emailMatch = body.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
     if (emailMatch) {
       const email = emailMatch[0];
       const domain = email.slice(email.indexOf('@') + 1);
+      const tld = domain.split('.').pop().toLowerCase();
       const isLocalhost = /^localhost(:\d+)?$/i.test(domain);
       const isIpv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(domain);
-      if (!isLocalhost && !isIpv4) {
+      const isFileExt = EMAIL_FILE_EXT_DENY.has(tld);
+      if (!isLocalhost && !isIpv4 && !isFileExt) {
         _scanAdd(findings, seen, {
           category: 'pii', badge: '👤 PII', severity: 'medium',
           location: `response.body (email)`,
@@ -3874,6 +4332,12 @@ function formatBytes(bytes) {
 }
 
 function truncateUrl(url) {
+  // data: URIs — strip the payload and just label by mime type so the
+  // table doesn't try to render a 100KB base64 string in one cell.
+  if (typeof url === 'string' && url.startsWith('data:')) {
+    const m = url.match(/^data:([^;,]+)/);
+    return m ? `[data URI] ${m[1]}` : '[data URI]';
+  }
   try {
     const u = new URL(url);
     return u.pathname + u.search;

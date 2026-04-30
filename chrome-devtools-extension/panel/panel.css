@@ -758,6 +758,11 @@ tr:hover {
 .scan-badge-idor      { background: #e8eaed; color: #3c4043; border-color: #c8cad0; }
 .scan-badge-check     { background: #e8f0fe; color: #1a73e8; border-color: #c5d9fb; }
 .scan-badge-exposure  { background: #fef3cd; color: #856404; border-color: #f7d875; }
+.scan-badge-sqli      { background: #fad2cf; color: #a50e0e; border-color: #ec9b97; }
+.scan-badge-rce       { background: #fad2cf; color: #a50e0e; border-color: #ec9b97; }
+.scan-badge-lfi       { background: #fde7c0; color: #8a4b00; border-color: #f0c47e; }
+.scan-badge-ssrf      { background: #d2e3fc; color: #1967d2; border-color: #a4c4f5; }
+.scan-badge-debug     { background: #e8eaed; color: #3c4043; border-color: #c8cad0; }
 
 /* Detection tab indicator (count badge) */
 .detail-tab.has-findings {
@@ -2140,4 +2145,141 @@ tr.selected td {
 
 .btn-mock:hover {
   background: #6a1b9a;
+}
+
+/* ============================================================
+   Auto Crawl modal + toast
+   ============================================================ */
+.crawl-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.crawl-modal.hidden { display: none; }
+
+.crawl-modal-content {
+  background: #fff;
+  border-radius: 6px;
+  width: 480px;
+  max-width: 90vw;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.crawl-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e0e0e0;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.crawl-modal-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.crawl-modal-body label {
+  font-size: 12px;
+  color: #555;
+  font-weight: 500;
+}
+
+.crawl-modal-body textarea {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 12px;
+  padding: 8px;
+  border: 1px solid #c4c4c4;
+  border-radius: 4px;
+  resize: vertical;
+  min-height: 120px;
+}
+
+.crawl-modal-body input[type="number"] {
+  width: 80px;
+  padding: 4px 8px;
+  border: 1px solid #c4c4c4;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.crawl-modal-body textarea:disabled,
+.crawl-modal-body input:disabled {
+  background: #f7f8fa;
+  color: #888;
+}
+
+.crawl-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid #e0e0e0;
+}
+
+#crawl-progress {
+  margin-top: 8px;
+  padding: 12px;
+  background: #f7f8fa;
+  border-radius: 4px;
+}
+
+#crawl-progress.hidden { display: none; }
+
+.crawl-progress-bar {
+  height: 8px;
+  background: #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.crawl-progress-fill {
+  height: 100%;
+  background: #1a73e8;
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+.crawl-progress-text {
+  font-size: 11px;
+  color: #555;
+  margin-top: 6px;
+  font-weight: 500;
+}
+
+.crawl-current-url {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 11px;
+  color: #1a73e8;
+  margin-top: 4px;
+  word-break: break-all;
+}
+
+.dtpp-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e1e1e;
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 4px;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  z-index: 10000;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+.dtpp-toast.visible {
+  opacity: 1;
 }

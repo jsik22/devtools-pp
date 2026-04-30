@@ -816,10 +816,32 @@ tr:hover {
   background: #f7f8fa;
   border-bottom: 1px solid #e0e0e0;
   font-size: 12px;
+  cursor: pointer;
+}
+.detection-group-header:hover {
+  background: #eef2f6;
 }
 .detection-group-count {
   color: #666;
   font-size: 11px;
+}
+.detection-group-toggle {
+  margin-left: auto;
+  color: #888;
+  font-size: 11px;
+}
+.detection-category-desc {
+  padding: 10px 14px;
+  background: #fafbfc;
+  border-bottom: 1px solid #e8eaed;
+  font-size: 12px;
+  color: #3c4043;
+  line-height: 1.65;
+  white-space: pre-line;
+}
+.detection-category-desc.hidden { display: none; }
+.detection-finding {
+  cursor: pointer;
 }
 .detection-findings {
   padding: 4px 0;
@@ -846,6 +868,7 @@ tr:hover {
 }
 .detection-severity.sev-high   { background: #fce8e6; color: #c5221f; }
 .detection-severity.sev-medium { background: #fef7e0; color: #b06000; }
+.detection-severity.sev-low    { background: #f1f3f4; color: #5f6368; }
 .detection-severity.sev-info   { background: #e8f0fe; color: #1a73e8; }
 .detection-location {
   font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;

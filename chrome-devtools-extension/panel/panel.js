@@ -2771,39 +2771,65 @@ const EMAIL_FILE_EXT_DENY = new Set([
 // HUNT-style parameter dictionary. Each category lists parameter names
 // historically associated with a vuln class — flags candidates worth
 // manual probing, not confirmed bugs. Inspired by Bugcrowd's HUNT.
+//
+// Per-keyword severity overrides are supported via `keywordSeverity`.
+// Compound dictionary entries like "return_url" are tokenized during
+// build, so the lookup map only holds single words.
 const HUNT_CATEGORIES = {
   sqli: {
-    badge: '💉 SQLi', severity: 'high',
+    badge: '💉 SQLi',
+    defaultSeverity: 'high',
     keywords: ['query', 'search', 'filter', 'sort', 'where', 'select', 'order',
                'keyword', 'column', 'field', 'report', 'row', 'string', 'number'],
   },
   lfi: {
-    badge: '📁 LFI', severity: 'high',
+    badge: '📁 LFI',
+    defaultSeverity: 'high',
     keywords: ['file', 'path', 'dir', 'directory', 'document', 'template',
                'include', 'page', 'doc', 'folder', 'root', 'pdf', 'pg', 'style'],
+    keywordSeverity: {
+      // Generic page-N navigation parameters — LFI test point but
+      // less load-bearing than file/path.
+      'page': 'medium',
+      // include= often a SPA pattern that's safely whitelisted server-side.
+      'include': 'low',
+    },
   },
   ssrf: {
-    badge: '🌐 SSRF', severity: 'high',
+    badge: '🌐 SSRF',
+    // Most SSRF candidates start out medium-confidence; a few specific
+    // post-redirect target params are upgraded.
+    defaultSeverity: 'medium',
+    // 'window' removed — overlapped with browser performance properties
+    // (windowInnerWidth etc.) and produced 100% noise.
     keywords: ['url', 'redirect', 'dest', 'destination', 'callback', 'return',
-               'next', 'host', 'domain', 'uri', 'continue', 'forward', 'window',
-               'navigate', 'open', 'feed', 'ref', 'return_url', 'redirect_uri',
-               'redirect_url'],
+               'next', 'host', 'domain', 'uri', 'continue', 'forward',
+               'navigate', 'open', 'feed', 'ref'],
+    keywordSeverity: {
+      // Specific redirect / return targets — SSRF and open-redirect risk.
+      'redirect': 'high',
+      'return': 'high',
+      'continue': 'high',
+      // Referer-style ref=, weak signal — keep but de-emphasize.
+      'ref': 'low',
+    },
   },
   rce: {
-    badge: '💻 RCE', severity: 'high',
+    badge: '💻 RCE',
+    defaultSeverity: 'high',
     keywords: ['cmd', 'exec', 'command', 'shell', 'ping', 'execute',
                'run', 'system', 'proc', 'process'],
   },
   debug: {
-    badge: '🔧 debug', severity: 'medium',
+    badge: '🔧 debug',
+    defaultSeverity: 'medium',
     keywords: ['debug', 'test', 'dbg', 'config', 'toggle',
                'enable', 'disable', 'reset', 'adm', 'cfg'],
   },
 };
 
-// token (lowercased) → { category, badge, severity, matchedKeyword }
-// Compound keywords like "return_url" are split into tokens during build,
-// so the lookup map only ever holds single words.
+// token (lowercased) → { category, badge, severity, matchedKeyword }.
+// Severity is resolved per-token: keywordSeverity[tok] || defaultSeverity.
 const HUNT_KEYWORD_MAP = (() => {
   const map = new Map();
   for (const [category, def] of Object.entries(HUNT_CATEGORIES)) {
@@ -2811,8 +2837,10 @@ const HUNT_KEYWORD_MAP = (() => {
       const tokens = kw.toLowerCase().split(/[_-]/).filter(Boolean);
       for (const tok of tokens) {
         if (!map.has(tok)) {
+          const sev = (def.keywordSeverity && def.keywordSeverity[tok])
+            || def.defaultSeverity;
           map.set(tok, {
-            category, badge: def.badge, severity: def.severity, matchedKeyword: tok,
+            category, badge: def.badge, severity: sev, matchedKeyword: tok,
           });
         }
       }
@@ -2820,6 +2848,31 @@ const HUNT_KEYWORD_MAP = (() => {
   }
   return map;
 })();
+
+// Post-match noise filter for HUNT hits. Some keywords overlap with
+// browser performance / runtime properties; this lets us keep the
+// keyword in the dictionary but suppress the obvious technical
+// noise variants.
+function _scanIsHuntNoise(tokens, hit) {
+  if (hit.category === 'ssrf') {
+    // 'domain' only flags when the parameter IS exactly "domain" —
+    // domainLookupStart / domainLookupEnd are PerformanceTiming.
+    if (hit.matchedKeyword === 'domain') {
+      if (tokens.length !== 1 || tokens[0] !== 'domain') return true;
+    }
+    // 'redirect' shouldn't fire on perf-timing variants
+    // (redirectStart, redirectEnd, redirectTime, redirectDuration).
+    // Genuine redirect_uri / redirect_url tokenize without these.
+    if (hit.matchedKeyword === 'redirect') {
+      for (const t of tokens) {
+        if (t === 'start' || t === 'end' || t === 'time' || t === 'duration') {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
 
 // Split a parameter name into lowercase tokens. Handles camelCase
 // (filePath → file, path), snake_case (file_path), kebab-case
@@ -2835,7 +2888,7 @@ function _scanMatchHunt(name) {
   const tokens = _scanTokenize(name);
   for (const tok of tokens) {
     const hit = HUNT_KEYWORD_MAP.get(tok);
-    if (hit) return hit;
+    if (hit && !_scanIsHuntNoise(tokens, hit)) return hit;
   }
   return null;
 }
@@ -3184,6 +3237,117 @@ function renderScanBadgesInline(scanResults) {
   ).join(' ');
 }
 
+// Per-category guidance shown in the Detection tab. Click the group
+// header (or any finding inside it) to toggle visibility — kept
+// hidden by default to avoid drowning the findings themselves.
+const DETECTION_CATEGORY_DESCRIPTIONS = {
+  token:
+    `인증 토큰이 응답 본문에 포함되어 있습니다.
+토큰이 응답 본문에 평문으로 포함되면
+CDN 캐싱, 서버 로그, HAR 파일 공유 시
+의도치 않게 노출될 수 있습니다.
+Replay 탭에서 해당 토큰으로 다른 요청을
+재시도해서 접근 범위를 검토하세요.`,
+
+  sensitive:
+    `비밀번호 또는 민감한 자격증명이 감지되었습니다.
+응답에서 감지된 경우: 서버가 민감한 값을
+응답 본문에 포함하고 있습니다.
+요청에서 감지된 경우: 민감한 값이
+의도하지 않은 엔드포인트로 전송되고 있을 수 있습니다.
+해당 엔드포인트와 전송 경로를 검토하세요.`,
+
+  pii:
+    `개인정보로 추정되는 값이 응답에 포함되어 있습니다.
+해당 정보가 인증 없이 접근 가능한지,
+또는 다른 사용자의 정보가 함께 반환되는지
+검토하세요.
+Replay 탭에서 인증 정보를 제거하거나
+다른 계정 정보로 수정 후 재요청해보세요.`,
+
+  leak:
+    `내부 정보가 응답에 포함되어 있습니다.
+내부 IP, 서버 경로, 스택 트레이스 등은
+운영 환경에서 외부에 노출되지 않아야 합니다.
+의도적으로 잘못된 값을 입력해서
+추가 정보가 노출되는지 검토하세요.`,
+
+  exposure:
+    `서버 소프트웨어 버전 또는 민감한 키 정보가
+응답에 포함되어 있습니다.
+서버 버전 노출은 알려진 취약점을
+특정하는 데 활용될 수 있습니다.
+AWS 키나 GitHub PAT가 감지된 경우
+즉시 해당 키의 유효성과 권한 범위를 확인하세요.`,
+
+  idor:
+    `직접 객체 참조가 가능한 ID 파라미터가 있습니다.
+Replay 탭에서 ID 값을 다른 값으로 수정 후
+재요청해서 다른 사용자의 데이터가
+반환되는지 검토하세요.`,
+
+  privilege:
+    `권한 또는 역할 관련 파라미터가 있습니다.
+클라이언트가 전달하는 권한값을 서버가
+그대로 신뢰하는지 검토하세요.
+Replay 탭에서 값을 수정 후 재요청해보세요.
+예: role=user → role=admin
+    isAdmin=false → isAdmin=true`,
+
+  session:
+    `세션 또는 인증 토큰이 요청 파라미터로
+전달되고 있습니다.
+세션 ID가 URL이나 요청 본문에 포함되면
+서버 로그나 브라우저 히스토리에 노출될 수 있습니다.
+다른 세션값으로 수정 후 재요청해서
+접근 제어가 올바르게 동작하는지 검토하세요.`,
+
+  sqli:
+    `SQL 쿼리에 영향을 줄 수 있는 파라미터입니다.
+Replay 탭에서 값을 수정 후 서버 응답이
+달라지는지 검토하세요.
+예: ' (따옴표 — 에러 응답 여부 확인)
+    1 AND 1=1 vs 1 AND 1=2 (참/거짓 응답 차이 확인)`,
+
+  lfi:
+    `파일 경로 또는 템플릿과 관련된 파라미터입니다.
+이 파라미터는 LFI 또는 SSTI 확인 포인트입니다.
+파라미터 값을 수정 후 서버 응답이
+달라지는지 검토하세요.
+예: ../../../etc/passwd (경로 탐색 확인)
+    {{7*7}} (템플릿 처리 여부 확인 — 49 반환 시 주의)`,
+
+  ssrf:
+    `외부 요청 또는 리다이렉트와 관련된 파라미터입니다.
+이 파라미터는 SSRF 또는 Open Redirect
+확인 포인트입니다.
+Replay 탭에서 값을 수정 후 재요청해보세요.
+예: https://169.254.169.254/ (AWS 메타데이터 확인)
+    //evil.com (외부 도메인 리다이렉트 확인)`,
+
+  rce:
+    `명령 실행과 관련된 파라미터가 있습니다.
+파라미터 값을 수정 후 서버 동작이
+달라지는지 검토하세요.
+현재 값 외에 다른 값으로 수정했을 때
+응답 내용이나 처리 결과의 변화를 확인하세요.`,
+
+  debug:
+    `디버그 또는 설정과 관련된 파라미터가 있습니다.
+이 파라미터의 값을 수정했을 때
+서버가 다른 동작을 하는지 검토하세요.
+예: debug=true 또는 debug=1 (디버그 모드 활성화 확인)
+    test=true (테스트 모드 전환 여부 확인)`,
+
+  check:
+    `인증 실패 응답(401/403)임에도
+응답 본문의 크기가 예상보다 큽니다.
+정상적인 인증 실패 응답은 짧은 에러 메시지만
+포함해야 합니다.
+응답 본문을 직접 확인해서 민감한 정보나
+데이터가 함께 반환되고 있는지 검토하세요.`,
+};
+
 function renderDetection(req) {
   const container = document.getElementById('detail-detection-body');
   const tabBtn = document.querySelector('.detail-tab[data-detail="detection"]');
@@ -3202,7 +3366,7 @@ function renderDetection(req) {
     tabBtn.dataset.count = results.length;
   }
   // Group by category, then sort categories by max severity within
-  const sevOrder = { high: 0, medium: 1, info: 2 };
+  const sevOrder = { high: 0, medium: 1, low: 2, info: 3 };
   const groups = {};
   results.forEach(f => {
     if (!groups[f.category]) groups[f.category] = { badge: f.badge, items: [], maxSev: f.severity };
@@ -3214,11 +3378,18 @@ function renderDetection(req) {
   const sortedCats = Object.entries(groups).sort((a, b) => sevOrder[a[1].maxSev] - sevOrder[b[1].maxSev]);
   let html = '';
   for (const [cat, g] of sortedCats) {
-    html += `<div class="detection-group">
+    const desc = DETECTION_CATEGORY_DESCRIPTIONS[cat];
+    const descBlock = desc
+      ? `<div class="detection-category-desc hidden">${escapeHtml(desc)}</div>`
+      : '';
+    const toggleHint = desc ? '<span class="detection-group-toggle">▾</span>' : '';
+    html += `<div class="detection-group" data-category="${cat}">
       <div class="detection-group-header">
         <span class="scan-badge scan-badge-${cat}">${escapeHtml(g.badge)}</span>
         <span class="detection-group-count">${g.items.length} finding${g.items.length === 1 ? '' : 's'}</span>
+        ${toggleHint}
       </div>
+      ${descBlock}
       <div class="detection-findings">`;
     for (const f of g.items) {
       html += `<div class="detection-finding severity-${f.severity}">
@@ -3232,6 +3403,22 @@ function renderDetection(req) {
     html += `</div></div>`;
   }
   container.innerHTML = html;
+
+  // Click on group header OR any finding toggles the category
+  // description for that group. Clicks inside the description itself
+  // are ignored so users can copy text from the guidance.
+  container.addEventListener('click', _onDetectionGroupClick, { once: false });
+}
+
+function _onDetectionGroupClick(e) {
+  if (e.target.closest('.detection-category-desc')) return;
+  const group = e.target.closest('.detection-group');
+  if (!group) return;
+  const desc = group.querySelector('.detection-category-desc');
+  if (!desc) return;
+  desc.classList.toggle('hidden');
+  const toggle = group.querySelector('.detection-group-toggle');
+  if (toggle) toggle.textContent = desc.classList.contains('hidden') ? '▾' : '▴';
 }
 
 // ============================================================

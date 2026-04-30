@@ -30,7 +30,6 @@
     <section id="sitemap" class="tab-content active">
       <div class="toolbar">
         <button id="sitemap-page-scan" class="btn btn-primary">Page Scan</button>
-        <button id="sitemap-auto-crawl" class="btn">Auto Crawl</button>
         <button id="sitemap-clear" class="btn">Clear</button>
         <span id="sitemap-stats" class="badge">0 hosts · 0 endpoints</span>
         <select id="sitemap-type-filter">
@@ -72,8 +71,21 @@
         <button id="network-start" class="btn btn-primary">Start Monitoring</button>
         <button id="network-stop" class="btn btn-danger" disabled>Stop</button>
         <button id="network-clear" class="btn">Clear</button>
-        <button id="network-export" class="btn" title="Export Detection findings as JSON">Export</button>
+        <input type="file" id="network-import-file" accept=".json" hidden>
+        <button id="network-import" class="btn" title="Import previously exported JSON">Import</button>
+        <div class="export-dropdown">
+          <button id="network-export" class="btn" title="Export captured data as JSON">Export ▾</button>
+          <div id="network-export-menu" class="export-menu hidden">
+            <button class="export-menu-item" data-mode="detection">Detection only</button>
+            <button class="export-menu-item" data-mode="all">All requests</button>
+          </div>
+        </div>
+        <button id="network-auto-crawl" class="btn">Auto Crawl</button>
         <span id="network-count" class="badge">0 requests</span>
+      </div>
+      <div id="network-import-notice" class="import-notice hidden">
+        <span>📂 imported: <span id="network-import-name"></span></span>
+        <button id="network-import-notice-close" class="btn btn-xs" title="Dismiss">X</button>
       </div>
       <div class="network-split">
         <div class="table-wrapper" id="network-list-pane">
@@ -395,7 +407,12 @@
         <button id="crawl-modal-close" class="btn detail-close-btn">X</button>
       </div>
       <div class="crawl-modal-body">
-        <label for="crawl-urls">URL 목록 (줄바꿈으로 구분, 최대 200개)</label>
+        <div class="crawl-url-header">
+          <label for="crawl-urls">URL 목록 (줄바꿈으로 구분, 최대 200개)</label>
+          <input type="file" id="crawl-import-file" accept=".txt" hidden>
+          <button type="button" id="crawl-import-btn" class="btn btn-xs"
+            title="Replace textarea content with the contents of a .txt file">Import .txt</button>
+        </div>
         <textarea id="crawl-urls" rows="8"
           placeholder="https://naver.com&#10;https://daum.net"></textarea>
         <label for="crawl-wait">페이지당 대기 시간 (초, 1–30)</label>
@@ -411,6 +428,23 @@
       <div class="crawl-modal-footer">
         <button id="crawl-start" class="btn btn-primary">Start</button>
         <button id="crawl-cancel" class="btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import confirmation (Overwrite / Append / Cancel) -->
+  <div id="import-confirm-modal" class="crawl-modal hidden">
+    <div class="crawl-modal-content" style="width:380px">
+      <div class="crawl-modal-header">
+        <span>Import</span>
+      </div>
+      <div class="crawl-modal-body">
+        <p id="import-confirm-msg" style="font-size:12px;color:#333;margin:0"></p>
+      </div>
+      <div class="crawl-modal-footer">
+        <button id="import-confirm-overwrite" class="btn btn-danger">덮어쓰기</button>
+        <button id="import-confirm-append" class="btn btn-primary">기존에 추가</button>
+        <button id="import-confirm-cancel" class="btn">취소</button>
       </div>
     </div>
   </div>

@@ -126,6 +126,7 @@ function startCrawl() {
   // UI: lock inputs, swap Start → Stop, reveal progress block
   document.getElementById('crawl-urls').disabled = true;
   document.getElementById('crawl-wait').disabled = true;
+  document.getElementById('crawl-import-btn').disabled = true;
   document.getElementById('crawl-progress').classList.remove('hidden');
   const btn = document.getElementById('crawl-start');
   btn.textContent = 'Stop';
@@ -169,6 +170,7 @@ function completeCrawl() {
 function resetCrawlUI() {
   document.getElementById('crawl-urls').disabled = false;
   document.getElementById('crawl-wait').disabled = false;
+  document.getElementById('crawl-import-btn').disabled = false;
   document.getElementById('crawl-progress').classList.add('hidden');
   const btn = document.getElementById('crawl-start');
   btn.textContent = 'Start';
@@ -195,7 +197,7 @@ function showToast(msg) {
   _toastTimer = setTimeout(() => toast.classList.remove('visible'), 3000);
 }
 
-document.getElementById('sitemap-auto-crawl').addEventListener('click', showCrawlModal);
+document.getElementById('network-auto-crawl').addEventListener('click', showCrawlModal);
 document.getElementById('crawl-modal-close').addEventListener('click', () => {
   if (crawlState.active) stopCrawl();
   hideCrawlModal();
@@ -207,6 +209,36 @@ document.getElementById('crawl-cancel').addEventListener('click', () => {
 document.getElementById('crawl-start').addEventListener('click', () => {
   if (crawlState.active) stopCrawl();
   else startCrawl();
+});
+
+// Import .txt — fills the textarea with the file's contents. The
+// textarea stays editable afterward, so users can tweak the imported
+// list (drop unwanted hosts, add a few more) before hitting Start.
+const _crawlImportFile = document.getElementById('crawl-import-file');
+document.getElementById('crawl-import-btn').addEventListener('click', () => {
+  _crawlImportFile.click();
+});
+_crawlImportFile.addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  // Soft size cap — 200-URL limit produces a tiny file in normal use,
+  // so anything bigger than 256 KB is almost certainly the wrong file.
+  if (file.size > 256 * 1024) {
+    showToast('파일이 너무 큽니다 (최대 256 KB)');
+    e.target.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const textarea = document.getElementById('crawl-urls');
+    textarea.value = String(reader.result || '');
+  };
+  reader.onerror = () => {
+    showToast('파일을 읽을 수 없습니다');
+  };
+  reader.readAsText(file);
+  // Reset so re-selecting the same filename re-fires the change event.
+  e.target.value = '';
 });
 
 function updatePageScanButton() {
@@ -851,7 +883,6 @@ const networkSplit = document.querySelector('.network-split');
 document.getElementById('network-start').addEventListener('click', startNetworkMonitoring);
 document.getElementById('network-stop').addEventListener('click', stopNetworkMonitoring);
 document.getElementById('network-clear').addEventListener('click', clearNetwork);
-document.getElementById('network-export').addEventListener('click', exportDetectionResults);
 
 // Detail panel tab switching
 document.querySelectorAll('.detail-tab').forEach(tab => {
@@ -902,6 +933,11 @@ chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
     postData = r.postData.text || null;
   }
 
+  // Raw numeric size/time alongside the display strings — exported for
+  // sorting/filtering downstream.
+  const rawSize = resp.content?.size ?? resp._transferSize ?? null;
+  const rawTime = harEntry.time != null ? Math.round(harEntry.time) : null;
+
   const req = {
     requestId: reqId,
     method: r.method,
@@ -913,6 +949,8 @@ chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
     mimeType: resp.content?.mimeType || '',
     size: resp.content?.size ? formatBytes(resp.content.size) : (resp._transferSize ? formatBytes(resp._transferSize) : '-'),
     time: harEntry.time ? Math.round(harEntry.time) + ' ms' : '-',
+    rawSize,
+    rawTime,
     protocol: resp.httpVersion || '',
     remoteAddress: '',
     requestHeaders: requestHeaders,
@@ -982,6 +1020,35 @@ function clearNetwork() {
   renderNetworkTable();
 }
 
+// Shared JSON download helper for the export menu paths.
+function _downloadJson(filename, data) {
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function _exportTimestamp() {
+  return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+}
+
+function _exportMetadata() {
+  let extensionVersion = '';
+  try { extensionVersion = chrome.runtime.getManifest().version; } catch {}
+  return {
+    exportedAt: new Date().toISOString(),
+    extensionVersion,
+    targetHost: targetHost || '',
+    scope: globalScope.input || '',
+  };
+}
+
 // Export Detection findings as JSON. Slim format aimed at rule tuning:
 // only requests with findings, request metadata kept minimal, no
 // response bodies. Includes per-category / per-severity totals so
@@ -1020,31 +1087,214 @@ function exportDetectionResults() {
     });
   }
 
-  let extensionVersion = '';
-  try { extensionVersion = chrome.runtime.getManifest().version; } catch {}
-
-  const data = {
-    exportedAt: new Date().toISOString(),
-    extensionVersion,
-    targetHost: targetHost || '',
-    scope: globalScope.input || '',
-    stats,
-    items,
-  };
-
-  const json = JSON.stringify(data, null, 2);
-  const blob = new Blob([json], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const host = (targetHost || 'export').replace(/[^A-Za-z0-9.-]/g, '_');
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `devtoolspp-detection-${host}-${ts}.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  _downloadJson(
+    `devtoolspp-detection-${_exportTimestamp()}.json`,
+    Object.assign({}, _exportMetadata(), { stats, items })
+  );
 }
+
+// Export every captured request — full headers, bodies (where loaded),
+// scan results, and initiator. Heavier than the detection export; use
+// when you need a complete snapshot, e.g. for offline analysis.
+function exportAllRequests() {
+  const items = networkRequests.map(r => ({
+    request: {
+      method: r.method,
+      url: r.url,
+      status: r.status,
+      statusText: r.statusText,
+      mimeType: r.mimeType,
+      type: r.type,
+      size: r.size,
+      time: r.time,
+      rawSize: r.rawSize ?? null,
+      rawTime: r.rawTime ?? null,
+    },
+    requestHeaders: r.requestHeaders || {},
+    requestPostData: r.requestPostData || null,
+    responseHeaders: r.responseHeaders || {},
+    responseBody: r.responseBody || null,
+    responseBodyLoaded: !!r.responseBodyLoaded,
+    responseBase64: !!r.responseBase64,
+    scanResults: r.scanResults || [],
+    initiator: r.initiator || null,
+  }));
+
+  _downloadJson(
+    `devtoolspp-full-requests-${_exportTimestamp()}.json`,
+    Object.assign({}, _exportMetadata(), {
+      totalRequests: networkRequests.length,
+      items,
+    })
+  );
+}
+
+// ============================================================
+// Import — load a previously exported JSON back into the panel
+// ============================================================
+// Accepts either format we produce: Detection-only (items have
+// `findings`) or All-requests (items have full request data) — and
+// falls back to a flat `requests` array as a defensive alternative.
+
+let _importIdCounter = 0;
+
+function _parseImportJson(text) {
+  let data;
+  try { data = JSON.parse(text); }
+  catch { return { error: '유효하지 않은 파일입니다 (JSON 파싱 실패)' }; }
+  if (!data || typeof data !== 'object') {
+    return { error: '유효하지 않은 파일입니다' };
+  }
+  if (!data.exportedAt) {
+    return { error: '유효하지 않은 파일입니다 (exportedAt 누락)' };
+  }
+  const items = Array.isArray(data.items) ? data.items
+    : Array.isArray(data.requests) ? data.requests
+    : null;
+  if (!items) {
+    return { error: '유효하지 않은 파일입니다 (items / requests 배열 없음)' };
+  }
+  return { items };
+}
+
+// Convert one imported item into a req object compatible with the
+// rest of the panel. Supports wrapped (`{request: {...}, ...}`) and
+// flat (`{method, url, ...}`) shapes; pulls scanResults from either
+// `findings` (Detection format) or `scanResults` (All format).
+function _itemToReq(item) {
+  const meta = item.request || item;
+  return {
+    requestId: 'imp_' + (++_importIdCounter),
+    method: meta.method || 'GET',
+    url: meta.url || '',
+    status: meta.status ?? 0,
+    statusText: meta.statusText || '',
+    type: meta.type || '-',
+    mimeType: meta.mimeType || '',
+    size: meta.size || '-',
+    time: meta.time || '-',
+    rawSize: meta.rawSize ?? null,
+    rawTime: meta.rawTime ?? null,
+    protocol: meta.protocol || '',
+    requestHeaders: item.requestHeaders || meta.requestHeaders || {},
+    requestPostData: item.requestPostData ?? meta.requestPostData ?? null,
+    responseHeaders: item.responseHeaders || meta.responseHeaders || {},
+    responseBody: item.responseBody !== undefined ? item.responseBody : (meta.responseBody ?? null),
+    responseBodyLoaded: item.responseBodyLoaded ?? meta.responseBodyLoaded ?? false,
+    responseBase64: !!(item.responseBase64 ?? meta.responseBase64),
+    initiator: item.initiator || meta.initiator || null,
+    scanResults: item.findings || item.scanResults || meta.scanResults || [],
+    _harEntry: null,
+    _imported: true,
+  };
+}
+
+function _applyImport(reqs, mode, filename) {
+  if (mode === 'overwrite') {
+    networkRequests.length = 0;
+    networkRequestMap.clear();
+    closeDetail();
+    renderNetworkTable();
+  }
+  for (const r of reqs) {
+    networkRequests.push(r);
+    networkRequestMap.set(r.requestId, r);
+  }
+  // Re-render the visible window — append-only would be fine, but a
+  // full re-render keeps the cap logic simple for large imports.
+  renderNetworkTable();
+  showImportNotice(filename);
+  showToast(`${reqs.length}개 요청을 불러왔습니다 (${filename})`);
+}
+
+function showImportNotice(filename) {
+  document.getElementById('network-import-name').textContent = filename;
+  document.getElementById('network-import-notice').classList.remove('hidden');
+}
+
+function hideImportNotice() {
+  document.getElementById('network-import-notice').classList.add('hidden');
+}
+
+// Three-way confirmation modal for the overwrite/append decision.
+// Single-shot: handlers are detached after a choice is made.
+function showImportConfirm(message, onChoice) {
+  const modal = document.getElementById('import-confirm-modal');
+  document.getElementById('import-confirm-msg').textContent = message;
+  modal.classList.remove('hidden');
+  const overwriteBtn = document.getElementById('import-confirm-overwrite');
+  const appendBtn = document.getElementById('import-confirm-append');
+  const cancelBtn = document.getElementById('import-confirm-cancel');
+  function cleanup(choice) {
+    modal.classList.add('hidden');
+    overwriteBtn.removeEventListener('click', onOverwrite);
+    appendBtn.removeEventListener('click', onAppend);
+    cancelBtn.removeEventListener('click', onCancel);
+    onChoice(choice);
+  }
+  function onOverwrite() { cleanup('overwrite'); }
+  function onAppend() { cleanup('append'); }
+  function onCancel() { cleanup('cancel'); }
+  overwriteBtn.addEventListener('click', onOverwrite);
+  appendBtn.addEventListener('click', onAppend);
+  cancelBtn.addEventListener('click', onCancel);
+}
+
+function importNetworkData(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const result = _parseImportJson(String(reader.result || ''));
+    if (result.error) { showToast(result.error); return; }
+    const reqs = result.items.map(_itemToReq);
+    if (reqs.length === 0) { showToast('파일에 요청이 없습니다'); return; }
+    if (networkRequests.length > 0) {
+      showImportConfirm(
+        `현재 캡처된 ${networkRequests.length}개 요청이 있습니다. 어떻게 처리할까요?`,
+        (choice) => {
+          if (choice === 'cancel') return;
+          _applyImport(reqs, choice, file.name);
+        }
+      );
+    } else {
+      _applyImport(reqs, 'overwrite', file.name);
+    }
+  };
+  reader.onerror = () => showToast('파일을 읽을 수 없습니다');
+  reader.readAsText(file);
+}
+
+const _importFileInput = document.getElementById('network-import-file');
+document.getElementById('network-import').addEventListener('click', () => {
+  _importFileInput.click();
+});
+_importFileInput.addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (file) importNetworkData(file);
+  e.target.value = ''; // allow re-selecting the same file
+});
+document.getElementById('network-import-notice-close').addEventListener('click', hideImportNotice);
+
+// Export-button dropdown — pick scope before downloading.
+const _exportBtn = document.getElementById('network-export');
+const _exportMenu = document.getElementById('network-export-menu');
+_exportBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  _exportMenu.classList.toggle('hidden');
+});
+document.querySelectorAll('.export-menu-item').forEach(item => {
+  item.addEventListener('click', () => {
+    const mode = item.dataset.mode;
+    _exportMenu.classList.add('hidden');
+    if (mode === 'detection') exportDetectionResults();
+    else if (mode === 'all') exportAllRequests();
+  });
+});
+document.addEventListener('click', (e) => {
+  if (_exportMenu.classList.contains('hidden')) return;
+  if (e.target.closest('.export-dropdown')) return;
+  _exportMenu.classList.add('hidden');
+});
 
 function fetchResponseBody(req) {
   if (req.responseBodyLoaded) return;
@@ -1433,6 +1683,14 @@ function renderPayload(req) {
 function renderResponseBody(req) {
   const container = document.getElementById('detail-response-body');
   const tabPane = document.getElementById('detail-response');
+  // Imported requests don't have a HAR entry to fetch from, so an
+  // unloaded body means the source file simply didn't include it
+  // (typical for Detection-only exports).
+  if (req._imported && !req.responseBodyLoaded) {
+    container.innerHTML = '<div class="detail-loading">imported file에 포함되지 않은 데이터입니다</div>';
+    renderDecodedSection(tabPane, []);
+    return;
+  }
   if (!req.responseBodyLoaded) {
     container.innerHTML = '<div class="detail-loading">Loading response body...</div>';
     renderDecodedSection(tabPane, []);

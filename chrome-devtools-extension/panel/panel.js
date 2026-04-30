@@ -2687,13 +2687,55 @@ function _scanCheckSessionKey(key) {
   return /^(session[_-]?id|session[_-]?token|auth[_-]?token)$/i.test(key);
 }
 
-// 4-digit year-range numbers (1900–2099) almost always come from date
-// segments (/2025/news, /archive/2024) rather than entity IDs. Excluded
-// from IDOR-by-path detection to cut false positives.
-function _scanIsYearLike(seg) {
-  if (seg.length !== 4) return false;
-  const n = parseInt(seg, 10);
-  return n >= 1900 && n <= 2099;
+// Parameter names that look like IDs but are really analytics /
+// tracking handles, never IDOR candidates. Stored normalized
+// (lowercase, separators stripped) so snake/camel/kebab all match
+// against the same entry.
+const IDOR_TRACKING_KEYS_NORMALIZED = new Set([
+  'impressionid', 'impid',
+  'torosimpid', 'torospagemetaid',
+  'teslacontentid',
+  'pageviewid',
+  'clickid', 'trackingid', 'logid',
+  'anonymousid', 'eventid', 'requestid',
+]);
+
+function _scanIsIdorTrackingKey(key) {
+  return IDOR_TRACKING_KEYS_NORMALIZED.has(
+    key.toLowerCase().replace(/[_-]/g, '')
+  );
+}
+
+// Fixed flag values — semantically not entity IDs even when they
+// arrive in an *_id parameter (e.g. id=control for A/B test bucket).
+const IDOR_FLAG_VALUES = new Set([
+  'control', 'default', 'n', 'y',
+  'true', 'false', 'none', 'null', 'undefined',
+]);
+
+// Values we filter out as noise: empty, booleans, fixed flags, and a
+// handful of well-known ad/SDK ID prefixes (DAN- for Kakao Ads,
+// sodar/av- for tracking SDKs).
+function _scanIsIdorNoiseValue(v) {
+  if (v === null || v === undefined) return true;
+  if (typeof v === 'boolean') return true;
+  const s = String(v);
+  if (s.length === 0) return true;
+  if (IDOR_FLAG_VALUES.has(s.toLowerCase())) return true;
+  if (/^DAN-/.test(s)) return true;
+  if (/^sodar/i.test(s)) return true;
+  if (/^av-/.test(s)) return true;
+  return false;
+}
+
+// Single-stop decision for IDOR: name shape + tracking-key denylist
+// + value-noise filter. Centralized so all three scan locations
+// (query / JSON body walk / form body) make the same call.
+function _shouldFlagAsIdor(key, value) {
+  if (!_scanCheckIdorKey(key)) return false;
+  if (_scanIsIdorTrackingKey(key)) return false;
+  if (_scanIsIdorNoiseValue(value)) return false;
+  return true;
 }
 
 // Pull a "<software>/<x.y.z>" version disclosure out of Server /
@@ -2877,21 +2919,12 @@ function scanRequest(req) {
   const seen = new Set();
 
   // -------- Request URL: IDOR, privilege query params --------
+  // (URL path numeric-segment detection was dropped in 2026-04: build
+  // timestamps, version numbers, and ad creative IDs produced 100% FP.)
   try {
     const url = new URL(req.url);
-    const segments = url.pathname.split('/').filter(Boolean);
-    for (const seg of segments) {
-      if (/^\d{3,}$/.test(seg) && !_scanIsYearLike(seg)) {
-        _scanAdd(findings, seen, {
-          category: 'idor', badge: '🔢 IDOR', severity: 'info',
-          location: `request.url.path: /${seg}`,
-          evidence: req.url,
-        });
-        break;
-      }
-    }
     for (const [k, v] of url.searchParams) {
-      if (_scanCheckIdorKey(k)) {
+      if (_shouldFlagAsIdor(k, v)) {
         _scanAdd(findings, seen, {
           category: 'idor', badge: '🔢 IDOR', severity: 'info',
           location: `request.query.${k}`,
@@ -2935,7 +2968,7 @@ function scanRequest(req) {
               evidence: `${k}: ${evi}`,
             });
           }
-          if (_scanCheckIdorKey(k)) {
+          if (_shouldFlagAsIdor(k, v)) {
             _scanAdd(findings, seen, {
               category: 'idor', badge: '🔢 IDOR', severity: 'info',
               location: `request.body.${fp}`,
@@ -2972,7 +3005,7 @@ function scanRequest(req) {
               evidence: `${k}=${v}`,
             });
           }
-          if (_scanCheckIdorKey(k)) {
+          if (_shouldFlagAsIdor(k, v)) {
             _scanAdd(findings, seen, {
               category: 'idor', badge: '🔢 IDOR', severity: 'info',
               location: `request.body.${k}`,

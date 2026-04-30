@@ -2411,11 +2411,22 @@ function _scanCheckPrivilegeKey(key) {
 //   1) "id" / "ID" exactly
 //   2) camelCase: <lowercase>I<d|D>$  — userId, orderId, accountID
 //   3) separator: _id / -id (any case)
+// session_id / sessionId belong to the 'session' category instead, so
+// we short-circuit those before falling through to the IDOR shapes.
 function _scanCheckIdorKey(key) {
+  if (_scanCheckSessionKey(key)) return false;
   if (/^id$/i.test(key)) return true;
   if (/[a-z]I[dD]$/.test(key)) return true;
   if (/[_-]id$/i.test(key)) return true;
   return false;
+}
+
+// Session / auth tokens passed as URL parameters or request body fields.
+// Distinct from the response-side `token` category, which flags the
+// same kinds of secrets *being returned*. Keeping `access_token` out
+// of this list — it stays a 'token' concept on the response side.
+function _scanCheckSessionKey(key) {
+  return /^(session[_-]?id|session[_-]?token|auth[_-]?token)$/i.test(key);
 }
 
 // 4-digit year-range numbers (1900–2099) almost always come from date
@@ -2636,6 +2647,13 @@ function scanRequest(req) {
           evidence: `${k}=${v}`,
         });
       }
+      if (_scanCheckSessionKey(k) && v.length > 0) {
+        _scanAdd(findings, seen, {
+          category: 'session', badge: '🔐 session', severity: 'medium',
+          location: `request.query.${k}`,
+          evidence: `${k}: ${v.length > 20 ? '(' + v.length + ' chars)' : v}`,
+        });
+      }
       _scanAddHunt(findings, seen, `request.query.${k}`, k, v);
     }
   } catch { /* malformed url */ }
@@ -2673,6 +2691,13 @@ function scanRequest(req) {
               evidence: `${k}: ${v.length > 20 ? '(' + v.length + ' chars)' : v}`,
             });
           }
+          if (_scanCheckSessionKey(k) && typeof v === 'string' && v.length > 0) {
+            _scanAdd(findings, seen, {
+              category: 'session', badge: '🔐 session', severity: 'medium',
+              location: `request.body.${fp}`,
+              evidence: `${k}: ${v.length > 20 ? '(' + v.length + ' chars)' : v}`,
+            });
+          }
           _scanAddHunt(findings, seen, `request.body.${fp}`, k, v);
           if (typeof v === 'object' && v !== null) walk(v, fp);
         }
@@ -2699,6 +2724,13 @@ function scanRequest(req) {
           if (_scanCheckSensitiveKey(k) && v.length > 0) {
             _scanAdd(findings, seen, {
               category: 'sensitive', badge: '🔴 sensitive', severity: 'high',
+              location: `request.body.${k}`,
+              evidence: `${k}: ${v.length > 20 ? '(' + v.length + ' chars)' : v}`,
+            });
+          }
+          if (_scanCheckSessionKey(k) && v.length > 0) {
+            _scanAdd(findings, seen, {
+              category: 'session', badge: '🔐 session', severity: 'medium',
               location: `request.body.${k}`,
               evidence: `${k}: ${v.length > 20 ? '(' + v.length + ' chars)' : v}`,
             });

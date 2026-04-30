@@ -763,6 +763,7 @@ tr:hover {
 .scan-badge-lfi       { background: #fde7c0; color: #8a4b00; border-color: #f0c47e; }
 .scan-badge-ssrf      { background: #d2e3fc; color: #1967d2; border-color: #a4c4f5; }
 .scan-badge-debug     { background: #e8eaed; color: #3c4043; border-color: #c8cad0; }
+.scan-badge-session   { background: #d2f0ed; color: #00695c; border-color: #80cbc4; }
 
 /* Detection tab indicator (count badge) */
 .detail-tab.has-findings {

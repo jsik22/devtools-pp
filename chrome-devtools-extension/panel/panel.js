@@ -2876,21 +2876,33 @@ function _scanIsHuntNoise(tokens, hit) {
 
 // Split a parameter name into lowercase tokens. Handles camelCase
 // (filePath → file, path), snake_case (file_path), kebab-case
-// (file-path). Words like "profile"/"research" stay as a single token,
-// avoiding false positives against "file"/"search".
+// (file-path), and dot.notation (data.id → data, id). Words like
+// "profile"/"research" stay as a single token, avoiding false
+// positives against "file"/"search".
 function _scanTokenize(name) {
   if (typeof name !== 'string') return [];
   const snake = name.replace(/([a-z\d])([A-Z])/g, '$1_$2').toLowerCase();
-  return snake.split(/[_-]/).filter(Boolean);
+  return snake.split(/[_\-.]/).filter(Boolean);
 }
 
+// Strict matcher: every token in the parameter name must be a known
+// HUNT keyword. Mixed names like isBackForward / open_graph /
+// ping_second / operating_system have non-HUNT tokens (is, back,
+// graph, second, operating) signaling a different domain — those
+// are excluded entirely. redirect_uri / file_path still match
+// because both tokens belong to the vocabulary.
 function _scanMatchHunt(name) {
   const tokens = _scanTokenize(name);
+  if (tokens.length === 0) return null;
+  let firstHit = null;
   for (const tok of tokens) {
     const hit = HUNT_KEYWORD_MAP.get(tok);
-    if (hit && !_scanIsHuntNoise(tokens, hit)) return hit;
+    if (!hit) return null;
+    if (!firstHit && !_scanIsHuntNoise(tokens, hit)) {
+      firstHit = hit;
+    }
   }
-  return null;
+  return firstHit;
 }
 
 // Whether any finding has already been recorded at this location, in
@@ -3182,8 +3194,12 @@ function scanRequest(req) {
         evidence: stackMatch[0],
       });
     }
-    // Server paths
-    const pathMatch = body.match(/(\/var\/www|\/home\/[A-Za-z0-9_-]+|C:\\Users|\/etc\/(?:passwd|shadow|hosts))/);
+    // Server paths.
+    // /home/ tightened: must start with a lowercase letter (drops
+    // /home/_next, /home/12345), and must NOT continue into a deeper
+    // path like /home/foo/bar — which is normally just a URL prefix,
+    // not a server-side filesystem reference.
+    const pathMatch = body.match(/(\/var\/www|\/home\/[a-z][a-z0-9_-]*(?![\w\/])|C:\\Users|\/etc\/(?:passwd|shadow|hosts))/);
     if (pathMatch) {
       _scanAdd(findings, seen, {
         category: 'leak', badge: '⚠️ leak', severity: 'medium',

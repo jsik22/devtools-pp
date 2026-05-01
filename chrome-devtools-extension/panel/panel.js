@@ -344,17 +344,24 @@ function runPageScan() {
 function showPageScanResults(data) {
   sitemapSelectedNode = null;
   sitemapDetail.classList.remove('hidden');
-  sitemapDetailPath.textContent = 'Page Scan Results';
   sitemapDetailList.innerHTML = '';
 
-  // Summary
-  const summary = document.createElement('div');
-  summary.className = 'page-scan-summary';
-  summary.innerHTML =
-    `<div class="scan-stat"><span class="scan-stat-num">${data.links.length}</span> Links</div>` +
-    `<div class="scan-stat"><span class="scan-stat-num">${data.forms.length}</span> Forms</div>` +
-    `<div class="scan-stat"><span class="scan-stat-num">${data.scripts.length}</span> Scripts</div>`;
-  sitemapDetailList.appendChild(summary);
+  // Single-line header: "Page Scan · 110 Links · 2 Forms · 13 Scripts".
+  // Matches the Network detail panel header style (system font,
+  // light gray bar). Reset class first so prior path-display state
+  // doesn't bleed into the page-scan view.
+  sitemapDetailPath.className = 'sitemap-detail-path page-scan-title';
+  const links = data.links.length;
+  const forms = data.forms.length;
+  const scripts = data.scripts.length;
+  if (links === 0 && forms === 0 && scripts === 0) {
+    sitemapDetailPath.innerHTML = 'Page Scan · <span class="page-scan-empty">No results</span>';
+  } else {
+    const stat = (n, label) =>
+      `<span class="page-scan-stat"><strong>${n}</strong> ${label}</span>`;
+    sitemapDetailPath.innerHTML = 'Page Scan · ' +
+      stat(links, 'Links') + ' · ' + stat(forms, 'Forms') + ' · ' + stat(scripts, 'Scripts');
+  }
 
   // Links section
   buildPageScanSection('Links', data.links, url => {
@@ -779,6 +786,7 @@ function renderSitemapDetail() {
   const node = getNodeByPath(host, path);
   if (!node) return;
 
+  sitemapDetailPath.className = 'sitemap-detail-path';
   sitemapDetailPath.textContent = host + path;
 
   const allReqs = collectNodeRequests(node).filter(matchesSitemapFilters);

@@ -1570,14 +1570,17 @@ tr.selected td {
   display: none;
 }
 
-/* Site Map Detail */
+/* Site Map Detail — header matches the Network detail-header look so
+   the two right-pane headers feel consistent. */
 .sitemap-detail-header {
   display: flex;
   align-items: center;
-  padding: 6px 10px;
+  padding: 0 4px;
   background: #f3f3f3;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid #d4d4d4;
   gap: 8px;
+  min-height: 30px;
+  flex-shrink: 0;
 }
 
 .sitemap-detail-path {
@@ -1586,9 +1589,26 @@ tr.selected td {
   font-size: 12px;
   font-weight: 600;
   color: #1e1e1e;
+  padding: 0 8px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Page-scan-results header uses the system UI font (no monospace)
+   and emphasizes the counts. */
+.sitemap-detail-path.page-scan-title {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 500;
+}
+.page-scan-stat strong {
+  color: #1a73e8;
+  font-weight: 600;
+  margin-right: 2px;
+}
+.page-scan-empty {
+  color: #888;
+  font-weight: normal;
 }
 
 .sitemap-detail-list {
@@ -1701,17 +1721,6 @@ tr.selected td {
 }
 
 /* Scan Results */
-.page-scan-summary {
-  display: flex;
-  gap: 16px;
-  padding: 10px 12px;
-  border-bottom: 1px solid #e0e0e0;
-  background: #f8f8f8;
-}
-
-.scan-stat { font-size: 12px; color: #666; }
-.scan-stat-num { font-weight: 700; color: #1e1e1e; font-size: 14px; margin-right: 3px; }
-
 .scan-section-header {
   padding: 6px 10px;
   font-size: 12px;

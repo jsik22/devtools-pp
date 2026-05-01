@@ -1517,6 +1517,13 @@ tr.selected td {
   color: #1e1e1e;
 }
 
+/* Currently-active inspected page host — distinguishes it from
+   previously-visited hosts that now sit in the External group. */
+.sitemap-node.sitemap-node-target > .sitemap-node-label {
+  font-weight: 600;
+  color: #1a73e8;
+}
+
 .sitemap-node-count {
   flex-shrink: 0;
   margin-left: 6px;

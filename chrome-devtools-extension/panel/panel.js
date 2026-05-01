@@ -18,26 +18,62 @@ document.querySelectorAll('.tab').forEach(tab => {
 // 0. Site Map — Passive collection + tree view
 // ============================================================
 
-const sitemapTree = {};  // host → { children: { path: { children: {}, requests: [] } } }
+// sitemapTree[mainHost] = {
+//   children: { path: { children, requests } },
+//   requests: [],
+//   external: { extHost: { children, requests } },
+//   _lastVisitedUrl, _lastVisitedAt
+// }
+// Top-level keys are always "main hosts" — origins the user actually
+// landed on during this session. Cross-origin requests get attributed
+// to whichever main host was active at capture time, nested under
+// that main host's `external` map.
+const sitemapTree = {};
 let sitemapSelectedNode = null; // { host, path }
 let targetHost = null;
-let externalGroupExpanded = false;
 const expandedNodes = new Set(); // tracks expanded tree node keys (e.g. "host:/path")
+
+// Requests captured before the first targetHost is known wait here
+// and are flushed once we know which main host owns them.
+const _sitemapPending = [];
 
 function ensureTargetInTree() {
   if (targetHost && !sitemapTree[targetHost]) {
-    sitemapTree[targetHost] = { children: {}, requests: [] };
+    sitemapTree[targetHost] = { children: {}, requests: [], external: {} };
+  }
+  if (targetHost && sitemapTree[targetHost] && !sitemapTree[targetHost].external) {
+    sitemapTree[targetHost].external = {};
+  }
+}
+
+function _flushSitemapPending() {
+  if (!targetHost) return;
+  while (_sitemapPending.length > 0) {
+    addToSitemap(_sitemapPending.shift());
   }
 }
 
 function detectTargetHost() {
-  chrome.devtools.inspectedWindow.eval('location.host', (result, err) => {
-    if (!err && result) {
-      targetHost = result;
-      ensureTargetInTree();
-      renderSitemapTree();
-      updateSitemapStats();
+  // Pull both host and href so the initial page (which doesn't trigger
+  // onNavigated) still gets a _lastVisitedUrl — without it the host
+  // would later be filtered out of the visited-hosts list when the
+  // user navigates away.
+  const expr = 'JSON.stringify({host: location.host, href: location.href})';
+  chrome.devtools.inspectedWindow.eval(expr, (result, err) => {
+    if (err || !result) return;
+    let info;
+    try { info = JSON.parse(result); } catch { return; }
+    if (!info.host) return;
+    targetHost = info.host;
+    ensureTargetInTree();
+    const main = sitemapTree[targetHost];
+    if (main && info.href) {
+      main._lastVisitedUrl = info.href;
+      main._lastVisitedAt = Date.now();
     }
+    _flushSitemapPending();
+    renderSitemapTree();
+    updateSitemapStats();
   });
 }
 detectTargetHost();
@@ -49,15 +85,22 @@ chrome.devtools.network.onNavigated.addListener((url) => {
     detectTargetHost();
     return;
   }
-  if (newHost !== targetHost) {
-    Object.keys(sitemapTree).forEach(k => delete sitemapTree[k]);
-    sitemapSelectedNode = null;
-    expandedNodes.clear();
-    externalGroupExpanded = false;
-    sitemapDetail.classList.add('hidden');
-    targetHost = newHost;
+  // Preserve-log-style: hosts visited earlier in the session stay in
+  // the tree. Only Clear wipes them. The current target moves to the
+  // top of the tree; everything else cascades into "External".
+  targetHost = newHost;
+  if (newHost) {
+    if (!sitemapTree[newHost]) {
+      sitemapTree[newHost] = { children: {}, requests: [], external: {} };
+    }
+    if (!sitemapTree[newHost].external) sitemapTree[newHost].external = {};
+    // Track the most recent URL/time the user landed on this host so
+    // the tree row tooltip can show "where they were last".
+    sitemapTree[newHost]._lastVisitedUrl = url;
+    sitemapTree[newHost]._lastVisitedAt = Date.now();
   }
   ensureTargetInTree();
+  _flushSitemapPending();
   renderSitemapTree();
   updateSitemapStats();
 });
@@ -254,7 +297,7 @@ document.getElementById('sitemap-clear').addEventListener('click', () => {
   Object.keys(sitemapTree).forEach(k => delete sitemapTree[k]);
   sitemapSelectedNode = null;
   expandedNodes.clear();
-  externalGroupExpanded = false;
+  _sitemapPending.length = 0;
   renderSitemapTree();
   sitemapDetail.classList.add('hidden');
   updateSitemapStats();
@@ -458,16 +501,35 @@ function addToSitemap(req) {
 
   const host = parsed.host;
   const pathname = parsed.pathname || '/';
-
-  // Split path into segments
   const segments = pathname.split('/').filter(Boolean);
 
-  if (!sitemapTree[host]) {
-    sitemapTree[host] = { children: {}, requests: [] };
+  // No main host known yet — buffer until detectTargetHost / onNavigated
+  // assigns one, then this request will be replayed.
+  if (!targetHost) {
+    _sitemapPending.push(req);
+    return;
   }
 
-  // Create path nodes in tree
-  let node = sitemapTree[host];
+  // Ensure the active main host node exists.
+  if (!sitemapTree[targetHost]) {
+    sitemapTree[targetHost] = { children: {}, requests: [], external: {} };
+  }
+  const mainNode = sitemapTree[targetHost];
+  if (!mainNode.external) mainNode.external = {};
+
+  // Pick the bucket: same-origin requests go into the main host's own
+  // path tree; cross-origin requests go under that main host's
+  // `external` map (one entry per external host).
+  let node;
+  if (host === targetHost) {
+    node = mainNode;
+  } else {
+    if (!mainNode.external[host]) {
+      mainNode.external[host] = { children: {}, requests: [] };
+    }
+    node = mainNode.external[host];
+  }
+
   for (const seg of segments) {
     if (!node.children[seg]) {
       node.children[seg] = { children: {}, requests: [] };
@@ -506,13 +568,23 @@ function scheduleSitemapRender() {
 }
 
 function updateSitemapStats() {
-  const hosts = Object.keys(sitemapTree).length;
+  let hosts = 0;
   let endpoints = 0;
   function countNode(node) {
     endpoints += node.requests.length;
     Object.values(node.children).forEach(countNode);
   }
-  Object.values(sitemapTree).forEach(countNode);
+  for (const mainHost of Object.keys(sitemapTree)) {
+    hosts++;
+    const main = sitemapTree[mainHost];
+    countNode(main);
+    if (main.external) {
+      for (const extHost of Object.keys(main.external)) {
+        hosts++;
+        countNode(main.external[extHost]);
+      }
+    }
+  }
   sitemapStats.textContent = `${hosts} hosts · ${endpoints} endpoints`;
 }
 
@@ -573,46 +645,16 @@ function renderSitemapTree() {
     if (hostEl) sitemapTreeEl.appendChild(hostEl);
   }
 
-  // External hosts grouped
-  const externalHosts = hosts.filter(h => h !== targetHost && nodeHasFilteredRequests(sitemapTree[h]));
-  if (externalHosts.length > 0) {
-    const extWrapper = document.createElement('div');
-    extWrapper.className = 'sitemap-external-group';
-
-    const extRow = document.createElement('div');
-    extRow.className = 'sitemap-node sitemap-external-header';
-    const extToggle = document.createElement('span');
-    extToggle.className = 'sitemap-node-toggle';
-    extToggle.textContent = externalGroupExpanded ? '▼' : '▶';
-    extRow.appendChild(extToggle);
-    const extIcon = document.createElement('span');
-    extIcon.className = 'sitemap-node-icon';
-    extIcon.textContent = '📡';
-    extRow.appendChild(extIcon);
-    const extLabel = document.createElement('span');
-    extLabel.className = 'sitemap-node-label sitemap-external-label';
-    extLabel.textContent = `External (${externalHosts.length})`;
-    extRow.appendChild(extLabel);
-    extWrapper.appendChild(extRow);
-
-    const extChildren = document.createElement('div');
-    extChildren.className = externalGroupExpanded ? 'sitemap-children' : 'sitemap-children collapsed';
-    for (const host of externalHosts) {
-      const hostEl = buildTreeNode(host, sitemapTree[host], host, '');
-      if (hostEl) extChildren.appendChild(hostEl);
-    }
-    extWrapper.appendChild(extChildren);
-
-    function toggleExternal(e) {
-      if (e) e.stopPropagation();
-      externalGroupExpanded = !externalGroupExpanded;
-      extChildren.classList.toggle('collapsed', !externalGroupExpanded);
-      extToggle.textContent = externalGroupExpanded ? '▼' : '▶';
-    }
-    extToggle.addEventListener('click', toggleExternal);
-    extRow.addEventListener('click', () => toggleExternal(null));
-
-    sitemapTreeEl.appendChild(extWrapper);
+  // Previously-visited hosts (non-target main hosts the user actually
+  // navigated to). Each one renders at the top level beneath the
+  // current target; their cross-origin requests live nested inside
+  // each main host's own External group (handled by buildTreeNode).
+  const visitedHosts = hosts.filter(h =>
+    h !== targetHost && sitemapTree[h]._lastVisitedUrl
+  );
+  for (const host of visitedHosts) {
+    const el = buildTreeNode(host, sitemapTree[host], host, '', true);
+    if (el) sitemapTreeEl.appendChild(el);
   }
 
   // Restore selection state
@@ -622,8 +664,64 @@ function renderSitemapTree() {
   updatePageScanButton();
 }
 
+// Per-main-host External group. Lives as a child of the main host's
+// own tree node so each visited site keeps its third-party traffic
+// scoped to itself. Toggle key includes the main host so different
+// sites' external groups expand independently.
+function buildHostExternalGroup(externalMap, mainHost) {
+  const externalHosts = Object.keys(externalMap || {})
+    .filter(h => nodeHasFilteredRequests(externalMap[h]))
+    .sort();
+  if (externalHosts.length === 0) return null;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'sitemap-external-group';
+
+  const expandKey = `${mainHost}:__external__`;
+  const isExpanded = expandedNodes.has(expandKey);
+
+  const row = document.createElement('div');
+  row.className = 'sitemap-node sitemap-external-header';
+  const toggle = document.createElement('span');
+  toggle.className = 'sitemap-node-toggle';
+  toggle.textContent = isExpanded ? '▼' : '▶';
+  row.appendChild(toggle);
+  const icon = document.createElement('span');
+  icon.className = 'sitemap-node-icon';
+  icon.textContent = '📡';
+  row.appendChild(icon);
+  const label = document.createElement('span');
+  label.className = 'sitemap-node-label sitemap-external-label';
+  label.textContent = `External (${externalHosts.length})`;
+  row.appendChild(label);
+  wrapper.appendChild(row);
+
+  const children = document.createElement('div');
+  children.className = isExpanded ? 'sitemap-children' : 'sitemap-children collapsed';
+  for (const host of externalHosts) {
+    const el = buildTreeNode(host, externalMap[host], host, '');
+    if (el) children.appendChild(el);
+  }
+  wrapper.appendChild(children);
+
+  function toggleGroup(e) {
+    if (e) e.stopPropagation();
+    if (expandedNodes.has(expandKey)) expandedNodes.delete(expandKey);
+    else expandedNodes.add(expandKey);
+    children.classList.toggle('collapsed');
+    toggle.textContent = children.classList.contains('collapsed') ? '▶' : '▼';
+  }
+  toggle.addEventListener('click', toggleGroup);
+  row.addEventListener('click', () => toggleGroup(null));
+
+  return wrapper;
+}
+
 function buildTreeNode(label, node, host, currentPath, forceShow) {
-  const hasChildren = Object.keys(node.children).length > 0;
+  const isHostNode = currentPath === '';
+  const hasPathChildren = Object.keys(node.children).length > 0;
+  const hasExternalChildren = isHostNode && node.external && Object.keys(node.external).length > 0;
+  const hasChildren = hasPathChildren || hasExternalChildren;
   const hasOwnRequests = node.requests.filter(matchesSitemapFilters).length > 0;
 
   if (!forceShow && !nodeHasFilteredRequests(node)) return null;
@@ -639,6 +737,16 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
     sitemapSelectedNode.host === host &&
     sitemapSelectedNode.path === fullPath;
   if (isSelected) row.classList.add('selected');
+  // Highlight whichever host is the currently-active inspected page,
+  // and show "where the user last was on this host" as a tooltip on
+  // any host that's been visited during this session.
+  if (isHost) {
+    if (host === targetHost) row.classList.add('sitemap-node-target');
+    if (node._lastVisitedUrl) {
+      const ts = node._lastVisitedAt ? new Date(node._lastVisitedAt).toLocaleString() : '';
+      row.title = `Last visited: ${node._lastVisitedUrl}${ts ? ` (${ts})` : ''}`;
+    }
+  }
 
   // Toggle icon
   const nodeKey = host + ':' + fullPath;
@@ -651,7 +759,7 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
   // Icon
   const icon = document.createElement('span');
   icon.className = 'sitemap-node-icon';
-  icon.textContent = isHost ? '🌐' : (hasChildren ? '📁' : '📄');
+  icon.textContent = isHost ? '🌐' : (hasPathChildren ? '📁' : '📄');
   row.appendChild(icon);
 
   // Label
@@ -736,6 +844,13 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
     if (childEl) childrenEl.appendChild(childEl);
   }
 
+  // Per-host External group — only on the main-host row, only if any
+  // external host has filtered requests to show.
+  if (hasExternalChildren) {
+    const extGroup = buildHostExternalGroup(node.external, host);
+    if (extGroup) childrenEl.appendChild(extGroup);
+  }
+
   if (hasChildren) {
     wrapper.appendChild(childrenEl);
   }
@@ -768,7 +883,15 @@ function collectNodeRequests(node) {
 }
 
 function getNodeByPath(host, path) {
-  const hostNode = sitemapTree[host];
+  // The host might be a top-level main host or an external host
+  // nested under any main host's `external` map.
+  let hostNode = sitemapTree[host];
+  if (!hostNode) {
+    for (const mainHost of Object.keys(sitemapTree)) {
+      const ext = sitemapTree[mainHost].external;
+      if (ext && ext[host]) { hostNode = ext[host]; break; }
+    }
+  }
   if (!hostNode) return null;
   if (path === '/') return hostNode;
   const segments = path.split('/').filter(Boolean);

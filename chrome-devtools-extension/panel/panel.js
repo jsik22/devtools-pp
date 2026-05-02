@@ -285,13 +285,20 @@ _crawlImportFile.addEventListener('change', (e) => {
 });
 
 function updatePageScanButton() {
-  // Page Scan always operates on the currently-inspected page DOM, so
-  // it stays enabled regardless of which tree node the user has
-  // selected. (The earlier "only when target host is selected" gate
-  // made sense before preserve-log accumulated multiple main hosts;
-  // now it just confused users into thinking the button was broken.)
-  sitemapPageScanBtn.disabled = false;
-  sitemapPageScanBtn.title = '';
+  // Page Scan operates on the currently-inspected page DOM. If the
+  // user has selected a node belonging to a different host (a
+  // previously-visited site preserved in the tree), the result would
+  // not correspond to that host — disable the button to avoid
+  // confusion.
+  const selectedHost = sitemapSelectedNode && sitemapSelectedNode.host;
+  const mismatch = selectedHost && targetHost && selectedHost !== targetHost;
+  if (mismatch) {
+    sitemapPageScanBtn.disabled = true;
+    sitemapPageScanBtn.title = 'Page Scan only works on the currently open page';
+  } else {
+    sitemapPageScanBtn.disabled = false;
+    sitemapPageScanBtn.title = '';
+  }
 }
 document.getElementById('sitemap-clear').addEventListener('click', () => {
   Object.keys(sitemapTree).forEach(k => delete sitemapTree[k]);
@@ -417,10 +424,10 @@ function showPageScanResults(data) {
     item.appendChild(urlEl);
     const btn = document.createElement('button');
     btn.className = 'btn';
-    btn.textContent = 'Replay';
+    btn.textContent = 'Open';
     btn.addEventListener('click', e => {
       e.stopPropagation();
-      sendToReplay({ method: 'GET', url, requestHeaders: {}, requestPostData: null });
+      window.open(url, '_blank');
     });
     item.appendChild(btn);
     return item;
@@ -612,16 +619,6 @@ function nodeHasFilteredRequests(node) {
   return Object.values(node.children).some(nodeHasFilteredRequests);
 }
 
-function getNodeMethods(node) {
-  const methods = new Set();
-  function collect(n) {
-    n.requests.filter(matchesSitemapFilters).forEach(r => methods.add(r.method));
-    Object.values(n.children).forEach(collect);
-  }
-  collect(node);
-  return methods;
-}
-
 function getNodeRequestCount(node) {
   let count = 0;
   function countN(n) {
@@ -772,23 +769,6 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
   labelEl.textContent = label;
   row.appendChild(labelEl);
 
-  // Method tags
-  const methods = getNodeMethods(node);
-  if (methods.size > 0) {
-    const methodsEl = document.createElement('span');
-    methodsEl.className = 'sitemap-node-methods';
-    for (const m of methods) {
-      const dot = document.createElement('span');
-      const mLower = m.toLowerCase();
-      const cls = ['get','post','put','patch','delete'].includes(mLower) ? `m-${mLower}` : 'm-other';
-      dot.className = `sitemap-method-dot ${cls}`;
-      dot.textContent = m;
-      methodsEl.appendChild(dot);
-    }
-    row.appendChild(methodsEl);
-  }
-
-  // Request count
   const count = getNodeRequestCount(node);
   if (count > 0) {
     const countEl = document.createElement('span');

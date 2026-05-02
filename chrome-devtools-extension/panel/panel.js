@@ -1060,7 +1060,17 @@ function closeDetail() {
 }
 
 // chrome.devtools.network event listener (always active, no attach needed)
-chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
+chrome.devtools.network.onRequestFinished.addListener(processNetworkRequest);
+
+// Track URLs+statuses we've already ingested so HAR replay (auto-start)
+// doesn't re-add the same entries the live listener already processed.
+const _ingestedRequestKeys = new Set();
+function _ingestKey(harEntry) {
+  const startedDateTime = harEntry.startedDateTime || '';
+  return `${harEntry.request.method}|${harEntry.request.url}|${harEntry.response.status}|${startedDateTime}`;
+}
+
+function processNetworkRequest(harEntry) {
   // Skip data: URIs entirely — they're inline payloads, not real
   // network traffic, and a single page can produce hundreds of them
   // (icons, etc.) that would only flood the list and slow scanning.
@@ -1069,6 +1079,13 @@ chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
   // Global scope gate — out-of-scope requests are ignored entirely
   // (not added to Site Map or Network lists). Empty scope = all in scope.
   if (!inGlobalScope(harEntry.request.url)) return;
+
+  // Dedup against HAR replay so the same entry doesn't land twice
+  // (e.g. live listener fires for a request that's also still in
+  // the HAR snapshot taken at auto-start).
+  const key = _ingestKey(harEntry);
+  if (_ingestedRequestKeys.has(key)) return;
+  _ingestedRequestKeys.add(key);
 
   const reqId = 'net_' + (++networkIdCounter);
   const r = harEntry.request;
@@ -1093,6 +1110,12 @@ chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
   const rawSize = resp.content?.size ?? resp._transferSize ?? null;
   const rawTime = harEntry.time != null ? Math.round(harEntry.time) : null;
 
+  // HAR-replayed entries can already carry the body inline in
+  // response.content.text — use it directly so the request shows its
+  // payload immediately without depending on getContent.
+  const inlineBody = (resp.content && typeof resp.content.text === 'string') ? resp.content.text : null;
+  const inlineBodyBase64 = inlineBody != null && resp.content && resp.content.encoding === 'base64';
+
   const req = {
     requestId: reqId,
     method: r.method,
@@ -1111,9 +1134,9 @@ chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
     requestHeaders: requestHeaders,
     requestPostData: postData,
     responseHeaders: responseHeaders,
-    responseBody: null,
-    responseBodyLoaded: false,
-    responseBase64: false,
+    responseBody: inlineBody,
+    responseBodyLoaded: inlineBody != null,
+    responseBase64: inlineBodyBase64,
     initiator: harEntry._initiator || null,
     _harEntry: harEntry, // HAR entry reference (for body loading)
   };
@@ -1152,7 +1175,21 @@ chrome.devtools.network.onRequestFinished.addListener((harEntry) => {
       });
     });
   }
-});
+}
+
+// Replay HAR for everything Chrome already captured before the panel
+// opened — auto-start uses this so a user landing on an already-loaded
+// page sees its requests instead of an empty table.
+function replayExistingNetworkHAR() {
+  if (!chrome.devtools || !chrome.devtools.network ||
+      typeof chrome.devtools.network.getHAR !== 'function') return;
+  chrome.devtools.network.getHAR((har) => {
+    if (!har || !Array.isArray(har.entries)) return;
+    for (const entry of har.entries) {
+      processNetworkRequest(entry);
+    }
+  });
+}
 
 function startNetworkMonitoring() {
   networkMonitoring = true;
@@ -1171,6 +1208,7 @@ function clearNetwork() {
   networkRequestMap.clear();
   _pendingNetworkRows.length = 0;
   if (_networkRenderRaf) { cancelAnimationFrame(_networkRenderRaf); _networkRenderRaf = 0; }
+  _ingestedRequestKeys.clear();
   closeDetail();
   renderNetworkTable();
 }
@@ -5334,7 +5372,13 @@ document.querySelectorAll('.split-gutter').forEach(setupSplitGutter);
   chrome.storage.local.get(['autoStartMonitoring'], (result) => {
     const enabled = !!(result && result.autoStartMonitoring);
     checkbox.checked = enabled;
-    if (enabled && !networkMonitoring) startNetworkMonitoring();
+    if (enabled && !networkMonitoring) {
+      startNetworkMonitoring();
+      // The page may already be loaded — without HAR replay the table
+      // would stay empty until the next request fires. getHAR backfills
+      // everything Chrome already captured.
+      replayExistingNetworkHAR();
+    }
   });
   checkbox.addEventListener('change', (e) => {
     chrome.storage.local.set({ autoStartMonitoring: e.target.checked });

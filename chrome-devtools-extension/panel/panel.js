@@ -1523,13 +1523,23 @@ const MAX_NETWORK_ROWS = 1000;
 // runs and at least one frame maps to original source, the badge
 // upgrades to "↑ Mapped".
 function renderInitiatorBadge(r) {
+  // Tooltip pulls from the same descriptions used inside the Initiator
+  // detail tab, so hovering the column badge tells the same story as
+  // the type indicator inside the detail view.
   if (r._sourcemapMapped) {
-    return '<span class="initiator-cell-badge initiator-cell-mapped">↑ Mapped</span>';
+    const t = escapeAttr(INITIATOR_TYPE_DESCRIPTIONS.mapped || '');
+    return `<span class="initiator-cell-badge initiator-cell-mapped" title="${t}">↑ Mapped</span>`;
   }
   if (!r.initiator || !r.initiator.type) return '';
   const t = r.initiator.type;
-  if (t === 'script') return '<span class="initiator-cell-badge initiator-cell-script">script</span>';
-  if (t === 'parser') return '<span class="initiator-cell-badge initiator-cell-parser">parser</span>';
+  if (t === 'script') {
+    const desc = escapeAttr(INITIATOR_TYPE_DESCRIPTIONS.script || '');
+    return `<span class="initiator-cell-badge initiator-cell-script" title="${desc}">script</span>`;
+  }
+  if (t === 'parser') {
+    const desc = escapeAttr(INITIATOR_TYPE_DESCRIPTIONS.parser || '');
+    return `<span class="initiator-cell-badge initiator-cell-parser" title="${desc}">parser</span>`;
+  }
   return ''; // 'other' / unknown
 }
 
@@ -1984,6 +1994,124 @@ const SENSITIVE_PATTERNS = [
   { pattern: /pay|price|amount|billing|checkout/i, label: 'Payment' },
 ];
 
+// Severity tier each sensitive pattern carries when surfaced in the
+// Initiator tab's findings list. Mirrors how the Detection tab grades
+// its categories — auth/credential/business-logic gets HIGH, things
+// the server commonly enforces (validation, navigation, crypto
+// algorithm) settle at MEDIUM.
+const SENSITIVE_PATTERN_SEVERITY = {
+  'OTP/MFA': 'high',
+  'Authentication': 'high',
+  'Token': 'high',
+  'Validation': 'medium',
+  'Authorization': 'high',
+  'Crypto': 'medium',
+  'Credential': 'high',
+  'File Operation': 'high',
+  'Navigation': 'medium',
+  'Payment': 'high',
+};
+
+// Hover-tooltip text for the Type indicator at the top of the
+// Initiator tab. Keyed by initiator.type, plus a synthetic 'mapped'
+// entry shown on the Mapped indicator when source-map decoding lands.
+const INITIATOR_TYPE_DESCRIPTIONS = {
+  script:
+    `This request was triggered by JavaScript code.
+Check the Call Stack to see which function
+initiated this request.
+If sensitive function labels (Authentication,
+Token, etc.) are highlighted, click that frame
+to review the source.`,
+  parser:
+    `This request was triggered by the HTML parser
+reading static markup tags such as
+<img src>, <script src>, or <link href>.
+If user input is reflected into HTML,
+this may be an SSRF or XSS review point.`,
+  mapped:
+    `Source map decoding succeeded for this request.
+The bundled code has been traced back to
+the original file name and line number.
+Click a frame marked with ↑ to view
+the original source inline.
+If source maps are accessible in production,
+consider reviewing for source map exposure.`,
+};
+
+// Hover-tooltip text for the SENSITIVE_PATTERNS labels — both the
+// hint badges at the top of the Initiator tab and the per-frame
+// sensitive-badge inside the call stack.
+const SENSITIVE_PATTERN_DESCRIPTIONS = {
+  'OTP/MFA':
+    `An OTP or multi-factor authentication handler
+is present in the call stack.
+This is a key branching point in the auth flow.
+Modify the OTP parameter in the Replay tab
+and re-send to verify server-side validation.`,
+  'Authentication':
+    `A login, logout, or session handler
+is present in the call stack.
+This request is part of the authentication flow.
+Modify the credentials in the Replay tab
+and re-send to review access control.`,
+  'Token':
+    `A token issuance, validation, or refresh function
+is present in the call stack.
+Check the Response tab to see if a token
+is exposed in the response body.
+If a 🔑 token Detection badge is also present,
+trace the full token exposure flow.`,
+  'Validation':
+    `An input validation function is present
+in the call stack.
+This is a client-side validation point.
+Modify the parameter values in the Replay tab
+and re-send to verify whether the server
+performs its own validation independently.`,
+  'Authorization':
+    `A permission or access control function
+is present in the call stack.
+Access control logic may exist on the client side.
+Modify privilege-related parameters
+in the Replay tab and re-send to check
+whether server-side enforcement is in place.`,
+  'Crypto':
+    `An encryption, hashing, or signing function
+is present in the call stack.
+Client-side cryptographic logic is involved.
+Use DevTools breakpoints to inspect the
+plaintext value before encryption,
+or review the algorithm and key strength.`,
+  'Credential':
+    `A password or credential-handling function
+is present in the call stack.
+Check the Payload tab to see if credentials
+are transmitted in plaintext.
+Prioritize review if a 🔴 sensitive
+Detection badge is also present.`,
+  'File Operation':
+    `A file upload or download function
+is present in the call stack.
+Modify file path parameters in the Replay tab
+and re-send to check for Path Traversal
+or arbitrary file access.`,
+  'Navigation':
+    `A redirect or page navigation function
+is present in the call stack.
+This is an SSRF or Open Redirect review point.
+Modify URL parameters in the Replay tab
+and re-send to check whether redirection
+to an external domain is possible.`,
+  'Payment':
+    `A payment or amount-handling function
+is present in the call stack.
+This is a business logic vulnerability review point.
+Modify price or quantity parameters
+in the Replay tab and re-send to verify
+whether the server enforces proper validation.`,
+};
+
 function detectSensitive(name) {
   if (!name) return null;
   for (const sp of SENSITIVE_PATTERNS) {
@@ -2270,25 +2398,66 @@ function renderInitiator(req) {
   const init = req.initiator;
   let html = '';
 
-  // Type badge
-  html += `<div class="initiator-type">Type: <strong>${escapeHtml(init.type || 'unknown')}</strong></div>`;
+  // Type group — Detection-style header with description card. After
+  // sourcemap enrichment lands, the badge upgrades to "↑ Mapped" and
+  // the count flips to "<N> frames mapped".
+  const typeStr = init.type || 'unknown';
+  const typeDesc = INITIATOR_TYPE_DESCRIPTIONS[typeStr] || '';
+  const frames = init.stack?.callFrames || [];
+  let typeCountText = '';
+  if (typeStr === 'script') {
+    typeCountText = `Call Stack ${frames.length} frame${frames.length === 1 ? '' : 's'}`;
+  } else if (typeStr === 'parser') {
+    typeCountText = init.url ? 'triggered by static markup' : '';
+  }
+  html += `<div class="detection-group" data-init-type-group>
+    <div class="detection-group-header">
+      <span class="scan-badge scan-badge-init-${escapeAttr(typeStr)}"${typeDesc ? ` title="${escapeAttr(typeDesc)}"` : ''}>${escapeHtml(typeStr)}</span>
+      ${typeCountText ? `<span class="detection-group-count">${escapeHtml(typeCountText)}</span>` : ''}
+      ${typeDesc ? '<span class="detection-group-toggle">▾</span>' : ''}
+    </div>
+    ${typeDesc ? `<div class="detection-category-desc hidden">${escapeHtml(typeDesc)}</div>` : ''}
+  </div>`;
 
   // Call stack
-  const frames = init.stack?.callFrames || [];
   if (frames.length > 0) {
-    // Detect sensitive patterns in full stack
-    const hints = new Set();
+    // Group frames by their detected sensitive pattern (if any).
+    const framesByPattern = {};
     frames.forEach(f => {
       const label = detectSensitive(f.functionName);
-      if (label) hints.add(label);
+      if (!label) return;
+      if (!framesByPattern[label]) framesByPattern[label] = [];
+      framesByPattern[label].push(f);
     });
 
-    if (hints.size > 0) {
-      html += '<div class="initiator-hints">';
-      for (const hint of hints) {
-        html += `<span class="initiator-hint">${escapeHtml(hint)}</span>`;
+    // One Detection-style group per matched pattern; the matched
+    // frames inside are findings carrying that pattern's severity.
+    for (const [label, list] of Object.entries(framesByPattern)) {
+      const sev = SENSITIVE_PATTERN_SEVERITY[label] || 'info';
+      const desc = SENSITIVE_PATTERN_DESCRIPTIONS[label] || '';
+      html += `<div class="detection-group">
+        <div class="detection-group-header">
+          <span class="scan-badge scan-badge-sens"${desc ? ` title="${escapeAttr(desc)}"` : ''}>⚠️ ${escapeHtml(label)}</span>
+          <span class="detection-group-count">${list.length} frame${list.length === 1 ? '' : 's'}</span>
+          ${desc ? '<span class="detection-group-toggle">▾</span>' : ''}
+        </div>
+        ${desc ? `<div class="detection-category-desc hidden">${escapeHtml(desc)}</div>` : ''}
+        <div class="detection-findings">`;
+      for (const f of list) {
+        const funcName = f.functionName || '(anonymous)';
+        const fileName = shortenUrl(f.url || '');
+        const line = (f.lineNumber ?? -1) + 1;
+        const loc = f.url
+          ? `${funcName}  ${fileName}:${line}`
+          : funcName;
+        html += `<div class="detection-finding severity-${sev}">
+          <div class="detection-finding-top">
+            <span class="detection-severity sev-${sev}">${sev.toUpperCase()}</span>
+            <span class="detection-location">${escapeHtml(loc)}</span>
+          </div>
+        </div>`;
       }
-      html += '</div>';
+      html += `</div></div>`;
     }
 
     html += '<div class="initiator-stack-title">Call Stack</div>';
@@ -2306,7 +2475,8 @@ function renderInitiator(req) {
       html += `<span class="frame-index">${i}</span>`;
       html += `<span class="func-name">${escapeHtml(funcName)}</span>`;
       if (sensitive) {
-        html += `<span class="sensitive-badge">${escapeHtml(sensitive)}</span>`;
+        const sensDesc = SENSITIVE_PATTERN_DESCRIPTIONS[sensitive] || '';
+        html += `<span class="sensitive-badge"${sensDesc ? ` title="${escapeAttr(sensDesc)}"` : ''}>${escapeHtml(sensitive)}</span>`;
       }
       if (sourceLocation) {
         html += `<span class="source-link" title="${escapeAttr(f.url + ':' + line)}">${sourceLocation}</span>`;
@@ -2445,6 +2615,10 @@ function renderInitiator(req) {
     });
   });
 
+  // Click-to-expand for Type and pattern groups — same handler the
+  // Detection tab uses, so the two tabs share UX.
+  container.addEventListener('click', _onDetectionGroupClick);
+
   // Async: enrich call-stack frames with source map info. Updates DOM
   // when each script's map resolves. Cache means no repeat fetches.
   if (frames.length > 0) enrichFramesWithSourceMaps(container, frames, req);
@@ -2495,7 +2669,7 @@ function enrichFramesWithSourceMaps(container, frames, req) {
         const tabBtn = document.querySelector('.detail-tab[data-detail="initiator"]');
         if (tabBtn) {
           tabBtn.classList.add('has-mapped');
-          tabBtn.title = `Source-mapped frames: ${mappedCount} / ${totalFramesWithUrls}`;
+          tabBtn.title = `Source-mapped frames: ${mappedCount} / ${totalFramesWithUrls}\n\n${INITIATOR_TYPE_DESCRIPTIONS.mapped || ''}`;
         }
         // Promote the row's Initiator cell to "↑ Mapped" on the first
         // successful frame mapping. Flag persists on the req so the
@@ -2503,6 +2677,23 @@ function enrichFramesWithSourceMaps(container, frames, req) {
         if (req && !req._sourcemapMapped) {
           req._sourcemapMapped = true;
           updateNetworkRowInitiator(req);
+        }
+        // Promote the Type group inside the Initiator detail tab so
+        // its badge / count reflect the mapped state.
+        const typeGroup = container.querySelector('[data-init-type-group]');
+        if (typeGroup) {
+          const typeBadge = typeGroup.querySelector('.scan-badge');
+          if (typeBadge && !typeBadge.classList.contains('scan-badge-init-mapped')) {
+            typeBadge.textContent = '↑ Mapped';
+            typeBadge.className = 'scan-badge scan-badge-init-mapped';
+            const md = INITIATOR_TYPE_DESCRIPTIONS.mapped || '';
+            if (md) typeBadge.title = md;
+            // Replace the inline description card with the mapped one.
+            const descBlock = typeGroup.querySelector('.detection-category-desc');
+            if (descBlock && md) descBlock.textContent = md;
+          }
+          const cnt = typeGroup.querySelector('.detection-group-count');
+          if (cnt) cnt.textContent = `${mappedCount} frame${mappedCount === 1 ? '' : 's'} mapped`;
         }
       });
     });

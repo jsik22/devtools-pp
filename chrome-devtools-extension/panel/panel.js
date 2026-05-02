@@ -589,6 +589,10 @@ function updateSitemapStats() {
 }
 
 function matchesSitemapFilters(req) {
+  // Scope is now a view filter too — out-of-scope previously-captured
+  // requests get hidden from the tree until the user clears the scope.
+  if (!inGlobalScope(req.url)) return false;
+
   const typeF = sitemapTypeFilter.value;
   if (typeF && classifyMimeType(req.mimeType) !== typeF) return false;
 
@@ -1561,6 +1565,16 @@ function buildNetworkRow(r) {
 
 function updateNetworkCount() {
   const total = networkRequests.length;
+  // When a scope is active, count how many existing requests pass the
+  // current view filter so the badge can show "filtered / total".
+  if (globalScope.regex) {
+    let filtered = 0;
+    for (const r of networkRequests) if (inGlobalScope(r.url)) filtered++;
+    networkCount.textContent = filtered === total
+      ? `${total} requests`
+      : `${filtered} / ${total} requests (filtered)`;
+    return;
+  }
   if (total > MAX_NETWORK_ROWS) {
     networkCount.textContent = `${total} requests · showing last ${MAX_NETWORK_ROWS}`;
   } else {
@@ -1586,14 +1600,20 @@ function updateNetworkRowBadges(req) {
   if (cell) cell.innerHTML = renderScanBadgesInline(req.scanResults);
 }
 
-// Full re-render — used only on clear / startup. Streaming events use
-// the append/batch path below to avoid O(n²) rebuilds.
+// Full re-render — used on clear / startup, and whenever the global
+// Scope changes since Scope is now a view filter too. Streaming events
+// use the append/batch path below to avoid O(n²) rebuilds.
 function renderNetworkTable() {
   networkTable.innerHTML = '';
+  // Apply the Scope as a view filter — out-of-scope requests captured
+  // earlier are hidden until the user clears the scope.
+  const visible = globalScope.regex
+    ? networkRequests.filter(r => inGlobalScope(r.url))
+    : networkRequests;
   const fragment = document.createDocumentFragment();
-  const start = Math.max(0, networkRequests.length - MAX_NETWORK_ROWS);
-  for (let i = start; i < networkRequests.length; i++) {
-    fragment.appendChild(buildNetworkRow(networkRequests[i]));
+  const start = Math.max(0, visible.length - MAX_NETWORK_ROWS);
+  for (let i = start; i < visible.length; i++) {
+    fragment.appendChild(buildNetworkRow(visible[i]));
   }
   networkTable.appendChild(fragment);
   updateNetworkCount();
@@ -4395,6 +4415,13 @@ function applyGlobalScope() {
   }
   refreshGlobalScopeButtonState();
   flashGlobalScopeApply();
+  // Scope is also a view filter — re-render Network table and Site
+  // Map tree so already-captured data reflects the new pattern
+  // immediately. updateSitemapStats picks up scope through
+  // matchesSitemapFilters via getNodeRequestCount.
+  renderNetworkTable();
+  renderSitemapTree();
+  updateSitemapStats();
 }
 
 // Apply an arbitrary scope pattern (used by Site Map "Set Scope" dropdown).

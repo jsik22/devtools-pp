@@ -3222,55 +3222,33 @@ const EMAIL_FILE_EXT_DENY = new Set([
 // Compound dictionary entries like "return_url" are tokenized during
 // build, so the lookup map only holds single words.
 const HUNT_CATEGORIES = {
-  sqli: {
-    badge: '💉 SQLi',
-    defaultSeverity: 'high',
-    keywords: ['query', 'search', 'filter', 'sort', 'where', 'select', 'order',
-               'keyword', 'column', 'field', 'report', 'row', 'string', 'number'],
-  },
-  lfi: {
-    badge: '📁 LFI',
-    defaultSeverity: 'high',
-    keywords: ['file', 'path', 'dir', 'directory', 'document', 'template',
-               'include', 'page', 'doc', 'folder', 'root', 'pdf', 'pg', 'style'],
-    keywordSeverity: {
-      // Generic page-N navigation parameters — LFI test point but
-      // less load-bearing than file/path.
-      'page': 'medium',
-      // include= often a SPA pattern that's safely whitelisted server-side.
-      'include': 'low',
-    },
-  },
-  ssrf: {
-    badge: '🌐 SSRF',
-    // Most SSRF candidates start out medium-confidence; a few specific
-    // post-redirect target params are upgraded.
+  // The previous five categories (SQLi / LFI / SSRF / RCE / debug)
+  // collapsed into a single "Tampering" bucket. The distinction between
+  // them in practice was noisy — a parameter named `query` could equally
+  // be a SQL search, a URL filter, or a debug toggle. Merging them
+  // surfaces the same set of "this parameter influences server logic"
+  // candidates with one badge and one MEDIUM severity, and the user
+  // moves on to actually probe with payloads in Replay.
+  tampering: {
+    badge: '🔨 Tampering',
     defaultSeverity: 'medium',
-    // 'window' removed — overlapped with browser performance properties
-    // (windowInnerWidth etc.) and produced 100% noise.
-    keywords: ['url', 'redirect', 'dest', 'destination', 'callback', 'return',
-               'next', 'host', 'domain', 'uri', 'continue', 'forward',
-               'navigate', 'open', 'feed', 'ref'],
-    keywordSeverity: {
-      // Specific redirect / return targets — SSRF and open-redirect risk.
-      'redirect': 'high',
-      'return': 'high',
-      'continue': 'high',
-      // Referer-style ref=, weak signal — keep but de-emphasize.
-      'ref': 'low',
-    },
-  },
-  rce: {
-    badge: '💻 RCE',
-    defaultSeverity: 'high',
-    keywords: ['cmd', 'exec', 'command', 'shell', 'ping', 'execute',
-               'run', 'system', 'proc', 'process'],
-  },
-  debug: {
-    badge: '🔧 debug',
-    defaultSeverity: 'medium',
-    keywords: ['debug', 'test', 'dbg', 'config', 'toggle',
-               'enable', 'disable', 'reset', 'adm', 'cfg'],
+    keywords: [
+      // SQLi-flavored
+      'query', 'search', 'filter', 'sort', 'where', 'select', 'order',
+      'keyword', 'column', 'field', 'report', 'row',
+      // LFI-flavored
+      'file', 'path', 'dir', 'directory', 'document', 'template',
+      'doc', 'folder', 'root', 'pdf', 'pg', 'style', 'page', 'include',
+      // SSRF-flavored
+      'url', 'redirect', 'dest', 'destination', 'callback', 'return',
+      'next', 'host', 'domain', 'uri', 'forward', 'navigate', 'open',
+      'feed', 'ref', 'continue',
+      // RCE-flavored
+      'cmd', 'exec', 'command', 'shell', 'execute', 'run',
+      // Debug-flavored
+      'debug', 'test', 'dbg', 'config', 'toggle',
+      'enable', 'disable', 'reset', 'adm', 'cfg',
+    ],
   },
 };
 
@@ -3300,7 +3278,7 @@ const HUNT_KEYWORD_MAP = (() => {
 // keyword in the dictionary but suppress the obvious technical
 // noise variants.
 function _scanIsHuntNoise(tokens, hit) {
-  if (hit.category === 'ssrf') {
+  if (hit.category === 'tampering') {
     // 'domain' only flags when the parameter IS exactly "domain" —
     // domainLookupStart / domainLookupEnd are PerformanceTiming.
     if (hit.matchedKeyword === 'domain') {
@@ -3763,40 +3741,19 @@ through server logs or browser history.
 Try a different session value and resend to confirm
 that access control is enforced correctly.`,
 
-  sqli:
-    `A parameter that could influence a SQL query.
-Use the Replay tab to change the value and watch how
-the server response differs.
-e.g. '  (single quote — does the server error out?)
-     1 AND 1=1 vs 1 AND 1=2  (true/false response delta?)`,
+  tampering:
+    `A parameter that may influence server-side logic
+has been detected in this request.
 
-  lfi:
-    `A parameter that names a file path or template.
-Worth checking for LFI or SSTI.
-Modify the value and watch how the server responds.
-e.g. ../../../etc/passwd  (path traversal probe)
-     {{7*7}}  (template evaluation — returning 49 is a red flag)`,
+Modify the parameter value in the Replay tab
+and review how the server responds.
 
-  ssrf:
-    `A parameter tied to an outbound request or redirect.
-Worth checking for SSRF or Open Redirect.
-Use the Replay tab to change the value and resend.
-e.g. https://169.254.169.254/  (AWS metadata probe)
-     //evil.com  (external-domain redirect probe)`,
-
-  rce:
-    `A parameter tied to command execution.
-Modify the value and check whether the server behaves
-differently.
-Watch the response body or downstream behavior for
-changes when the value moves away from its default.`,
-
-  debug:
-    `A debug or configuration parameter.
-Try changing it and see whether the server behaves
-differently.
-e.g. debug=true or debug=1  (turn on debug mode?)
-     test=true              (switch into a test mode?)`,
+Suggested tests:
+- Special characters: ' " ; -- (SQL Injection)
+- Path patterns: ../../../etc/passwd (Path Traversal)
+- External URLs: https://169.254.169.254/ (SSRF)
+- Command patterns: ; ls , | whoami (Command Injection)
+- Template syntax: {{7*7}} \${7*7} (SSTI)`,
 
   check:
     `The response is 401/403 but the body is larger than

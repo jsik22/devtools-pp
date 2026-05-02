@@ -809,11 +809,7 @@ tr:hover {
 .scan-badge-idor      { background: #e8eaed; color: #3c4043; border-color: #c8cad0; }
 .scan-badge-check     { background: #e8f0fe; color: #1a73e8; border-color: #c5d9fb; }
 .scan-badge-exposure  { background: #fef3cd; color: #856404; border-color: #f7d875; }
-.scan-badge-sqli      { background: #fad2cf; color: #a50e0e; border-color: #ec9b97; }
-.scan-badge-rce       { background: #fad2cf; color: #a50e0e; border-color: #ec9b97; }
-.scan-badge-lfi       { background: #fde7c0; color: #8a4b00; border-color: #f0c47e; }
-.scan-badge-ssrf      { background: #d2e3fc; color: #1967d2; border-color: #a4c4f5; }
-.scan-badge-debug     { background: #e8eaed; color: #3c4043; border-color: #c8cad0; }
+.scan-badge-tampering { background: #fde7c0; color: #8a4b00; border-color: #f0c47e; }
 .scan-badge-session   { background: #d2f0ed; color: #00695c; border-color: #80cbc4; }
 
 /* Detection tab indicator (count badge) */

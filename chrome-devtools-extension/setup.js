@@ -45,22 +45,23 @@ function updateCommands() {
   const trustCmd = document.getElementById('trust-cmd');
   const trustDesc = document.getElementById('trust-desc');
 
+  let installText, trustText;
   if (currentPlatform === 'mac') {
-    installCmd.innerHTML = `<button class="copy-btn" onclick="copyCommand('install-cmd')">Copy</button>`
-      + escapeHtml(`cd "<path-to-extension>/native-proxy"\nchmod +x install.sh\n./install.sh ${extensionId}`);
-
+    installText = `cd "<path-to-extension>/native-proxy"\nchmod +x install.sh\n./install.sh ${extensionId}`;
     trustDesc.textContent = 'Run the following command to add the CA certificate to the macOS system keychain:';
-    trustCmd.innerHTML = `<button class="copy-btn" onclick="copyCommand('trust-cmd')">Copy</button>`
-      + escapeHtml(`sudo security add-trusted-cert -d -r trustRoot \\\n  -k /Library/Keychains/System.keychain \\\n  ~/.devtools-pp/ca.pem`);
-
+    trustText = `sudo security add-trusted-cert -d -r trustRoot \\\n  -k /Library/Keychains/System.keychain \\\n  ~/.devtools-pp/ca.pem`;
   } else if (currentPlatform === 'win') {
-    installCmd.innerHTML = `<button class="copy-btn" onclick="copyCommand('install-cmd')">Copy</button>`
-      + escapeHtml(`cd "<path-to-extension>\\native-proxy"\ninstall.bat ${extensionId}`);
-
+    installText = `cd "<path-to-extension>\\native-proxy"\ninstall.bat ${extensionId}`;
     trustDesc.textContent = 'Run the following command in an Administrator Command Prompt to trust the CA certificate:';
-    trustCmd.innerHTML = `<button class="copy-btn" onclick="copyCommand('trust-cmd')">Copy</button>`
-      + escapeHtml(`certutil -addstore -user "Root" "%USERPROFILE%\\.devtools-pp\\ca.pem"`);
+    trustText = `certutil -addstore -user "Root" "%USERPROFILE%\\.devtools-pp\\ca.pem"`;
   }
+
+  // textContent assignment is XSS-safe and avoids the inline-button
+  // hack; data-command holds the raw text the Copy button reads back.
+  installCmd.textContent = installText;
+  installCmd.dataset.command = installText;
+  trustCmd.textContent = trustText;
+  trustCmd.dataset.command = trustText;
 }
 
 // ============================================================
@@ -69,6 +70,16 @@ function updateCommands() {
 function checkConnection() {
   const bar = document.getElementById('status-bar');
   const text = document.getElementById('status-text');
+
+  // Dev/design preview override: ?preview=disconnected forces the
+  // not-connected UI regardless of the actual Native Messaging state.
+  // Useful for screenshotting / styling the setup flow without
+  // uninstalling the host. Leave in place — opt-in via URL only.
+  const previewParam = new URLSearchParams(location.search).get('preview');
+  if (previewParam === 'disconnected') {
+    setDisconnected('preview mode');
+    return;
+  }
 
   bar.className = 'status-bar checking';
   text.textContent = 'Checking Native Messaging connection...';
@@ -102,26 +113,33 @@ function setDisconnected(error) {
 // ============================================================
 // Copy to clipboard
 // ============================================================
-function copyCommand(elementId) {
-  const el = document.getElementById(elementId);
-  // Get text content excluding the copy button
-  const text = el.textContent.replace(/^Copy/, '').trim();
+function copyCommand(targetId, btn) {
+  const el = document.getElementById(targetId);
+  if (!el) return;
+  const text = el.dataset.command || el.textContent;
   navigator.clipboard.writeText(text).then(() => {
-    const btn = el.querySelector('.copy-btn');
-    if (btn) {
-      btn.textContent = 'Copied!';
-      btn.classList.add('copied');
-      setTimeout(() => {
-        btn.textContent = 'Copy';
-        btn.classList.remove('copied');
-      }, 2000);
-    }
+    if (!btn) return;
+    const original = btn.textContent;
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.classList.remove('copied');
+    }, 2000);
+  }).catch((err) => {
+    console.error('Clipboard write failed:', err);
   });
 }
 
 // ============================================================
-// Util
+// Event wiring (MV3 CSP forbids inline onclick)
 // ============================================================
-function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
+document.getElementById('verify-btn').addEventListener('click', checkConnection);
+
+document.querySelectorAll('.platform-btn').forEach((btn) => {
+  btn.addEventListener('click', () => selectPlatform(btn.dataset.platform));
+});
+
+document.querySelectorAll('[data-copy-target]').forEach((btn) => {
+  btn.addEventListener('click', () => copyCommand(btn.dataset.copyTarget, btn));
+});

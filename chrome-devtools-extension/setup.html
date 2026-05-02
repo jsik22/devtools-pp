@@ -113,7 +113,7 @@
   <div id="status-bar" class="status-bar checking">
     <div class="status-dot"></div>
     <span id="status-text">Checking Native Messaging connection...</span>
-    <button id="verify-btn" class="btn btn-secondary" style="margin-left:auto;padding:4px 14px;font-size:12px" onclick="checkConnection()">Verify</button>
+    <button id="verify-btn" class="btn btn-secondary" style="margin-left:auto;padding:4px 14px;font-size:12px">Verify</button>
   </div>
 
   <!-- Extension info -->
@@ -134,8 +134,8 @@
 
     <!-- Platform selector -->
     <div class="platform-selector">
-      <button class="platform-btn" data-platform="mac" onclick="selectPlatform('mac')">macOS</button>
-      <button class="platform-btn" data-platform="win" onclick="selectPlatform('win')">Windows</button>
+      <button class="platform-btn" data-platform="mac">macOS</button>
+      <button class="platform-btn" data-platform="win">Windows</button>
     </div>
 
     <!-- Prerequisite -->
@@ -161,7 +161,7 @@
       </div>
       <div class="code-block" id="install-cmd">—</div>
       <div class="btn-row">
-        <button class="btn btn-primary" id="copy-install-btn" onclick="copyCommand('install-cmd')">Copy Command</button>
+        <button class="btn btn-primary" data-copy-target="install-cmd">Copy Command</button>
       </div>
     </div>
 
@@ -174,7 +174,7 @@
       <div class="step-desc" id="trust-desc">—</div>
       <div class="code-block" id="trust-cmd">—</div>
       <div class="btn-row">
-        <button class="btn btn-primary" onclick="copyCommand('trust-cmd')">Copy Command</button>
+        <button class="btn btn-primary" data-copy-target="trust-cmd">Copy Command</button>
       </div>
       <div class="note" id="trust-note">
         This step requires administrator privileges. If you skip this step, HTTP interception will still work, but HTTPS interception will show certificate errors.

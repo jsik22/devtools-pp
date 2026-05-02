@@ -229,7 +229,12 @@ async function removeTabTagRule(tabId) {
 // 6. Setup page: check_native handler
 // ============================================================
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type !== 'check_native') return;
+  // Only accept messages from this extension's own contexts. Ignore
+  // anything from external extensions, content scripts on web pages,
+  // or other origins to avoid hostile pages probing the Native
+  // Messaging host through us.
+  if (!sender || sender.id !== chrome.runtime.id) return;
+  if (!msg || msg.type !== 'check_native') return;
 
   // Try connecting to the native host to verify it's installed
   let testPort = null;

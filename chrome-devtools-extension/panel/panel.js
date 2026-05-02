@@ -285,13 +285,13 @@ _crawlImportFile.addEventListener('change', (e) => {
 });
 
 function updatePageScanButton() {
-  if (sitemapSelectedNode && targetHost && sitemapSelectedNode.host !== targetHost) {
-    sitemapPageScanBtn.disabled = true;
-    sitemapPageScanBtn.title = 'Page Scan is only available for the target host';
-  } else {
-    sitemapPageScanBtn.disabled = false;
-    sitemapPageScanBtn.title = '';
-  }
+  // Page Scan always operates on the currently-inspected page DOM, so
+  // it stays enabled regardless of which tree node the user has
+  // selected. (The earlier "only when target host is selected" gate
+  // made sense before preserve-log accumulated multiple main hosts;
+  // now it just confused users into thinking the button was broken.)
+  sitemapPageScanBtn.disabled = false;
+  sitemapPageScanBtn.title = '';
 }
 document.getElementById('sitemap-clear').addEventListener('click', () => {
   Object.keys(sitemapTree).forEach(k => delete sitemapTree[k]);
@@ -1548,10 +1548,14 @@ function buildNetworkRow(r) {
   const statusClass = r.status >= 400 ? 'status-error'
     : r.status >= 300 ? 'status-redirect'
     : r.status >= 200 ? 'status-ok' : '';
+  let host = '';
+  try { host = new URL(r.url).host; } catch { /* malformed url */ }
+  const hostKindClass = (host && host !== targetHost) ? 'host-cell-external' : 'host-cell-target';
   const tr = document.createElement('tr');
   tr.dataset.requestId = r.requestId;
   if (r.requestId === selectedRequestId) tr.classList.add('selected');
   tr.innerHTML =
+    `<td class="host-cell ${hostKindClass}" title="${escapeHtml(r.url)}">${escapeHtml(host)}</td>` +
     `<td><strong>${escapeHtml(r.method)}</strong></td>` +
     `<td title="${escapeHtml(r.url)}">${escapeHtml(truncateUrl(r.url))}</td>` +
     `<td class="${statusClass}">${r.status}</td>` +

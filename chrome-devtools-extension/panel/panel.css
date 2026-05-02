@@ -754,6 +754,22 @@ tr:hover {
    Response Pattern Detection — list badges + Detection detail tab
    ============================================================ */
 
+/* Host column — fixed-width hostname slot at the start of each row.
+   Same-origin (target) hosts read normally; cross-origin hosts get a
+   subtle italic + lighter color so the eye can pick out third-party
+   traffic at a glance. Full URL stays accessible via the title
+   tooltip. */
+.host-cell {
+  width: 150px;
+  max-width: 150px;
+  font-size: 12px;
+  color: #555;
+}
+.host-cell-external {
+  color: #888;
+  font-style: italic;
+}
+
 /* Initiator column — single-badge cell mirroring the Detection-cell
    styling. Click to jump straight to the Initiator detail tab. */
 .initiator-cell {

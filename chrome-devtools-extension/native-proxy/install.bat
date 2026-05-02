@@ -35,6 +35,15 @@ if "%EXTENSION_ID%"=="" (
     exit /b 1
 )
 
+:: Chrome extension IDs are 32 lowercase letters from a-p. Validate
+:: before injecting into the NM manifest's allowed_origins JSON.
+powershell -NoProfile -Command "if ('%EXTENSION_ID%' -notmatch '^[a-p]{32}$') { exit 1 }" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [ERROR] Invalid extension ID: %EXTENSION_ID%
+    echo         Expected 32 lowercase letters ^(a-p^).
+    exit /b 1
+)
+
 echo.
 echo ============================================
 echo   DevTools++ Native Proxy Installer

@@ -3924,6 +3924,13 @@ function checkReplayModified() {
 ['replay-method', 'replay-body-type'].forEach(id => {
   document.getElementById(id).addEventListener('change', checkReplayModified);
 });
+// The body-type <select> sits inside a clickable section header that
+// toggles collapse on click. Stop propagation so opening the dropdown
+// doesn't also fold the section. (Replaces inline onclick that
+// violated MV3 CSP.)
+document.getElementById('replay-body-type').addEventListener('click', (e) => {
+  e.stopPropagation();
+});
 ['replay-url', 'replay-body'].forEach(id => {
   document.getElementById(id).addEventListener('input', checkReplayModified);
 });

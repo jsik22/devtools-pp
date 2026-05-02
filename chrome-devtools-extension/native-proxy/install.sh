@@ -53,6 +53,17 @@ if [ -z "$EXTENSION_ID" ]; then
   exit 1
 fi
 
+# Chrome extension IDs are exactly 32 lowercase letters from a-p
+# (encoded from the public-key SHA256). Validate before letting the
+# value flow into the NM manifest's allowed_origins JSON, so a typo
+# or a paste mishap can't break the manifest or sneak in unexpected
+# characters.
+if ! [[ "$EXTENSION_ID" =~ ^[a-p]{32}$ ]]; then
+  echo "[ERROR] Invalid extension ID: '$EXTENSION_ID'"
+  echo "        Expected 32 lowercase letters (a-p)."
+  exit 1
+fi
+
 echo ""
 echo "============================================"
 echo "  DevTools++ Native Proxy Installer"

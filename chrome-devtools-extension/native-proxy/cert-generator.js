@@ -4,6 +4,17 @@ const forge = require('node-forge');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const net = require('net');
+
+// Generate an X.509-compliant positive serial number (16 random bytes,
+// high bit cleared so the integer is unambiguously positive).
+function randomSerial() {
+  const bytes = forge.random.getBytesSync(16);
+  // Clear the high bit of the first byte to keep the integer positive
+  // when interpreted as a signed ASN.1 INTEGER.
+  const firstByte = bytes.charCodeAt(0) & 0x7f;
+  return forge.util.bytesToHex(String.fromCharCode(firstByte) + bytes.slice(1));
+}
 
 const CA_DIR = path.join(os.homedir(), '.devtools-pp');
 const CA_CERT_PATH = path.join(CA_DIR, 'ca.pem');
@@ -36,16 +47,17 @@ function ensureCA() {
     return cachedCA;
   }
 
-  // Generate new CA
+  // Generate new CA. mode 0o700 keeps other local users from listing
+  // the directory; the private key file itself is also written 0o600.
   if (!fs.existsSync(CA_DIR)) {
-    fs.mkdirSync(CA_DIR, { recursive: true });
+    fs.mkdirSync(CA_DIR, { recursive: true, mode: 0o700 });
   }
 
   const keys = forge.pki.rsa.generateKeyPair(2048);
   const cert = forge.pki.createCertificate();
 
   cert.publicKey = keys.publicKey;
-  cert.serialNumber = '01';
+  cert.serialNumber = randomSerial();
   cert.validity.notBefore = new Date();
   cert.validity.notAfter = new Date();
   cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 10);
@@ -101,7 +113,7 @@ function generateHostCert(hostname) {
   const cert = forge.pki.createCertificate();
 
   cert.publicKey = keys.publicKey;
-  cert.serialNumber = Date.now().toString(16) + Math.random().toString(16).slice(2, 8);
+  cert.serialNumber = randomSerial();
   cert.validity.notBefore = new Date();
   cert.validity.notAfter = new Date();
   cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 1);
@@ -109,9 +121,11 @@ function generateHostCert(hostname) {
   cert.setSubject([{ name: 'commonName', value: hostname }]);
   cert.setIssuer(ca.cert.subject.attributes);
 
-  // Determine if hostname is an IP address
-  const isIP = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.includes(':');
-  const altNames = isIP
+  // net.isIP returns 4, 6, or 0; non-zero means IP address. Replaces
+  // the loose regex that accepted out-of-range octets and treated any
+  // ":"-bearing hostname as IPv6.
+  const ipFamily = net.isIP(hostname);
+  const altNames = ipFamily
     ? [{ type: 7, ip: hostname }]
     : [{ type: 2, value: hostname }];
 

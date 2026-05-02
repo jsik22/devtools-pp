@@ -4562,11 +4562,22 @@ function urlFilterToRegex(input) {
 }
 
 // Strip protocol/query/hash so the filter only sees host + pathname.
-// Falls back to the raw url if it can't be parsed.
+// host includes the port when one is present; the noPort variant
+// drops it. Both forms feed inGlobalScope so a port-less pattern can
+// still match URLs that carry a non-standard port.
 function _filterTarget(url) {
   try {
     const u = new URL(url);
     return u.host + u.pathname;
+  } catch {
+    return url;
+  }
+}
+
+function _filterTargetNoPort(url) {
+  try {
+    const u = new URL(url);
+    return u.hostname + u.pathname;
   } catch {
     return url;
   }
@@ -4581,7 +4592,14 @@ let globalScope = { input: '', regex: null };
 
 function inGlobalScope(url) {
   if (!globalScope.regex) return true;
-  return globalScope.regex.test(_filterTarget(url));
+  const withPort = _filterTarget(url);
+  if (globalScope.regex.test(withPort)) return true;
+  // Retry without the port so a pattern like "*.site.com/*" can match
+  // URLs that happen to carry a non-standard port (site.com:48081).
+  // Patterns that explicitly include ":<port>" still match through the
+  // first pass on the with-port form.
+  const noPort = _filterTargetNoPort(url);
+  return noPort !== withPort && globalScope.regex.test(noPort);
 }
 
 // Build regex from input, update the scope, push to proxy (if intercepting),

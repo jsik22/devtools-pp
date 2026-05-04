@@ -46,6 +46,22 @@ DevTools++는 이 간극을 채우기 위해 만들었습니다. 보안팀이 Bu
 
 ---
 
+## 스크린샷
+
+**Detection** — 캡처된 모든 요청과 응답에 자동으로 보안 관련 패턴 플래그.
+![Detection](docs/screenshots/01-detection.png)
+
+**Network 모니터링** — 대용량 사이트를 위해 튜닝된 append-only 테이블, Initiator와 Detection 컬럼 포함.
+![Network](docs/screenshots/02-network.png)
+
+**Site Map + Page Scan** — 패시브 엔드포인트 트리와 DOM에서 추출한 링크 / 폼 / 스크립트.
+![Site Map](docs/screenshots/03-sitemap.png)
+
+**Intercept** — 요청과 응답을 동시에 다루는 듀얼 패널 (hold / modify / mock).
+![Intercept](docs/screenshots/04-intercept.png)
+
+---
+
 ## 주요 기능
 
 ### 🗺 Site Map

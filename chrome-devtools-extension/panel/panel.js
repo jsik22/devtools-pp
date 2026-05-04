@@ -4408,30 +4408,70 @@ document.querySelector('.icpt-req-side').classList.add('active-side');
 
 // Background Service Worker port connection (auto-reconnect)
 let bgPort = null;
+// One-shot kill switch. When the extension is reloaded/updated/disabled
+// while this DevTools panel is still open, every chrome.runtime.* call
+// from the now-orphaned panel throws "Extension context invalidated".
+// Retrying would spin forever and flood the extension error log; close
+// + reopen DevTools is the only way to recover the panel.
+let bgReconnectStopped = false;
+
+function isContextInvalidated(err) {
+  const msg = (err && err.message) || (typeof err === 'string' ? err : '');
+  return /Extension context invalidated|context.*invalidated/i.test(msg);
+}
 
 function connectBgPort() {
-  bgPort = chrome.runtime.connect({ name: `panel-${tabId}` });
+  if (bgReconnectStopped) return;
+  try {
+    bgPort = chrome.runtime.connect({ name: `panel-${tabId}` });
+  } catch (err) {
+    if (isContextInvalidated(err)) {
+      bgReconnectStopped = true;
+      // Use console.log (not warn/error) so it doesn't surface on the
+      // chrome://extensions error page — context invalidation is a
+      // routine consequence of reloading the extension while DevTools
+      // is open, and the user's only recovery is close + reopen
+      // DevTools, which they're about to do anyway.
+      console.log('[DevTools++] Extension context invalidated. Close and reopen DevTools to reconnect.');
+      return;
+    }
+    // Unknown error — back off and try once more.
+    bgPort = null;
+    setTimeout(connectBgPort, 500);
+    return;
+  }
 
   bgPort.onMessage.addListener(handleBgMessage);
 
   bgPort.onDisconnect.addListener(() => {
-    console.warn('[DevTools++] Background port disconnected, reconnecting...');
     bgPort = null;
-    // Wait for Service Worker restart then reconnect
+    const lastErr = chrome.runtime.lastError;
+    if (lastErr && isContextInvalidated(lastErr)) {
+      bgReconnectStopped = true;
+      return;
+    }
+    // Service Worker idle-restart is the common case — wait briefly
+    // and reconnect.
     setTimeout(connectBgPort, 500);
   });
 }
 
 function sendToBg(msg) {
+  if (bgReconnectStopped) return;
   if (!bgPort) {
     connectBgPort();
+    if (bgReconnectStopped || !bgPort) return;
   }
   try {
     bgPort.postMessage(msg);
   } catch (err) {
-    console.warn('[DevTools++] Port send failed, reconnecting...', err);
+    if (isContextInvalidated(err)) {
+      bgReconnectStopped = true;
+      return;
+    }
     bgPort = null;
     connectBgPort();
+    if (bgReconnectStopped || !bgPort) return;
     try { bgPort.postMessage(msg); } catch {}
   }
 }

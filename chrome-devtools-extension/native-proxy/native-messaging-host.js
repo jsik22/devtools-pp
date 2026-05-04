@@ -1,4 +1,11 @@
-#!/Users/jsik/.nvm/versions/node/v24.14.1/bin/node
+#!/usr/bin/env node
+// Note: this shebang is only used when the file is executed directly.
+// Chrome's Native Messaging launcher actually invokes this through the
+// per-machine wrapper script `native-messaging-host.sh` (created by
+// install.sh), which hard-codes the absolute path to the user's node
+// binary. Chrome's NM environment ships a restricted PATH that often
+// can't resolve `node` via env, so the wrapper indirection is what
+// makes the host runnable across nvm/fnm/asdf/system installs.
 'use strict';
 
 const ProxyServer = require('./proxy-server');

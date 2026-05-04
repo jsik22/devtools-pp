@@ -233,7 +233,7 @@ After installation: Restart Chrome → Open DevTools++ → Intercept tab → cli
 - CA certificate is generated locally and never transmitted externally
 - Verify the source: [`native-proxy/cert-generator.js`](chrome-devtools-extension/native-proxy/cert-generator.js)
 
-> **nvm / fnm users**: If you switch Node.js versions, update the shebang path at the top of `native-messaging-host.js`.
+> **nvm / fnm / asdf users**: After switching Node.js versions, rerun `install.sh` (or `install.bat`) to refresh the launcher's hard-coded node path.
 
 ---
 

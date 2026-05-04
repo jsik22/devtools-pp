@@ -110,8 +110,19 @@ echo "[OK] CA certificate: $CA_PATH"
 echo ""
 echo "[3/4] Registering Native Messaging Host..."
 
-# Make host script executable
-chmod +x "$HOST_PATH"
+# Build a per-machine launcher that invokes node by absolute path.
+# Chrome's Native Messaging environment ships with a restricted PATH
+# that often can't resolve `node` via the env shebang in the .js file
+# (especially for nvm/fnm/asdf-managed installs in $HOME). The wrapper
+# is the symmetric counterpart of native-messaging-host.bat on Windows.
+NODE_BIN="$(command -v node)"
+WRAPPER_PATH="$SCRIPT_DIR/native-messaging-host.sh"
+cat > "$WRAPPER_PATH" << WRAPEOF
+#!/bin/bash
+exec "$NODE_BIN" "$HOST_PATH" "\$@"
+WRAPEOF
+chmod +x "$WRAPPER_PATH"
+echo "[OK] Wrapper script: $WRAPPER_PATH (node: $NODE_BIN)"
 
 register_nm_host() {
   local nm_dir="$1"
@@ -122,7 +133,7 @@ register_nm_host() {
 {
   "name": "$HOST_NAME",
   "description": "DevTools++ MITM Proxy Host",
-  "path": "$HOST_PATH",
+  "path": "$WRAPPER_PATH",
   "type": "stdio",
   "allowed_origins": [
     "chrome-extension://$EXTENSION_ID/"

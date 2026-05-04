@@ -233,7 +233,7 @@ certutil -addstore -user "Root" "%USERPROFILE%\.devtools-pp\ca.pem"
 - CA 인증서는 로컬에서만 생성되며 외부로 전송되지 않음
 - 소스코드에서 직접 확인: [`native-proxy/cert-generator.js`](chrome-devtools-extension/native-proxy/cert-generator.js)
 
-> **nvm / fnm 사용자**: Node.js 버전 변경 시 `native-messaging-host.js` 상단의 shebang 절대경로를 업데이트하세요.
+> **nvm / fnm / asdf 사용자**: Node.js 버전 변경 후에는 `install.sh` (또는 `install.bat`)를 다시 실행해서 launcher가 가진 node 절대경로를 갱신하세요.
 
 ---
 

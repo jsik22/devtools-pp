@@ -54,7 +54,7 @@ DevTools++ bridges this gap. Everything your security team did in Burp — inter
 **Network monitoring** — append-only table tuned for high-volume sites, with Initiator and Detection columns.
 ![Network](docs/screenshots/02-network.png)
 
-**Replay & Tamper** — pick any captured request, edit method / URL / headers / params / body, and resend without leaving DevTools. Each header has a checkbox so you can disable individual entries (here `accept-encoding` and `content-length` are off), and the orange **Modified** badge tracks divergence from the original. Past sends are kept in the History strip at the bottom.
+**Replay & Tamper** — edit and resend any captured request; the Modified badge tracks divergence from the original.
 ![Replay](docs/screenshots/03-replay.png)
 
 **Site Map + Page Scan** — passive endpoint tree, plus DOM-extracted links / forms / scripts on the right.

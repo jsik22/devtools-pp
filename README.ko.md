@@ -54,7 +54,7 @@ DevTools++는 이 간극을 채우기 위해 만들었습니다. 보안팀이 Bu
 **Network 모니터링** — 대용량 사이트를 위해 튜닝된 append-only 테이블, Initiator와 Detection 컬럼 포함.
 ![Network](docs/screenshots/02-network.png)
 
-**Replay & Tamper** — 캡처된 요청을 선택해 Method / URL / 헤더 / 파라미터 / 본문을 자유롭게 편집하고 DevTools 안에서 바로 재전송. 헤더마다 체크박스가 있어 개별 비활성화 가능 (스크린샷에선 `accept-encoding`/`content-length` 해제됨), 주황색 **Modified** 배지가 원본 대비 편집 여부를 표시. 하단 History 영역에 이전 send 이력 보존.
+**Replay & Tamper** — 캡처된 요청을 편집해 재전송, Modified 배지로 원본과의 차이 추적.
 ![Replay](docs/screenshots/03-replay.png)
 
 **Site Map + Page Scan** — 패시브 엔드포인트 트리와 DOM에서 추출한 링크 / 폼 / 스크립트.

@@ -1175,12 +1175,18 @@ function startNetworkMonitoring() {
   networkMonitoring = true;
   document.getElementById('network-start').disabled = true;
   document.getElementById('network-stop').disabled = false;
+  if (chrome.storage && chrome.storage.local) {
+    chrome.storage.local.set({ networkMonitoring: true });
+  }
 }
 
 function stopNetworkMonitoring() {
   networkMonitoring = false;
   document.getElementById('network-start').disabled = false;
   document.getElementById('network-stop').disabled = true;
+  if (chrome.storage && chrome.storage.local) {
+    chrome.storage.local.set({ networkMonitoring: false });
+  }
 }
 
 function clearNetwork() {
@@ -4617,6 +4623,11 @@ function applyGlobalScope() {
   renderNetworkTable();
   renderSitemapTree();
   updateSitemapStats();
+  // Persist the last-applied pattern so the action popup can show it
+  // even when DevTools is closed.
+  if (chrome.storage && chrome.storage.local) {
+    chrome.storage.local.set({ globalScopeInput: input });
+  }
 }
 
 // Apply an arbitrary scope pattern (used by Site Map "Set Scope" dropdown).

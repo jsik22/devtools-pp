@@ -172,6 +172,15 @@ function resetProxySettings() {
   });
 }
 
+// On service worker startup, clear any stale proxy settings left over
+// from a previous session. chrome.proxy.settings (scope: 'regular') is
+// persistent across browser restarts, so if Chrome was killed while
+// Intercept was active the user comes back to ERR_PROXY_CONNECTION_FAILED
+// because the native proxy isn't running. The first thing we do here is
+// drop the setting; if the user re-enables Intercept, panel.js issues
+// intercept_on which restarts the proxy and reapplies settings.
+resetProxySettings();
+
 // ============================================================
 // 5. Tab-scoped request tagging via declarativeNetRequest
 // Only requests from the inspected tab carry an X-DevToolsPP-Tab header,

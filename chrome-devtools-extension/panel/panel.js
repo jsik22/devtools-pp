@@ -1175,18 +1175,14 @@ function startNetworkMonitoring() {
   networkMonitoring = true;
   document.getElementById('network-start').disabled = true;
   document.getElementById('network-stop').disabled = false;
-  if (chrome.storage && chrome.storage.local) {
-    chrome.storage.local.set({ networkMonitoring: true });
-  }
+  safeStorageSet({ networkMonitoring: true });
 }
 
 function stopNetworkMonitoring() {
   networkMonitoring = false;
   document.getElementById('network-start').disabled = false;
   document.getElementById('network-stop').disabled = true;
-  if (chrome.storage && chrome.storage.local) {
-    chrome.storage.local.set({ networkMonitoring: false });
-  }
+  safeStorageSet({ networkMonitoring: false });
 }
 
 function clearNetwork() {
@@ -4420,6 +4416,31 @@ function isContextInvalidated(err) {
   return /Extension context invalidated|context.*invalidated/i.test(msg);
 }
 
+// Storage writes from the panel after the extension has been reloaded
+// throw the same "Extension context invalidated" as chrome.runtime.*.
+// Wrap them so they no-op silently in that state (and flip the kill
+// switch if they ever do throw, just in case the runtime detector
+// hasn't caught it yet).
+function safeStorageSet(obj) {
+  if (bgReconnectStopped) return;
+  if (!chrome.storage || !chrome.storage.local) return;
+  try {
+    chrome.storage.local.set(obj);
+  } catch (err) {
+    if (isContextInvalidated(err)) bgReconnectStopped = true;
+  }
+}
+
+function safeStorageGet(keys, callback) {
+  if (bgReconnectStopped) return;
+  if (!chrome.storage || !chrome.storage.local) return;
+  try {
+    chrome.storage.local.get(keys, callback);
+  } catch (err) {
+    if (isContextInvalidated(err)) bgReconnectStopped = true;
+  }
+}
+
 function connectBgPort() {
   if (bgReconnectStopped) return;
   try {
@@ -4665,9 +4686,7 @@ function applyGlobalScope() {
   updateSitemapStats();
   // Persist the last-applied pattern so the action popup can show it
   // even when DevTools is closed.
-  if (chrome.storage && chrome.storage.local) {
-    chrome.storage.local.set({ globalScopeInput: input });
-  }
+  safeStorageSet({ globalScopeInput: input });
 }
 
 // Apply an arbitrary scope pattern (used by Site Map "Set Scope" dropdown).
@@ -5381,8 +5400,7 @@ document.querySelectorAll('.split-gutter').forEach(setupSplitGutter);
 (function initAutoStartMonitoring() {
   const checkbox = document.getElementById('auto-start-monitoring');
   if (!checkbox) return;
-  if (!chrome.storage || !chrome.storage.local) return;
-  chrome.storage.local.get(['autoStartMonitoring'], (result) => {
+  safeStorageGet(['autoStartMonitoring'], (result) => {
     const enabled = !!(result && result.autoStartMonitoring);
     checkbox.checked = enabled;
     if (enabled && !networkMonitoring) {
@@ -5394,7 +5412,7 @@ document.querySelectorAll('.split-gutter').forEach(setupSplitGutter);
     }
   });
   checkbox.addEventListener('change', (e) => {
-    chrome.storage.local.set({ autoStartMonitoring: e.target.checked });
+    safeStorageSet({ autoStartMonitoring: e.target.checked });
   });
 })();
 

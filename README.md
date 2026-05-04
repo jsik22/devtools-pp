@@ -48,17 +48,17 @@ DevTools++ bridges this gap. Everything your security team did in Burp — inter
 
 ## Screenshots
 
-**Detection** — automatic security-pattern flagging on every captured request and response.
-![Detection](docs/screenshots/01-detection.png)
+**Site Map + Page Scan** — passive endpoint tree, plus DOM-extracted links / forms / scripts on the right.
+![Site Map](docs/screenshots/01-sitemap.png)
 
 **Network monitoring** — append-only table tuned for high-volume sites, with Initiator and Detection columns.
 ![Network](docs/screenshots/02-network.png)
 
-**Replay & Tamper** — edit and resend any captured request; the Modified badge tracks divergence from the original.
-![Replay](docs/screenshots/03-replay.png)
+**Detection** — automatic security-pattern flagging on every captured request and response.
+![Detection](docs/screenshots/03-detection.png)
 
-**Site Map + Page Scan** — passive endpoint tree, plus DOM-extracted links / forms / scripts on the right.
-![Site Map](docs/screenshots/04-sitemap.png)
+**Replay & Tamper** — edit and resend any captured request; the Modified badge tracks divergence from the original.
+![Replay](docs/screenshots/04-replay.png)
 
 **Intercept** — request and response dual panel for hold / modify / mock workflows.
 ![Intercept](docs/screenshots/05-intercept.png)

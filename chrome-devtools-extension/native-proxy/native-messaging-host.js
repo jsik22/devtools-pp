@@ -86,6 +86,10 @@ async function startProxy(config = {}) {
     sendMessage({ type: 'response_intercepted', ...data });
   });
 
+  proxy.on('header_swap_consumed', (data) => {
+    sendMessage({ type: 'header_swap_consumed', ...data });
+  });
+
   proxy.on('error', (err) => {
     sendMessage({ type: 'error', message: err.message });
   });
@@ -139,6 +143,15 @@ async function handleMessage(msg) {
       if (proxy) {
         proxy.updateConfig(msg.config || {});
         sendMessage({ type: 'config_updated' });
+      }
+      break;
+
+    case 'register_header_swap':
+      if (proxy) {
+        proxy.registerHeaderSwap(msg.payload || {});
+        sendMessage({ type: 'header_swap_registered' });
+      } else {
+        sendMessage({ type: 'error', message: 'Proxy not running — cannot register header swap' });
       }
       break;
 

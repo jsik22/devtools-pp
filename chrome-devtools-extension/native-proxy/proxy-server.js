@@ -19,6 +19,13 @@ class ProxyServer extends EventEmitter {
     this.interceptResponse = options.interceptResponse || false;
     this.pendingRequests = new Map();
     this.pendingResponses = new Map();
+    // Header swaps registered ahead of a "Send to Browser" navigation in
+    // a new tab. Keyed by tabId; the next request from that tab to the
+    // matching URL gets the registered headers merged in, then the
+    // entry is consumed and a `header_swap_consumed` event fires so the
+    // extension can drop the tab's DNR tag rule (one-shot interception).
+    this.pendingHeaderSwaps = new Map();
+    this.headerSwapTtlMs = options.headerSwapTtlMs || 30000;
     this.requestTimeout = options.requestTimeout || 60000; // 60s default
     this.server = null;
     this._idCounter = 0;
@@ -56,6 +63,57 @@ class ProxyServer extends EventEmitter {
     } catch {
       return reqUrl;
     }
+  }
+
+  // ============================================================
+  // Header swap registry — used by "Send to Browser (new tab)"
+  // ============================================================
+  registerHeaderSwap(payload) {
+    if (!payload || payload.tabId == null || !payload.url) return;
+    this.pendingHeaderSwaps.set(String(payload.tabId), {
+      url: payload.url,
+      headers: payload.headers || {},
+      expiresAt: Date.now() + this.headerSwapTtlMs,
+    });
+  }
+
+  _consumeHeaderSwap(tabId, fullUrl) {
+    const key = String(tabId);
+    const entry = this.pendingHeaderSwaps.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt < Date.now()) {
+      this.pendingHeaderSwaps.delete(key);
+      return null;
+    }
+    if (!ProxyServer._urlsMatchForSwap(entry.url, fullUrl)) return null;
+    this.pendingHeaderSwaps.delete(key);
+    // Notify so the extension can remove the tab's DNR tag rule —
+    // subsequent navigations in that tab should not be intercepted.
+    this.emit('header_swap_consumed', { tabId: key, url: fullUrl });
+    return entry;
+  }
+
+  static _urlsMatchForSwap(a, b) {
+    try {
+      const ua = new URL(a);
+      const ub = new URL(b);
+      return ua.host === ub.host
+        && ua.pathname === ub.pathname
+        && ua.search === ub.search;
+    } catch {
+      return a === b;
+    }
+  }
+
+  // Lowercase swap header names overwrite same-named browser-set
+  // headers. Anything not in the swap (Cookie, Origin, etc.) passes
+  // through unchanged.
+  static _applyHeaderSwap(reqHeaders, swapHeaders) {
+    const result = { ...reqHeaders };
+    for (const [name, value] of Object.entries(swapHeaders || {})) {
+      result[name.toLowerCase()] = value;
+    }
+    return result;
   }
 
   /**
@@ -193,9 +251,20 @@ class ProxyServer extends EventEmitter {
     // header come from other tabs / service workers / extensions and must be
     // forwarded untouched. Always strip the header so origin servers never
     // see it.
-    const hasTabTag = req.headers[ProxyServer.TAG_HEADER] != null;
+    const tabIdTag = req.headers[ProxyServer.TAG_HEADER];
+    const hasTabTag = tabIdTag != null;
     if (hasTabTag) {
       delete req.headers[ProxyServer.TAG_HEADER];
+    }
+
+    // Header-swap consumption for Send-to-Browser. Runs before bypass
+    // and intercept-queue checks so the swap-merged headers show up in
+    // the queue editor exactly as they will go upstream.
+    if (hasTabTag) {
+      const swap = this._consumeHeaderSwap(tabIdTag, fullUrl);
+      if (swap) {
+        req.headers = ProxyServer._applyHeaderSwap(req.headers, swap.headers);
+      }
     }
 
     // Forward immediately if: intercept off, request not from inspected tab,
@@ -380,6 +449,9 @@ class ProxyServer extends EventEmitter {
       } catch {}
     }
     this.pendingResponses.clear();
+    // Drop swap entries with no navigation behind them so they can't
+    // leak into a later intercept session.
+    this.pendingHeaderSwaps.clear();
   }
 
   /**

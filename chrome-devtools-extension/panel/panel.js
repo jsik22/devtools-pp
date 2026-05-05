@@ -971,6 +971,137 @@ function renderSitemapDetail() {
   }
 }
 
+// ============================================================
+// Send to Browser — open captured request in a new tab so it goes
+// through the proxy and lands in the original panel's Intercept queue.
+// ============================================================
+
+// Browser-managed headers we strip from the swap payload — sending
+// these would either be redundant or fight with what the new tab's
+// browser-set values should naturally be (Cookie comes from the jar,
+// Origin/Referer reflect the launcher tab, Content-Type is set by the
+// form-submit / GET semantics).
+const BROWSER_MANAGED_HEADERS_S2B = new Set([
+  'cookie', 'host', 'origin', 'referer', 'user-agent',
+  'accept', 'accept-encoding', 'accept-language',
+  'connection', 'content-length',
+  'sec-fetch-dest', 'sec-fetch-mode', 'sec-fetch-site', 'sec-fetch-user',
+  'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform',
+  'upgrade-insecure-requests',
+  'content-type',
+]);
+
+function _filterHeadersForSwap(headers) {
+  const out = {};
+  for (const [name, value] of Object.entries(headers || {})) {
+    if (BROWSER_MANAGED_HEADERS_S2B.has(name.toLowerCase())) continue;
+    out[name] = value;
+  }
+  return out;
+}
+
+function _getHeaderCI(headers, name) {
+  if (!headers) return '';
+  const lower = name.toLowerCase();
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === lower) return v;
+  }
+  return '';
+}
+
+function canSendToBrowser(req) {
+  if (!req || !req.method || !req.url) {
+    return { ok: false, reason: 'No request selected' };
+  }
+  if (req._imported) {
+    return { ok: false, reason: 'Imported requests cannot be re-issued — only live captures' };
+  }
+  if (req.method === 'GET') return { ok: true };
+  if (req.method !== 'POST') {
+    return { ok: false, reason: `${req.method} cannot be triggered as a browser navigation — use Replay` };
+  }
+  const ct = (_getHeaderCI(req.requestHeaders, 'content-type') || '').toLowerCase();
+  if (ct.startsWith('application/x-www-form-urlencoded')) return { ok: true };
+  if (ct.startsWith('multipart/form-data')) {
+    return { ok: false, reason: 'multipart/form-data POST cannot be replayed (file fields are not captured) — use Replay' };
+  }
+  if (ct.startsWith('application/json')) {
+    return { ok: false, reason: 'JSON body cannot be navigated — use Replay' };
+  }
+  if (!ct) {
+    if (!req.requestPostData) return { ok: true };
+    return { ok: false, reason: 'POST body has no Content-Type — cannot determine encoding' };
+  }
+  return { ok: false, reason: `Content-Type "${ct.split(';')[0]}" cannot be browser-navigated — use Replay` };
+}
+
+function _parseFormUrlencodedFields(body) {
+  if (!body) return [];
+  const fields = [];
+  for (const part of body.split('&')) {
+    if (!part) continue;
+    const eq = part.indexOf('=');
+    const rawName = eq < 0 ? part : part.slice(0, eq);
+    const rawValue = eq < 0 ? '' : part.slice(eq + 1);
+    let name = rawName;
+    let value = rawValue;
+    try {
+      name = decodeURIComponent(rawName.replace(/\+/g, ' '));
+      value = decodeURIComponent(rawValue.replace(/\+/g, ' '));
+    } catch { /* malformed encoding — pass through raw */ }
+    fields.push({ name, value });
+  }
+  return fields;
+}
+
+function sendToBrowserNewTab() {
+  const req = networkRequestMap.get(selectedRequestId);
+  const check = canSendToBrowser(req);
+  if (!check.ok) {
+    showToast(check.reason);
+    return;
+  }
+  if (!interceptActive) {
+    showToast('Enable Intercept first — the new tab needs the proxy active to be caught');
+    return;
+  }
+  const payload = {
+    method: req.method,
+    url: req.url,
+    headers: _filterHeadersForSwap(req.requestHeaders),
+  };
+  if (req.method === 'POST') {
+    payload.fields = _parseFormUrlencodedFields(req.requestPostData || '');
+    payload.enctype = 'application/x-www-form-urlencoded';
+  }
+  // Background handles tab creation, DNR tagging, and header-swap
+  // registration as one async sequence. We get a `send_to_browser_error`
+  // broadcast back if anything fails.
+  sendToBg({
+    type: 'open_new_tab_for_intercept',
+    payload,
+  });
+  showToast('Opening new tab — switch back here once it lands in the queue');
+}
+
+function updateSendToBrowserButton() {
+  const btn = document.getElementById('detail-send-to-browser');
+  if (!btn) return;
+  const req = selectedRequestId ? networkRequestMap.get(selectedRequestId) : null;
+  if (!req) {
+    btn.disabled = true;
+    btn.title = 'Select a request first';
+    return;
+  }
+  const check = canSendToBrowser(req);
+  btn.disabled = !check.ok;
+  btn.title = check.ok
+    ? 'Open this request in a new tab so it goes through Intercept (requires Intercept ON).'
+    : check.reason;
+}
+
+document.getElementById('detail-send-to-browser').addEventListener('click', sendToBrowserNewTab);
+
 function sendToReplay(req) {
   // Switch to Network tab + activate Replay tab + populate form
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -1050,6 +1181,7 @@ function closeDetail() {
   networkSplit.classList.remove('has-detail');
   selectedRequestId = null;
   networkTable.querySelectorAll('tr.selected').forEach(r => r.classList.remove('selected'));
+  updateSendToBrowserButton();
 }
 
 // chrome.devtools.network event listener (always active, no attach needed)
@@ -1923,6 +2055,7 @@ function selectNetworkRequest(reqId, opts) {
     const tabBtn = document.querySelector(`.detail-tab[data-detail="${opts.activateTab}"]`);
     if (tabBtn) tabBtn.click();
   }
+  updateSendToBrowserButton();
 }
 
 // ↑/↓ keyboard navigation through the request list while the Network
@@ -5116,6 +5249,10 @@ function handleBgMessage(msg) {
       if (interceptActive) {
         stopIntercept();
       }
+      break;
+
+    case 'send_to_browser_error':
+      showToast(`Send to Browser failed: ${msg.message || 'unknown'}`);
       break;
 
     case 'native_error':

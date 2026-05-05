@@ -366,6 +366,16 @@ tr:hover {
   flex-shrink: 0;
 }
 
+/* Send-to-Browser action — sits between the detail tabs and the close
+   button. Disabled state covers methods/bodies we can't navigate. */
+.detail-action-btn {
+  padding: 3px 10px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
 .detail-content {
   display: none;
   flex: 1;

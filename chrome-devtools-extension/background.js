@@ -53,6 +53,17 @@ function connectNative() {
     if (msg.type === 'proxy_started') {
       setProxySettings(msg.port || 8899);
     }
+    // Resolve any in-flight register_header_swap calls — used by
+    // openNewTabForIntercept to time the launcher navigation correctly.
+    if (msg.type === 'header_swap_registered') {
+      _flushSwapRegisteredAcks();
+    }
+    // The proxy fired the swap into a request — drop the new tab's
+    // DNR tag rule so subsequent navigations in that tab are not
+    // intercepted (one-shot Send-to-Browser semantics).
+    if (msg.type === 'header_swap_consumed' && msg.tabId != null) {
+      removeNewTabTagRule(parseInt(msg.tabId, 10));
+    }
     // Forward messages from proxy to all panels
     broadcastToPanels(msg);
   });
@@ -113,6 +124,21 @@ function handlePanelMessage(tabId, msg) {
 
     case 'update_config':
       sendToNative(msg);
+      break;
+
+    case 'register_header_swap':
+      sendToNative(msg);
+      break;
+
+    case 'open_new_tab_for_intercept':
+      // Async — panel doesn't need a reply, but if anything fails we
+      // broadcast a `send_to_browser_error` so the panel can surface it.
+      openNewTabForIntercept(msg.payload || {}).catch((err) => {
+        broadcastToPanels({
+          type: 'send_to_browser_error',
+          message: err && err.message ? err.message : String(err),
+        });
+      });
       break;
 
     case 'ping':
@@ -246,6 +272,175 @@ async function removeTabTagRule(tabId) {
     });
   } catch {}
 }
+
+// ============================================================
+// Send-to-Browser: open captured request in a new tab through Intercept
+// ============================================================
+// New tabs opened from the panel get a separate DNR rule scoped to
+// `main_frame` only — subresource fetches (CSS/JS/images) on the
+// rendered page should not flood the Intercept queue. The rule is
+// removed automatically when the proxy consumes the registered header
+// swap, or when the tab closes.
+const DNR_RULE_BASE_NEW_TAB = 20000;
+
+async function addNewTabTagRule(tabId) {
+  const ruleId = DNR_RULE_BASE_NEW_TAB + tabId;
+  try {
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [ruleId],
+      addRules: [{
+        id: ruleId,
+        priority: 1,
+        action: {
+          type: 'modifyHeaders',
+          requestHeaders: [
+            { header: TAG_HEADER_NAME, operation: 'set', value: String(tabId) },
+          ],
+        },
+        condition: {
+          tabIds: [tabId],
+          // main_frame only — render-on-the-page subresources stay
+          // untagged and bypass the intercept queue.
+          resourceTypes: ['main_frame'],
+        },
+      }],
+    });
+  } catch (err) {
+    broadcastToPanels({
+      type: 'native_error',
+      message: 'New-tab DNR rule add failed: ' + err.message,
+    });
+  }
+}
+
+async function removeNewTabTagRule(tabId) {
+  const ruleId = DNR_RULE_BASE_NEW_TAB + tabId;
+  try {
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [ruleId],
+    });
+  } catch {}
+}
+
+// Promise queue resolved by `header_swap_registered` messages from
+// native. Used so openNewTabForIntercept doesn't surrender control to
+// the launcher before the proxy actually has the swap in memory.
+let _swapRegisteredAcks = [];
+function _flushSwapRegisteredAcks() {
+  const list = _swapRegisteredAcks;
+  _swapRegisteredAcks = [];
+  for (const fn of list) { try { fn(); } catch {} }
+}
+function waitForSwapRegistered(timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const t = setTimeout(() => {
+      if (done) return;
+      done = true;
+      _swapRegisteredAcks = _swapRegisteredAcks.filter(fn => fn !== resolver);
+      reject(new Error('register_header_swap ack timeout'));
+    }, timeoutMs || 3000);
+    const resolver = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(t);
+      resolve();
+    };
+    _swapRegisteredAcks.push(resolver);
+  });
+}
+
+// Pending payloads keyed by new tab id. The launcher.html page (loaded
+// in the new tab) asks for its payload via chrome.runtime.sendMessage
+// once it boots; we hand it back and the page navigates / submits.
+const pendingLaunches = new Map();
+const pendingLaunchWaiters = new Map(); // tabId -> sendResponse fn parked while setup completes
+
+async function openNewTabForIntercept(payload) {
+  if (!payload || !payload.url || !payload.method) {
+    throw new Error('Invalid payload');
+  }
+  if (!nativePort) {
+    throw new Error('Native host not connected — enable Intercept first');
+  }
+
+  // Step 1: open a tab with the launcher page. We don't navigate to
+  // the captured URL directly because the DNR rule isn't in place yet
+  // and we'd race the navigation past an untagged proxy entry.
+  const launcherUrl = chrome.runtime.getURL('panel/launcher.html');
+  const tab = await chrome.tabs.create({ url: launcherUrl, active: true });
+  const newTabId = tab.id;
+
+  try {
+    // Step 2: tag this tab's main_frame requests
+    await addNewTabTagRule(newTabId);
+
+    // Step 3: register the header swap with the proxy (Authorization,
+    // X-*, etc. captured from the original request)
+    const ack = waitForSwapRegistered(3000);
+    sendToNative({
+      type: 'register_header_swap',
+      payload: {
+        tabId: newTabId,
+        url: payload.url,
+        headers: payload.headers || {},
+      },
+    });
+    await ack;
+
+    // Step 4: store payload so launcher_ready can fetch it. If the
+    // launcher already asked while we were waiting for the ack, fulfill
+    // the parked sendResponse now.
+    const parked = pendingLaunchWaiters.get(newTabId);
+    if (parked) {
+      pendingLaunchWaiters.delete(newTabId);
+      parked({ ok: true, payload });
+    } else {
+      pendingLaunches.set(newTabId, payload);
+    }
+  } catch (err) {
+    // Setup failed — clean up the tag rule and tab so we don't leak
+    // a half-configured intercept slot.
+    removeNewTabTagRule(newTabId);
+    pendingLaunches.delete(newTabId);
+    pendingLaunchWaiters.delete(newTabId);
+    try { await chrome.tabs.remove(newTabId); } catch {}
+    throw err;
+  }
+}
+
+// Launcher page asks for its payload as soon as it loads. We respond
+// directly so the page can fire the navigation/form submit.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!sender || sender.id !== chrome.runtime.id) return;
+  if (!msg || msg.type !== 'launcher_ready') return;
+  const tabId = sender.tab && sender.tab.id;
+  if (tabId == null) {
+    sendResponse({ ok: false, error: 'No tab id' });
+    return;
+  }
+  if (pendingLaunches.has(tabId)) {
+    const payload = pendingLaunches.get(tabId);
+    pendingLaunches.delete(tabId);
+    sendResponse({ ok: true, payload });
+  } else {
+    // Setup not done yet — park sendResponse and let
+    // openNewTabForIntercept fulfill it once the ack lands.
+    pendingLaunchWaiters.set(tabId, sendResponse);
+    return true; // keep the message channel open for async response
+  }
+});
+
+// Tab closed — drop any rules and pending state for that tab.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  removeNewTabTagRule(tabId);
+  pendingLaunches.delete(tabId);
+  const parked = pendingLaunchWaiters.get(tabId);
+  if (parked) {
+    try { parked({ ok: false, error: 'Tab closed' }); } catch {}
+    pendingLaunchWaiters.delete(tabId);
+  }
+});
 
 // ============================================================
 // 6. Setup page: check_native handler

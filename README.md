@@ -175,15 +175,23 @@ Intercept requests **before** they reach the server and responses **before** the
 
 ### Basic Installation
 
-**Option A — Chrome Web Store** *(coming soon)*
+**Option A — Chrome Web Store** *(under review)*
 
-**Option B — Load Unpacked (GitHub)**
+**Option B — Latest release (recommended for non-developers)**
 
-1. Download or clone this repository
-2. Open `chrome://extensions`
-3. Enable **Developer mode** (top right toggle)
+1. Go to [Releases](https://github.com/jsik22/devtools-pp/releases/latest) and download `devtools-pp-vX.Y.Z.zip`
+2. Unzip it anywhere on your machine — this gives you a `chrome-devtools-extension/` folder
+3. Open `chrome://extensions` → enable **Developer mode** (top right toggle)
 4. Click **Load unpacked** → select the `chrome-devtools-extension` folder
 5. Open any `https://` page → press `F12` → click the **DevTools++** tab
+
+**Option C — Clone the repository (for development / latest commit)**
+
+```bash
+git clone https://github.com/jsik22/devtools-pp.git
+```
+
+Then follow steps 3–5 above, pointing **Load unpacked** at `devtools-pp/chrome-devtools-extension`.
 
 > **Note**: DevTools++ panel requires an `https://` page to be open. Set your Chrome startup page to an `https://` site such as `https://google.com` to ensure the panel loads immediately on DevTools open.
 

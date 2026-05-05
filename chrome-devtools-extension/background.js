@@ -181,6 +181,19 @@ function resetProxySettings() {
 // intercept_on which restarts the proxy and reapplies settings.
 resetProxySettings();
 
+// Clear UI state that the action popup mirrors. The panel writes these
+// on apply/start/stop but can't clean up on Chrome shutdown (DevTools
+// closes without firing panel teardown), so without this the popup
+// reports a scope/monitoring state that no panel is actually enforcing.
+// onStartup fires only on profile start, not every SW wake — that's
+// what we want, since wake-during-active-session would wipe the panel's
+// own persisted state.
+chrome.runtime.onStartup.addListener(() => {
+  if (chrome.storage && chrome.storage.local) {
+    chrome.storage.local.remove(['globalScopeInput', 'networkMonitoring']);
+  }
+});
+
 // ============================================================
 // 5. Tab-scoped request tagging via declarativeNetRequest
 // Only requests from the inspected tab carry an X-DevToolsPP-Tab header,

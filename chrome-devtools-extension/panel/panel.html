@@ -76,10 +76,19 @@
         <div class="export-dropdown">
           <button id="network-export" class="btn" title="Export captured data as JSON">Export ▾</button>
           <div id="network-export-menu" class="export-menu hidden">
-            <button class="export-menu-item" data-mode="detection">Detection only</button>
-            <button class="export-menu-item" data-mode="all">All requests</button>
+            <div class="export-menu-section">All requests</div>
+            <button class="export-menu-item" data-mode="detection" data-scope="all">Detection only</button>
+            <button class="export-menu-item" data-mode="all" data-scope="all">Full requests</button>
+            <div class="export-menu-divider"></div>
+            <div class="export-menu-section" id="export-menu-section-selected">Selected (0)</div>
+            <button class="export-menu-item" data-mode="detection" data-scope="selected" disabled>Detection only</button>
+            <button class="export-menu-item" data-mode="all" data-scope="selected" disabled>Full requests</button>
           </div>
         </div>
+        <span id="network-selection" class="network-selection hidden">
+          <span id="network-selection-count">0 selected</span>
+          <button id="network-selection-clear" class="btn btn-xs" title="Clear selection">X</button>
+        </span>
         <button id="network-auto-crawl" class="btn">Auto Crawl</button>
         <div class="network-search-group">
           <input type="text" id="network-search" class="filter-input network-search-input" placeholder="Search requests...">
@@ -99,6 +108,7 @@
           <table id="network-table">
             <thead>
               <tr>
+                <th class="select-cell"><input type="checkbox" id="network-select-all" title="Select all visible (Cmd/Ctrl+A) · Shift+click for range"></th>
                 <th>Host</th>
                 <th>Method</th>
                 <th>URL</th>

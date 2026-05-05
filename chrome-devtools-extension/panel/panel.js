@@ -1010,6 +1010,12 @@ let networkMonitoring = false;
 let selectedRequestId = null;
 let networkIdCounter = 0;
 
+// Multi-select for export. Tracks request IDs the user has checked via
+// the per-row checkbox or master checkbox; independent from
+// selectedRequestId (which drives the detail panel).
+const selectedExportIds = new Set();
+let _lastCheckedReqId = null; // anchor for shift-click range selection
+
 const networkTable = document.querySelector('#network-table tbody');
 const networkCount = document.getElementById('network-count');
 const networkDetail = document.getElementById('network-detail');
@@ -1212,8 +1218,11 @@ function clearNetwork() {
   _pendingNetworkRows.length = 0;
   if (_networkRenderRaf) { cancelAnimationFrame(_networkRenderRaf); _networkRenderRaf = 0; }
   _ingestedRequestKeys.clear();
+  selectedExportIds.clear();
+  _lastCheckedReqId = null;
   closeDetail();
   renderNetworkTable();
+  updateSelectionUI();
   // Drop search matches but preserve the term so the user can keep
   // typing into a freshly cleared list.
   searchMatchedIds = [];
@@ -1254,15 +1263,18 @@ function _exportMetadata() {
 // only requests with findings, request metadata kept minimal, no
 // response bodies. Includes per-category / per-severity totals so
 // false-positive-heavy rules show up at a glance.
-function exportDetectionResults() {
+function exportDetectionResults(selectedOnly) {
+  const source = selectedOnly
+    ? networkRequests.filter(r => selectedExportIds.has(r.requestId))
+    : networkRequests;
   const stats = {
-    totalRequests: networkRequests.length,
+    totalRequests: source.length,
     requestsWithFindings: 0,
     byCategory: {},
     bySeverity: {},
   };
   const items = [];
-  for (const r of networkRequests) {
+  for (const r of source) {
     const findings = r.scanResults || [];
     if (findings.length === 0) continue;
     stats.requestsWithFindings++;
@@ -1297,8 +1309,11 @@ function exportDetectionResults() {
 // Export every captured request — full headers, bodies (where loaded),
 // scan results, and initiator. Heavier than the detection export; use
 // when you need a complete snapshot, e.g. for offline analysis.
-function exportAllRequests() {
-  const items = networkRequests.map(r => ({
+function exportAllRequests(selectedOnly) {
+  const source = selectedOnly
+    ? networkRequests.filter(r => selectedExportIds.has(r.requestId))
+    : networkRequests;
+  const items = source.map(r => ({
     request: {
       method: r.method,
       url: r.url,
@@ -1324,7 +1339,7 @@ function exportAllRequests() {
   _downloadJson(
     `devtoolspp-full-requests-${_exportTimestamp()}.json`,
     Object.assign({}, _exportMetadata(), {
-      totalRequests: networkRequests.length,
+      totalRequests: source.length,
       items,
     })
   );
@@ -1394,8 +1409,11 @@ function _applyImport(reqs, mode, filename) {
   if (mode === 'overwrite') {
     networkRequests.length = 0;
     networkRequestMap.clear();
+    selectedExportIds.clear();
+    _lastCheckedReqId = null;
     closeDetail();
     renderNetworkTable();
+    updateSelectionUI();
   }
   for (const r of reqs) {
     networkRequests.push(r);
@@ -1405,6 +1423,7 @@ function _applyImport(reqs, mode, filename) {
   // Re-render the visible window — append-only would be fine, but a
   // full re-render keeps the cap logic simple for large imports.
   renderNetworkTable();
+  updateSelectionUI();
   if (searchTerm) {
     recomputeSearchMatches();
     refreshAllRowDots();
@@ -1491,10 +1510,12 @@ _exportBtn.addEventListener('click', (e) => {
 });
 document.querySelectorAll('.export-menu-item').forEach(item => {
   item.addEventListener('click', () => {
+    if (item.disabled) return;
     const mode = item.dataset.mode;
+    const selectedOnly = item.dataset.scope === 'selected';
     _exportMenu.classList.add('hidden');
-    if (mode === 'detection') exportDetectionResults();
-    else if (mode === 'all') exportAllRequests();
+    if (mode === 'detection') exportDetectionResults(selectedOnly);
+    else if (mode === 'all') exportAllRequests(selectedOnly);
   });
 });
 document.addEventListener('click', (e) => {
@@ -1618,8 +1639,11 @@ function buildNetworkRow(r) {
   const tr = document.createElement('tr');
   tr.dataset.requestId = r.requestId;
   if (r.requestId === selectedRequestId) tr.classList.add('selected');
+  if (selectedExportIds.has(r.requestId)) tr.classList.add('row-checked');
   if (searchTerm && searchMatchedIds.includes(r.requestId)) tr.classList.add('search-hit');
+  const checkedAttr = selectedExportIds.has(r.requestId) ? 'checked' : '';
   tr.innerHTML =
+    `<td class="select-cell"><input type="checkbox" class="row-select" ${checkedAttr}></td>` +
     `<td class="host-cell ${hostKindClass}" title="${escapeHtml(r.url)}">${escapeHtml(host)}</td>` +
     `<td><strong>${escapeHtml(r.method)}</strong></td>` +
     `<td title="${escapeHtml(r.url)}">${escapeHtml(truncateUrl(r.url))}</td>` +
@@ -1713,20 +1737,170 @@ function flushPendingNetworkRows() {
   networkTable.appendChild(fragment);
   enforceMaxNetworkRows();
   updateNetworkCount();
+  // New unchecked rows can flip master state from checked → indeterminate.
+  if (selectedExportIds.size > 0) updateSelectionUI();
 }
 
 // Click delegation on tbody — attached once at load so each new row
 // doesn't need its own listener. Clicking the Initiator cell jumps
-// straight to the Initiator detail tab; everything else opens the
-// detail panel with whatever tab was last active.
+// straight to the Initiator detail tab; clicks on the row checkbox
+// only toggle export selection without opening the detail panel.
 networkTable.addEventListener('click', (e) => {
   const row = e.target.closest('tr[data-request-id]');
   if (!row) return;
+  const reqId = row.dataset.requestId;
+  // Row checkbox → toggle export selection. Stop here so the click
+  // doesn't fall through to the detail-open path.
+  if (e.target.matches('input.row-select')) {
+    handleRowCheckboxClick(reqId, e.target.checked, e.shiftKey);
+    return;
+  }
+  // Treat clicks on the select-cell padding (outside the input) as
+  // a no-op rather than detail-open — clicking the cell that's "for"
+  // the checkbox shouldn't surprise users by opening a detail panel.
+  if (e.target.closest('td.select-cell')) return;
   const wantInitiator = !!e.target.closest('.initiator-cell');
-  selectNetworkRequest(row.dataset.requestId, {
+  selectNetworkRequest(reqId, {
     scroll: false,
     activateTab: wantInitiator ? 'initiator' : null,
   });
+});
+
+// ============================================================
+// Multi-select for export
+// ============================================================
+// `getVisibleRequests` returns requests in the same order as the
+// rendered table (Scope-filtered when active). All selection ops —
+// select-all, range, Cmd+A — operate on this view, not the full
+// `networkRequests` array, so what the user sees matches what they get.
+function getVisibleRequests() {
+  return globalScope.regex
+    ? networkRequests.filter(r => inGlobalScope(r.url))
+    : networkRequests;
+}
+
+function setRowCheckedClass(reqId, checked) {
+  const row = networkTable.querySelector(
+    `tr[data-request-id="${CSS.escape(reqId)}"]`
+  );
+  if (!row) return;
+  row.classList.toggle('row-checked', checked);
+  const cb = row.querySelector('input.row-select');
+  if (cb && cb.checked !== checked) cb.checked = checked;
+}
+
+function toggleSelection(reqId, checked) {
+  if (checked) selectedExportIds.add(reqId);
+  else selectedExportIds.delete(reqId);
+  setRowCheckedClass(reqId, checked);
+}
+
+function handleRowCheckboxClick(reqId, checked, shiftKey) {
+  // Shift+click extends the previously-checked anchor across the
+  // visible range. The new state for the entire range is the state
+  // of the just-clicked checkbox (matches Gmail/GitHub UX).
+  if (shiftKey && _lastCheckedReqId && _lastCheckedReqId !== reqId) {
+    const visible = getVisibleRequests();
+    const i = visible.findIndex(r => r.requestId === _lastCheckedReqId);
+    const j = visible.findIndex(r => r.requestId === reqId);
+    if (i >= 0 && j >= 0) {
+      const [lo, hi] = i < j ? [i, j] : [j, i];
+      for (let k = lo; k <= hi; k++) {
+        toggleSelection(visible[k].requestId, checked);
+      }
+    } else {
+      toggleSelection(reqId, checked);
+    }
+  } else {
+    toggleSelection(reqId, checked);
+  }
+  _lastCheckedReqId = reqId;
+  updateSelectionUI();
+}
+
+// Sync the toolbar counter, master-checkbox state, and export-menu
+// items with the current selection. Called after any selection change.
+function updateSelectionUI() {
+  const count = selectedExportIds.size;
+  const wrap = document.getElementById('network-selection');
+  const label = document.getElementById('network-selection-count');
+  if (wrap && label) {
+    wrap.classList.toggle('hidden', count === 0);
+    label.textContent = `${count} selected`;
+  }
+  // Master checkbox: checked when every visible row is selected,
+  // indeterminate when some are, unchecked when none.
+  const master = document.getElementById('network-select-all');
+  if (master) {
+    const visible = getVisibleRequests();
+    let visibleSelected = 0;
+    for (const r of visible) {
+      if (selectedExportIds.has(r.requestId)) visibleSelected++;
+    }
+    if (visible.length === 0 || visibleSelected === 0) {
+      master.checked = false;
+      master.indeterminate = false;
+    } else if (visibleSelected === visible.length) {
+      master.checked = true;
+      master.indeterminate = false;
+    } else {
+      master.checked = false;
+      master.indeterminate = true;
+    }
+  }
+  // Export-menu "Selected" section: enabled only when count > 0.
+  const sel = document.getElementById('export-menu-section-selected');
+  if (sel) sel.textContent = `Selected (${count})`;
+  document.querySelectorAll('.export-menu-item[data-scope="selected"]').forEach(btn => {
+    btn.disabled = count === 0;
+  });
+}
+
+function clearExportSelection() {
+  if (selectedExportIds.size === 0) return;
+  // Snapshot to avoid Set mutation during iteration when removing
+  // class from each visible row.
+  const ids = Array.from(selectedExportIds);
+  selectedExportIds.clear();
+  for (const id of ids) setRowCheckedClass(id, false);
+  _lastCheckedReqId = null;
+  updateSelectionUI();
+}
+
+function selectAllVisible() {
+  const visible = getVisibleRequests();
+  for (const r of visible) toggleSelection(r.requestId, true);
+  updateSelectionUI();
+}
+
+function deselectAllVisible() {
+  const visible = getVisibleRequests();
+  for (const r of visible) toggleSelection(r.requestId, false);
+  updateSelectionUI();
+}
+
+// Master checkbox: if every visible row is selected, deselect them all;
+// otherwise select all visible. Indeterminate state defaults to "select all".
+document.getElementById('network-select-all').addEventListener('click', (e) => {
+  // Use the post-click state to decide direction. If it ended up
+  // checked (or was indeterminate flipped to checked), select-all;
+  // otherwise deselect.
+  if (e.target.checked) selectAllVisible();
+  else deselectAllVisible();
+});
+
+document.getElementById('network-selection-clear').addEventListener('click', clearExportSelection);
+
+// Cmd/Ctrl+A while the Network tab is active selects all visible rows.
+// Skip when the user is typing in a form field.
+document.addEventListener('keydown', (e) => {
+  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'a') return;
+  const networkSection = document.getElementById('network');
+  if (!networkSection || !networkSection.classList.contains('active')) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  e.preventDefault();
+  selectAllVisible();
 });
 
 // Move selection to a request, open the detail panel, and (optionally)
@@ -5104,6 +5278,9 @@ function applyGlobalScope() {
   // immediately. updateSitemapStats picks up scope through
   // matchesSitemapFilters via getNodeRequestCount.
   renderNetworkTable();
+  // Selection persists across Scope changes, but the master checkbox's
+  // visible-vs-selected ratio depends on which rows are visible now.
+  updateSelectionUI();
   renderSitemapTree();
   updateSitemapStats();
   // Search ANDs with Scope, so a Scope change can flip requests in or

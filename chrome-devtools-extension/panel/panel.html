@@ -81,6 +81,13 @@
           </div>
         </div>
         <button id="network-auto-crawl" class="btn">Auto Crawl</button>
+        <div class="network-search-group">
+          <input type="text" id="network-search" class="filter-input network-search-input" placeholder="Search requests...">
+          <button id="network-search-clear" class="btn btn-xs network-search-btn hidden" title="Clear search (Esc)">X</button>
+          <button id="network-search-prev" class="btn btn-xs network-search-btn" title="Previous match (Shift+Enter)" disabled>&#9650;</button>
+          <button id="network-search-next" class="btn btn-xs network-search-btn" title="Next match (Enter)" disabled>&#9660;</button>
+          <span id="network-search-count" class="badge network-search-count hidden"></span>
+        </div>
         <span id="network-count" class="badge">0 requests</span>
       </div>
       <div id="network-import-notice" class="import-notice hidden">

@@ -279,6 +279,64 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // ============================================================
+// 6b. Replay fetch via background (CORS bypass)
+//
+// The Replay tab normally sends its requests from the inspected page
+// context (so the page's cookies, sessionStorage tokens, etc. all
+// apply). Cross-origin requests from a page hit the regular CORS
+// gates, so a request from www.example.com to static.example.com
+// fails when the asset host doesn't return Access-Control-Allow-Origin.
+//
+// As a fallback the panel can re-issue the same request from the
+// service worker, which has <all_urls> host_permissions and is not
+// subject to page-level CORS. Cookies still ride along via
+// credentials:'include' for SameSite=Lax/None hosts.
+// ============================================================
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!sender || sender.id !== chrome.runtime.id) return;
+  if (!msg || msg.type !== 'replay_fetch') return;
+
+  const init = {
+    method: msg.method || 'GET',
+    headers: msg.headers || {},
+    credentials: 'include',
+    redirect: 'follow',
+  };
+  if (msg.body != null && init.method !== 'GET' && init.method !== 'HEAD') {
+    init.body = msg.body;
+  }
+
+  const startTime = performance.now();
+  fetch(msg.url, init)
+    .then(async (resp) => {
+      const elapsed = Math.round(performance.now() - startTime);
+      const respHeaders = {};
+      resp.headers.forEach((v, k) => { respHeaders[k] = v; });
+      const text = await resp.text();
+      sendResponse({
+        ok: true,
+        status: resp.status,
+        statusText: resp.statusText,
+        headers: respHeaders,
+        body: text,
+        time: elapsed,
+        url: resp.url,
+        redirected: resp.redirected,
+      });
+    })
+    .catch((err) => {
+      const elapsed = Math.round(performance.now() - startTime);
+      sendResponse({
+        ok: false,
+        error: err && err.message ? err.message : String(err),
+        time: elapsed,
+      });
+    });
+
+  return true; // async sendResponse
+});
+
+// ============================================================
 // 7. Proxy error listener
 // ============================================================
 chrome.proxy.onProxyError.addListener((details) => {

@@ -1310,6 +1310,17 @@ tr.selected td {
 .replay-status.s4xx { color: #d32f2f; background: rgba(211, 47, 47, 0.1); }
 .replay-status.s5xx { color: #d32f2f; background: rgba(211, 47, 47, 0.15); }
 
+.replay-retry-bg {
+  margin-left: 6px;
+  vertical-align: baseline;
+}
+
+.replay-retry-hint {
+  margin-left: 6px;
+  color: #777;
+  font-size: 11px;
+}
+
 .replay-timing {
   font-size: 12px;
   color: #666;
@@ -2269,6 +2280,66 @@ tr.selected td {
 }
 .export-menu-item:hover {
   background: #f0f4ff;
+}
+
+/* ============================================================
+   Network search (request/response detail keyword search)
+   ============================================================ */
+.network-search-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.network-search-input {
+  min-width: 180px;
+}
+
+.network-search-btn {
+  padding: 2px 6px;
+  margin-left: 0;
+  min-width: 22px;
+  text-align: center;
+}
+
+.network-search-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.network-search-count {
+  font-size: 11px;
+  color: #555;
+  background: #f0f0f0;
+  border: 1px solid #d0d0d0;
+}
+
+.network-search-count.no-matches {
+  color: #b91c1c;
+  background: #fee2e2;
+  border-color: #fecaca;
+}
+
+#network-table tbody tr.search-hit td:first-child {
+  box-shadow: inset 3px 0 0 #fbbf24;
+}
+
+mark.network-search-mark {
+  background: #fde68a;
+  color: inherit;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+
+mark.network-search-mark.current {
+  background: #f59e0b;
+  color: #fff;
+}
+
+.detail-tab.has-search-match::after {
+  content: '🔍';
+  margin-left: 4px;
+  font-size: 10px;
 }
 
 /* ============================================================

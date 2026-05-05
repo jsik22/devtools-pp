@@ -1025,7 +1025,14 @@ document.querySelectorAll('.detail-tab').forEach(tab => {
     document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.detail-content').forEach(c => c.classList.remove('active'));
     tab.classList.add('active');
-    document.getElementById('detail-' + tab.dataset.detail).classList.add('active');
+    const pane = document.getElementById('detail-' + tab.dataset.detail);
+    pane.classList.add('active');
+    // When a search is active, scroll the first match in the newly
+    // shown tab into view so clicking the 🔍 badge is self-explanatory.
+    if (searchTerm) {
+      const firstMark = pane.querySelector('mark.network-search-mark');
+      if (firstMark) firstMark.scrollIntoView({ block: 'center' });
+    }
   });
 });
 
@@ -1133,6 +1140,7 @@ function processNetworkRequest(harEntry) {
   if (!networkMonitoring) return;
   networkRequests.push(req);
   networkRequestMap.set(reqId, req);
+  reindexRequestForSearch(req);
   scheduleAppendNetworkRow(req);
 
   // Eagerly load the body for text-like responses so the scanner can
@@ -1148,13 +1156,26 @@ function processNetworkRequest(harEntry) {
       runIdle(() => {
         req.scanResults = scanRequest(req);
         updateNetworkRowBadges(req);
+        reindexRequestForSearch(req);
         if (selectedRequestId === req.requestId) {
           renderResponseBody(req);
           renderDetection(req);
+          applyDetailHighlights(req);
         }
       });
     });
   }
+}
+
+// Re-build the search index for a single request and, if a search is
+// active, refresh membership / dots / counts. Called on request
+// capture and again when a body arrives late or scanResults change.
+function reindexRequestForSearch(req) {
+  buildSearchIndex(req);
+  if (!searchTerm) return;
+  recomputeSearchMatches();
+  refreshAllRowDots();
+  refreshSearchUI();
 }
 
 // Replay HAR for everything Chrome already captured before the panel
@@ -1193,6 +1214,11 @@ function clearNetwork() {
   _ingestedRequestKeys.clear();
   closeDetail();
   renderNetworkTable();
+  // Drop search matches but preserve the term so the user can keep
+  // typing into a freshly cleared list.
+  searchMatchedIds = [];
+  searchCursor = -1;
+  refreshSearchUI();
 }
 
 // Shared JSON download helper for the export menu paths.
@@ -1374,10 +1400,16 @@ function _applyImport(reqs, mode, filename) {
   for (const r of reqs) {
     networkRequests.push(r);
     networkRequestMap.set(r.requestId, r);
+    buildSearchIndex(r);
   }
   // Re-render the visible window — append-only would be fine, but a
   // full re-render keeps the cap logic simple for large imports.
   renderNetworkTable();
+  if (searchTerm) {
+    recomputeSearchMatches();
+    refreshAllRowDots();
+    refreshSearchUI();
+  }
   showImportNotice(filename);
   showToast(`Loaded ${reqs.length} request${reqs.length === 1 ? '' : 's'} (${filename})`);
 }
@@ -1479,9 +1511,11 @@ function fetchResponseBody(req) {
       req.responseBody = body;
       req.responseBase64 = (encoding === 'base64');
       req.responseBodyLoaded = true;
+      reindexRequestForSearch(req);
       if (selectedRequestId === req.requestId) {
         renderResponseBody(req);
         renderPreview(req);
+        applyDetailHighlights(req);
       }
     }
   });
@@ -1584,6 +1618,7 @@ function buildNetworkRow(r) {
   const tr = document.createElement('tr');
   tr.dataset.requestId = r.requestId;
   if (r.requestId === selectedRequestId) tr.classList.add('selected');
+  if (searchTerm && searchMatchedIds.includes(r.requestId)) tr.classList.add('search-hit');
   tr.innerHTML =
     `<td class="host-cell ${hostKindClass}" title="${escapeHtml(r.url)}">${escapeHtml(host)}</td>` +
     `<td><strong>${escapeHtml(r.method)}</strong></td>` +
@@ -1744,6 +1779,315 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ============================================================
+// Network search — keyword match across request/response detail
+//
+// Scope (the toolbar URL filter) already covers the URL itself, so
+// this search deliberately skips the URL field and looks at:
+//   - request headers (key+value)
+//   - query string params (key+value, parsed from URL.search)
+//   - request body (POST data)
+//   - response headers (key+value)
+//   - response body (text only; base64 bodies skipped)
+//   - Detection scanResults (evidence + location)
+//
+// A combined lower-cased index string is built per-request and cached
+// on req._searchIndex so each keystroke does a single indexOf rather
+// than walking every field. The index is rebuilt whenever the body
+// arrives late or scanResults change.
+// ============================================================
+
+let searchTerm = '';
+let searchMatchedIds = [];   // requestIds, in networkRequests order
+let searchCursor = -1;       // index into searchMatchedIds
+let _searchDebounceTimer = 0;
+const SEARCH_DEBOUNCE_MS = 300;
+
+function buildSearchIndex(req) {
+  const parts = [];
+  // Request headers
+  if (req.requestHeaders) {
+    for (const [k, v] of Object.entries(req.requestHeaders)) {
+      parts.push(k); parts.push(String(v));
+    }
+  }
+  // Response headers
+  if (req.responseHeaders) {
+    for (const [k, v] of Object.entries(req.responseHeaders)) {
+      parts.push(k); parts.push(String(v));
+    }
+  }
+  // Full URL — Scope handles host/path-based filtering, but the search
+  // box also indexes the URL itself so a keyword in the path or query
+  // is found regardless of which other field carries it.
+  parts.push(req.url);
+  // Query params (decoded) — searchParams returns URL-decoded values,
+  // so "hello world" still matches "?q=hello%20world" even though the
+  // raw URL only contains the encoded form.
+  try {
+    const u = new URL(req.url);
+    for (const [k, v] of u.searchParams) {
+      parts.push(k); parts.push(v);
+    }
+  } catch { /* malformed URL */ }
+  // Request body
+  if (req.requestPostData) {
+    const body = req.requestPostData.length > AUTODECODE_BODY_LIMIT
+      ? req.requestPostData.slice(0, AUTODECODE_BODY_LIMIT)
+      : req.requestPostData;
+    parts.push(body);
+  }
+  // Response body — text only, large bodies clipped to AUTODECODE_BODY_LIMIT
+  if (req.responseBody && !req.responseBase64) {
+    const body = req.responseBody.length > AUTODECODE_BODY_LIMIT
+      ? req.responseBody.slice(0, AUTODECODE_BODY_LIMIT)
+      : req.responseBody;
+    parts.push(body);
+  }
+  // Detection findings — surfaced in the Detection tab
+  if (req.scanResults) {
+    for (const f of req.scanResults) {
+      if (f.evidence) parts.push(String(f.evidence));
+      if (f.location) parts.push(String(f.location));
+    }
+  }
+  req._searchIndex = parts.join('\n').toLowerCase();
+}
+
+function reqMatchesSearch(req) {
+  if (!searchTerm) return true;
+  if (!req._searchIndex) return false;
+  return req._searchIndex.indexOf(searchTerm) !== -1;
+}
+
+// Recompute the matched-ids list from scratch. Called after a search
+// term change, after Scope changes (search ANDs with Scope), and after
+// any data mutation that could flip a request in or out (clear,
+// import, late body load).
+function recomputeSearchMatches() {
+  if (!searchTerm) {
+    searchMatchedIds = [];
+    searchCursor = -1;
+    return;
+  }
+  const matched = [];
+  for (const req of networkRequests) {
+    if (!inGlobalScope(req.url)) continue;
+    if (req._searchIndex == null) buildSearchIndex(req);
+    if (reqMatchesSearch(req)) matched.push(req.requestId);
+  }
+  searchMatchedIds = matched;
+  // Preserve the cursor on the same request if it's still in the set;
+  // otherwise reset to the first match.
+  if (selectedRequestId && matched.includes(selectedRequestId)) {
+    searchCursor = matched.indexOf(selectedRequestId);
+  } else {
+    searchCursor = matched.length > 0 ? 0 : -1;
+  }
+}
+
+function applySearch(rawTerm) {
+  const term = (rawTerm || '').toLowerCase().trim();
+  searchTerm = term;
+  recomputeSearchMatches();
+  refreshAllRowDots();
+  refreshSearchUI();
+  // Auto-open the first match (only when entering a non-empty term).
+  // Keep the existing selection if it already matched, otherwise jump.
+  if (term && searchMatchedIds.length > 0) {
+    const targetId = searchMatchedIds[searchCursor];
+    if (targetId !== selectedRequestId) {
+      selectNetworkRequest(targetId, { scroll: true });
+      return; // selectNetworkRequest -> showDetail handles highlight
+    }
+  }
+  // Re-render detail of the currently selected request so marks
+  // (or their absence) reflect the new term.
+  if (selectedRequestId) {
+    const req = networkRequestMap.get(selectedRequestId);
+    if (req) showDetail(req);
+  }
+}
+
+function gotoSearchMatch(direction) {
+  if (searchMatchedIds.length === 0) return;
+  const len = searchMatchedIds.length;
+  searchCursor = (searchCursor + direction + len) % len;
+  selectNetworkRequest(searchMatchedIds[searchCursor], { scroll: true });
+  refreshSearchUI();
+}
+
+function refreshSearchUI() {
+  const countEl = document.getElementById('network-search-count');
+  const prevBtn = document.getElementById('network-search-prev');
+  const nextBtn = document.getElementById('network-search-next');
+  const clearBtn = document.getElementById('network-search-clear');
+  if (!searchTerm) {
+    countEl.classList.add('hidden');
+    countEl.classList.remove('no-matches');
+    prevBtn.disabled = true;
+    nextBtn.disabled = true;
+    clearBtn.classList.add('hidden');
+    return;
+  }
+  clearBtn.classList.remove('hidden');
+  countEl.classList.remove('hidden');
+  if (searchMatchedIds.length === 0) {
+    countEl.textContent = 'No matches';
+    countEl.classList.add('no-matches');
+    prevBtn.disabled = true;
+    nextBtn.disabled = true;
+  } else {
+    countEl.textContent = `${searchCursor + 1} / ${searchMatchedIds.length}`;
+    countEl.classList.remove('no-matches');
+    prevBtn.disabled = false;
+    nextBtn.disabled = false;
+  }
+}
+
+// Toggle the .search-hit class on every visible row to mirror the
+// matched-ids set. Cheap relative to a full re-render.
+function refreshAllRowDots() {
+  const matched = new Set(searchMatchedIds);
+  networkTable.querySelectorAll('tr[data-request-id]').forEach(tr => {
+    if (matched.has(tr.dataset.requestId)) {
+      tr.classList.add('search-hit');
+    } else {
+      tr.classList.remove('search-hit');
+    }
+  });
+}
+
+// Wrap every occurrence of `term` inside text nodes under `rootEl`
+// with <mark class="network-search-mark">. Skips nodes already inside
+// a mark (idempotent on re-runs against the same root). Returns the
+// number of matches injected.
+function highlightMarksIn(rootEl, term) {
+  if (!rootEl || !term) return 0;
+  const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const p = node.parentNode;
+      if (!p) return NodeFilter.FILTER_REJECT;
+      const tag = p.nodeName;
+      if (tag === 'SCRIPT' || tag === 'STYLE') return NodeFilter.FILTER_REJECT;
+      if (p.classList && p.classList.contains('network-search-mark')) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const targets = [];
+  let n;
+  while ((n = walker.nextNode())) {
+    if (n.nodeValue && n.nodeValue.toLowerCase().includes(term)) targets.push(n);
+  }
+  let count = 0;
+  for (const node of targets) {
+    const text = node.nodeValue;
+    const lower = text.toLowerCase();
+    let last = 0;
+    let idx;
+    const frag = document.createDocumentFragment();
+    while ((idx = lower.indexOf(term, last)) !== -1) {
+      if (idx > last) frag.appendChild(document.createTextNode(text.slice(last, idx)));
+      const m = document.createElement('mark');
+      m.className = 'network-search-mark';
+      m.textContent = text.slice(idx, idx + term.length);
+      frag.appendChild(m);
+      last = idx + term.length;
+      count++;
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  }
+  return count;
+}
+
+// Tabs eligible for body-level highlighting + tab badge. Initiator,
+// Preview and Replay are excluded by design — Initiator searches stack
+// frames (out of scope), Preview is image/binary rendering, Replay is
+// an editable composer.
+const SEARCH_TARGET_TABS = ['headers', 'payload', 'response', 'detection'];
+
+function applyDetailHighlights(req) {
+  // Always clear stale marks/badges so a cleared term wipes the UI.
+  for (const key of SEARCH_TARGET_TABS) {
+    const btn = document.querySelector(`.detail-tab[data-detail="${key}"]`);
+    if (btn) btn.classList.remove('has-search-match');
+  }
+  if (!searchTerm || !req) return;
+  let firstMatchTab = null;
+  for (const key of SEARCH_TARGET_TABS) {
+    const pane = document.getElementById('detail-' + key);
+    if (!pane) continue;
+    const count = highlightMarksIn(pane, searchTerm);
+    if (count > 0) {
+      const btn = document.querySelector(`.detail-tab[data-detail="${key}"]`);
+      if (btn) btn.classList.add('has-search-match');
+      if (!firstMatchTab) firstMatchTab = key;
+    }
+  }
+  // If the active tab has no match but another tab does, switch to
+  // the first matching tab so the user sees results immediately.
+  const activeTab = document.querySelector('.detail-tab.active');
+  const activeKey = activeTab ? activeTab.dataset.detail : null;
+  const activeHasMatch = activeKey
+    && document.querySelector(`.detail-tab[data-detail="${activeKey}"].has-search-match`);
+  const targetKey = activeHasMatch ? activeKey : firstMatchTab;
+  if (targetKey) {
+    if (targetKey !== activeKey) {
+      document.querySelectorAll('.detail-tab').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.detail-content').forEach(c => c.classList.remove('active'));
+      document.querySelector(`.detail-tab[data-detail="${targetKey}"]`).classList.add('active');
+      document.getElementById('detail-' + targetKey).classList.add('active');
+    }
+    // Scroll the first match in the target tab into view.
+    const pane = document.getElementById('detail-' + targetKey);
+    const firstMark = pane && pane.querySelector('mark.network-search-mark');
+    if (firstMark) firstMark.scrollIntoView({ block: 'center' });
+  }
+}
+
+// Wire up search input + buttons.
+(function initNetworkSearch() {
+  const input = document.getElementById('network-search');
+  const clearBtn = document.getElementById('network-search-clear');
+  const prevBtn = document.getElementById('network-search-prev');
+  const nextBtn = document.getElementById('network-search-next');
+  if (!input) return;
+  input.addEventListener('input', () => {
+    const value = input.value;
+    if (_searchDebounceTimer) clearTimeout(_searchDebounceTimer);
+    _searchDebounceTimer = setTimeout(() => {
+      _searchDebounceTimer = 0;
+      applySearch(value);
+    }, SEARCH_DEBOUNCE_MS);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      // Flush any pending debounce so Enter acts on the current value.
+      if (_searchDebounceTimer) {
+        clearTimeout(_searchDebounceTimer);
+        _searchDebounceTimer = 0;
+        applySearch(input.value);
+      }
+      gotoSearchMatch(e.shiftKey ? -1 : 1);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      input.value = '';
+      applySearch('');
+    }
+  });
+  clearBtn.addEventListener('click', () => {
+    input.value = '';
+    applySearch('');
+    input.focus();
+  });
+  prevBtn.addEventListener('click', () => gotoSearchMatch(-1));
+  nextBtn.addEventListener('click', () => gotoSearchMatch(1));
+})();
+
+// ============================================================
 // Network Detail Panel
 // ============================================================
 
@@ -1756,6 +2100,7 @@ function showDetail(req) {
   renderInitiator(req);
   renderDetection(req);
   populateReplayForm(req);
+  applyDetailHighlights(req);
 }
 
 function makeSectionHtml(title, id, rows) {
@@ -3944,8 +4289,24 @@ document.getElementById('replay-body-type').addEventListener('click', (e) => {
 });
 
 // Populate form with selected request data when Replay tab activates
+// Reset the Replay response panes so a stale result from a previous
+// request doesn't sit alongside the form for a newly-selected one.
+function clearReplayResponse() {
+  const statusEl = document.getElementById('replay-status');
+  statusEl.textContent = '';
+  statusEl.className = 'replay-status';
+  document.getElementById('replay-timing').textContent = '';
+  document.getElementById('replay-resp-size').textContent = '';
+  document.getElementById('replay-resp-body').innerHTML = '';
+  document.getElementById('replay-resp-headers').innerHTML = '';
+}
+
 function populateReplayForm(req) {
   if (!req) return;
+
+  // The response panes belong to the previously-replayed request; once
+  // we re-populate the form they no longer line up with what's shown.
+  clearReplayResponse();
 
   document.getElementById('replay-method').value = req.method;
   document.getElementById('replay-url').value = req.url;
@@ -4201,7 +4562,54 @@ function executeReplay() {
   });
 }
 
-function handleReplayResult(result, method, url, bodyPane, headersPane, statusEl, timingEl, sizeEl) {
+// CORS-bypass fallback: re-runs the current Replay form values via the
+// background service worker (which has <all_urls> host_permissions).
+// Triggered by the "Retry via background" button on a page-context
+// fetch error. Reads the form fresh so any user edits since the failed
+// send are honoured.
+function executeReplayViaBackground() {
+  const { method, url, headers, body } = buildReplayRequest();
+  if (!url) return;
+
+  const sendBtn = document.getElementById('replay-send');
+  const statusEl = document.getElementById('replay-status');
+  const timingEl = document.getElementById('replay-timing');
+  const sizeEl = document.getElementById('replay-resp-size');
+  const bodyPane = document.getElementById('replay-resp-body');
+  const headersPane = document.getElementById('replay-resp-headers');
+
+  sendBtn.textContent = 'Sending...';
+  sendBtn.disabled = true;
+  statusEl.textContent = '';
+  statusEl.className = 'replay-status';
+  timingEl.textContent = '';
+  sizeEl.textContent = '';
+  bodyPane.innerHTML = '<span style="color:#8a6d00">Sending via background...</span>';
+  headersPane.innerHTML = '';
+
+  chrome.runtime.sendMessage(
+    { type: 'replay_fetch', method, url, headers, body: body || null },
+    (resp) => {
+      sendBtn.textContent = 'Send';
+      sendBtn.disabled = false;
+      if (chrome.runtime.lastError || !resp) {
+        statusEl.textContent = 'FAILED';
+        statusEl.className = 'replay-status s5xx';
+        const errMsg = chrome.runtime.lastError ? chrome.runtime.lastError.message : 'No response from background';
+        bodyPane.innerHTML = `<span class="status-error">Background fetch failed: ${escapeHtml(errMsg)}</span>`;
+        return;
+      }
+      handleReplayResult(
+        JSON.stringify(resp),
+        method, url, bodyPane, headersPane, statusEl, timingEl, sizeEl,
+        { viaBackground: true }
+      );
+    }
+  );
+}
+
+function handleReplayResult(result, method, url, bodyPane, headersPane, statusEl, timingEl, sizeEl, opts) {
+  opts = opts || {};
   try {
     const resp = JSON.parse(result);
 
@@ -4209,7 +4617,18 @@ function handleReplayResult(result, method, url, bodyPane, headersPane, statusEl
       statusEl.textContent = 'FAILED';
       statusEl.className = 'replay-status s5xx';
       timingEl.textContent = resp.time + ' ms';
-      bodyPane.innerHTML = `<span class="status-error">Fetch Error: ${escapeHtml(resp.error)}</span>`;
+      // Page-context fetch errors (typically CORS) get a one-click
+      // retry button that re-runs the request from the background SW
+      // where host_permissions bypass cross-origin restrictions. We
+      // suppress the button on a background retry to avoid loops.
+      let html = `<span class="status-error">Fetch Error: ${escapeHtml(resp.error)}</span>`;
+      if (!opts.viaBackground) {
+        html += ` <button class="btn btn-xs replay-retry-bg">Retry via background</button>`;
+        html += ` <span class="replay-retry-hint">bypasses CORS — sent from extension context, not page</span>`;
+      }
+      bodyPane.innerHTML = html;
+      const retryBtn = bodyPane.querySelector('.replay-retry-bg');
+      if (retryBtn) retryBtn.addEventListener('click', executeReplayViaBackground);
       addReplayHistoryEntry(method, url, 'ERR', resp.time, false);
       return;
     }
@@ -4223,6 +4642,9 @@ function handleReplayResult(result, method, url, bodyPane, headersPane, statusEl
 
     if (resp.redirected) {
       timingEl.textContent += ` (redirected to ${resp.url})`;
+    }
+    if (opts.viaBackground) {
+      timingEl.textContent += ' (via background)';
     }
 
     // Response Body
@@ -4684,6 +5106,13 @@ function applyGlobalScope() {
   renderNetworkTable();
   renderSitemapTree();
   updateSitemapStats();
+  // Search ANDs with Scope, so a Scope change can flip requests in or
+  // out of the matched set.
+  if (searchTerm) {
+    recomputeSearchMatches();
+    refreshAllRowDots();
+    refreshSearchUI();
+  }
   // Persist the last-applied pattern so the action popup can show it
   // even when DevTools is closed.
   safeStorageSet({ globalScopeInput: input });

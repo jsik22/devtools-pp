@@ -8,41 +8,18 @@
 
 ---
 
-## Why DevTools++?
+## What is DevTools++?
 
-Security testing tools like Burp Suite and API testing tools like Postman are powerful, but require a separate application, proxy configuration, and constant context-switching between tools. In many cases, however, only a small fraction of their features are actually needed.
+Whatever your role — security, dev, or ops — you can gain visibility into browser traffic, analyze it, and test it without installing a separate tool.
 
-DevTools++ lives inside Chrome DevTools — the tool you already have open every day.
+Chrome DevTools is already powerful. But for security analysis and API testing, the workflow is awkward and clunky. DevTools++ surfaces those core capabilities in a more ergonomic form.
 
-**Install once. Always ready.**
-
-Install once, and DevTools++ works silently alongside your browser — no separate app to launch, no proxy settings to toggle, no workflow interruption. Just open DevTools and start working.
+DevTools++ is a lightweight web/API testing tool that combines the native feel of Chrome DevTools with the essential features of dedicated testing tools.
 
 ```
 Native DevTools  →  DevTools++  →  Burp Suite / Postman
   (Notepad)        (Notepad++)      (Full IDE)
 ```
-
----
-
-## The Problem It Solves
-
-**"Our security team sent a pentest report. We need to verify the fixes ourselves."**
-
-Security pentest reports are typically produced using Burp Suite — request interception, parameter tampering, response analysis. Development and operations teams want to reproduce and verify the same findings after applying fixes, but the reality is:
-
-> *"Do we really need to install and learn Burp Suite just for this?"*
-
-Burp is powerful but comes with a steep learning curve: installation, proxy configuration, certificate setup, and an entirely new tool to master. For teams where security isn't the primary role, the barrier is too high.
-
-DevTools++ bridges this gap. Everything your security team did in Burp — intercepting requests, modifying parameters, analyzing responses — can be done by developers and ops teams directly inside Chrome, with no additional tools required.
-
-| Security Team (Burp) | Dev/Ops Team (DevTools++) |
-|---|---|
-| Intercept requests via Proxy | Hold requests in the Intercept tab |
-| Tamper parameters in Repeater | Edit and resend in the Replay tab |
-| Analyze response codes and body | Review in the Network / Replay panel |
-| Map endpoints in Target → Site Map | Endpoints auto-collected in Site Map tab |
 
 ---
 

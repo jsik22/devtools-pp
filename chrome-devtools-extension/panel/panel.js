@@ -1117,6 +1117,14 @@ function sendToReplay(req) {
   document.querySelector('[data-detail="replay"]').classList.add('active');
   document.getElementById('detail-replay').classList.add('active');
 
+  // Track which captured request is being replayed so renderDiffBadges
+  // / the "Original" restore button can find the right baseline. Site
+  // Map / scan-result Replay paths previously left selectedRequestId
+  // at whatever was last clicked in the Network table, so the diff
+  // badge compared the replay against an unrelated request (e.g. a
+  // 200 GET while the user was actually replaying a 500 POST).
+  selectedRequestId = req.requestId || null;
+
   // For scanned forms, build a proper request object with form fields as body
   if (req._formData) {
     const form = req._formData;

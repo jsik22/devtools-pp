@@ -5,8 +5,42 @@ const https = require('https');
 const net = require('net');
 const tls = require('tls');
 const url = require('url');
+const zlib = require('zlib');
 const { EventEmitter } = require('events');
 const certGenerator = require('./cert-generator');
+
+// Decompress an upstream response body based on Content-Encoding so
+// the panel sees text it can actually read. Returns the decoded buffer
+// (or the original on unknown encoding / decompression failure) plus
+// `hadEncoding` — true if the upstream claimed any non-identity encoding.
+// Forward Modified uses `hadEncoding` to know it must strip
+// Content-Encoding before writing the user-edited (plain) body back to
+// the browser, regardless of whether decompression actually succeeded.
+function _decodeResponseBody(buf, contentEncoding) {
+  const enc = (contentEncoding || '').toLowerCase().trim();
+  const hadEncoding = enc !== '' && enc !== 'identity';
+  if (!hadEncoding) {
+    return { body: buf, hadEncoding: false };
+  }
+  try {
+    if (enc === 'gzip' || enc === 'x-gzip') {
+      return { body: zlib.gunzipSync(buf), hadEncoding: true };
+    }
+    if (enc === 'deflate') {
+      // Some servers send raw deflate (no zlib wrapper). Try inflate
+      // first; on failure, fall back to inflateRaw.
+      try { return { body: zlib.inflateSync(buf), hadEncoding: true }; }
+      catch { return { body: zlib.inflateRawSync(buf), hadEncoding: true }; }
+    }
+    if (enc === 'br') {
+      return { body: zlib.brotliDecompressSync(buf), hadEncoding: true };
+    }
+  } catch {
+    // Decompression failed — keep raw bytes but still report hadEncoding
+    // so Forward Modified strips the (now meaningless) header.
+  }
+  return { body: buf, hadEncoding: true };
+}
 
 class ProxyServer extends EventEmitter {
   constructor(options = {}) {
@@ -157,11 +191,17 @@ class ProxyServer extends EventEmitter {
         proxyRes.on('data', chunk => chunks.push(chunk));
         proxyRes.on('end', () => {
           const respBuf = Buffer.concat(chunks);
+          // Decode based on Content-Encoding so the panel shows readable
+          // text instead of compressed garbage. We keep both the raw
+          // buffer (for plain Forward — browser decodes natively) and
+          // the decoded buffer (for the panel + Forward Modified).
+          const contentEncoding = proxyRes.headers['content-encoding'] || '';
+          const { body: decodedBuf, hadEncoding } = _decodeResponseBody(respBuf, contentEncoding);
           let respBody;
-          if (respBuf.length > 512 * 1024) {
-            respBody = respBuf.slice(0, 512 * 1024).toString('utf8');
+          if (decodedBuf.length > 512 * 1024) {
+            respBody = decodedBuf.slice(0, 512 * 1024).toString('utf8');
           } else {
-            respBody = respBuf.toString('utf8');
+            respBody = decodedBuf.toString('utf8');
           }
 
           if (this.interceptResponse) {
@@ -180,7 +220,9 @@ class ProxyServer extends EventEmitter {
               id: respId,
               statusCode: proxyRes.statusCode,
               headers: { ...proxyRes.headers },
-              body: respBuf,
+              body: respBuf,           // raw (compressed) — for plain Forward
+              decodedBody: decodedBuf, // decompressed — for Forward Modified default
+              wasEncoded: hadEncoding, // true → strip Content-Encoding on modified
               clientRes,
               timer,
             });
@@ -193,8 +235,8 @@ class ProxyServer extends EventEmitter {
               statusCode: proxyRes.statusCode,
               headers: { ...proxyRes.headers },
               body: respBody,
-              bodyLength: respBuf.length,
-              bodyTruncated: respBuf.length > 512 * 1024,
+              bodyLength: decodedBuf.length,
+              bodyTruncated: decodedBuf.length > 512 * 1024,
               timestamp: Date.now(),
             });
           } else {
@@ -206,8 +248,8 @@ class ProxyServer extends EventEmitter {
               statusCode: proxyRes.statusCode,
               headers: proxyRes.headers,
               body: respBody,
-              bodyLength: respBuf.length,
-              bodyTruncated: respBuf.length > 512 * 1024,
+              bodyLength: decodedBuf.length,
+              bodyTruncated: decodedBuf.length > 512 * 1024,
             });
           }
         });
@@ -392,10 +434,12 @@ class ProxyServer extends EventEmitter {
     clearTimeout(pending.timer);
     this.pendingResponses.delete(id);
 
-    const { statusCode, headers, body, clientRes } = pending;
+    const { statusCode, headers, body, decodedBody, wasEncoded, clientRes } = pending;
 
     switch (decision.action) {
       case 'forward':
+        // Send the raw (still-compressed) buffer — browser uses the
+        // upstream Content-Encoding header to decode natively.
         try {
           clientRes.writeHead(statusCode, headers);
           clientRes.end(body);
@@ -404,8 +448,23 @@ class ProxyServer extends EventEmitter {
 
       case 'forward_modified': {
         const newStatus = decision.responseStatus || statusCode;
-        const newHeaders = decision.headers || headers;
-        const newBody = decision.body != null ? Buffer.from(decision.body, 'utf8') : body;
+        // The user edited a decoded body, so the bytes we're about to
+        // send are plain — strip Content-Encoding (and Content-Length,
+        // which Node will recompute) so the browser doesn't try to
+        // decompress plain bytes. Transfer-Encoding: chunked also
+        // becomes stale once we send a single buffer.
+        const newHeaders = { ...(decision.headers || headers) };
+        if (wasEncoded) {
+          delete newHeaders['content-encoding'];
+          delete newHeaders['Content-Encoding'];
+        }
+        delete newHeaders['content-length'];
+        delete newHeaders['Content-Length'];
+        delete newHeaders['transfer-encoding'];
+        delete newHeaders['Transfer-Encoding'];
+        const newBody = decision.body != null
+          ? Buffer.from(decision.body, 'utf8')
+          : (decodedBody || body);
         try {
           clientRes.writeHead(newStatus, newHeaders);
           clientRes.end(newBody);

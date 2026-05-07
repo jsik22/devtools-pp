@@ -1488,11 +1488,168 @@ tr.selected td {
   background: #e8e8e8;
 }
 
+.sitemap-node.selected {
+  background: #cce5ff;
+}
+.sitemap-node.selected:hover {
+  background: #bbd9f7;
+}
+
 .sitemap-empty {
   padding: 20px;
   color: #999;
   font-size: 12px;
   text-align: center;
+}
+
+/* ============================================================
+   Site Map Source pane — code viewer for the selected node's
+   captured response body (HTML / CSS / JS / JSON / image / etc.).
+   ============================================================ */
+.sitemap-source-pane {
+  flex: 0 0 60%;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+}
+.sitemap-source-pane.hidden {
+  display: none;
+}
+
+.sitemap-source-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #f3f3f3;
+  border-bottom: 1px solid #d4d4d4;
+  flex-shrink: 0;
+}
+
+.sitemap-source-url {
+  flex: 1;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  font-size: 11.5px;
+  color: #1e1e1e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sitemap-source-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 10px;
+  background: #fafafa;
+  border-bottom: 1px solid #eee;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #555;
+}
+.sitemap-source-method {
+  font-weight: 600;
+  color: #0451a5;
+}
+.sitemap-source-status {
+  font-weight: 600;
+}
+.sitemap-source-status.s-2xx { color: #0b7a3e; }
+.sitemap-source-status.s-3xx { color: #8a6d00; }
+.sitemap-source-status.s-4xx,
+.sitemap-source-status.s-5xx { color: #d32f2f; }
+.sitemap-source-type,
+.sitemap-source-size {
+  color: #777;
+}
+
+.sitemap-source-body {
+  flex: 1;
+  overflow: auto;
+  background: #fff;
+}
+/* The <pre> resets a CSS counter so each line span auto-numbers via
+   ::before. No extra DOM column needed — gutter is the pseudo-element. */
+.sitemap-source-code {
+  margin: 0;
+  padding: 0;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #1e1e1e;
+  white-space: pre;
+  tab-size: 2;
+  counter-reset: srcline;
+}
+.sitemap-source-code .line {
+  counter-increment: srcline;
+  display: block;
+  padding-left: 4em;
+  position: relative;
+  min-height: 1.55em;
+}
+.sitemap-source-code .line::before {
+  content: counter(srcline);
+  position: absolute;
+  left: 0;
+  width: 3em;
+  padding-right: 8px;
+  text-align: right;
+  color: #999;
+  user-select: none;
+  background: #f7f7f7;
+  border-right: 1px solid #e0e0e0;
+}
+/* Slight pad so code text doesn't sit flush against the gutter. */
+.sitemap-source-code .line {
+  padding-right: 12px;
+}
+.sitemap-source-image {
+  padding: 12px;
+}
+.sitemap-source-image img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border: 1px solid #e0e0e0;
+}
+
+/* Search bar inside the meta row */
+.sitemap-source-meta-spacer {
+  flex: 1;
+}
+.sitemap-source-search {
+  background: #fff;
+  border: 1px solid #c4c4c4;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 11px;
+  width: 160px;
+}
+.sitemap-source-search:focus {
+  outline: none;
+  border-color: #0078d4;
+}
+.sitemap-source-search-count {
+  font-size: 10.5px;
+  color: #666;
+  min-width: 40px;
+  text-align: right;
+}
+
+/* Search marks inside source code — yellow background, with the
+   currently-focused match (prev/next nav) in orange. */
+.sitemap-source-body mark.source-search-mark {
+  background: #fde68a;
+  color: inherit;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+.sitemap-source-body mark.source-search-mark.active {
+  background: #f59e0b;
+  color: #000;
 }
 
 .sitemap-external-header {

@@ -30,6 +30,9 @@ document.querySelectorAll('.tab').forEach(tab => {
 // that main host's `external` map.
 const sitemapTree = {};
 let targetHost = null;
+// Currently-selected tree node — drives the right-pane source viewer
+// and the row's `.selected` highlight. Cleared by the close button.
+let sitemapSelectedNode = null; // { host, path }
 const expandedNodes = new Set(); // tracks expanded tree node keys (e.g. "host:/path")
 
 // Requests captured before the first targetHost is known wait here
@@ -105,6 +108,12 @@ chrome.devtools.network.onNavigated.addListener((url) => {
 });
 const sitemapTreeEl = document.getElementById('sitemap-tree');
 const sitemapStats = document.getElementById('sitemap-stats');
+const sitemapSourcePane = document.getElementById('sitemap-source');
+document.getElementById('sitemap-source-close').addEventListener('click', () => {
+  sitemapSelectedNode = null;
+  sitemapSourcePane.classList.add('hidden');
+  renderSitemapTree();
+});
 
 // Auto Crawl: drives the inspected tab through a list of URLs while
 // Network monitoring records everything. Useful for sweeping a known
@@ -279,6 +288,8 @@ document.getElementById('sitemap-clear').addEventListener('click', () => {
   Object.keys(sitemapTree).forEach(k => delete sitemapTree[k]);
   expandedNodes.clear();
   _sitemapPending.length = 0;
+  sitemapSelectedNode = null;
+  sitemapSourcePane.classList.add('hidden');
   renderSitemapTree();
   updateSitemapStats();
 });
@@ -509,6 +520,11 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
   row.className = 'sitemap-node';
   const isHost = currentPath === '';
   const fullPath = currentPath || '/';
+  if (sitemapSelectedNode &&
+      sitemapSelectedNode.host === host &&
+      sitemapSelectedNode.path === fullPath) {
+    row.classList.add('selected');
+  }
   // Highlight whichever host is the currently-active inspected page,
   // and show "where the user last was on this host" as a tooltip on
   // any host that's been visited during this session.
@@ -623,21 +639,20 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
     toggleExpanded();
   });
 
-  // Row click:
-  //   - Host node → set the global scope to host/* and jump to the
-  //     Network tab. Same effect as the "Exact" entry of the Set Scope
-  //     dropdown, just without the extra hover step.
-  //   - Path / leaf node → expand or collapse its subtree. Path nodes
-  //     have no scope-jump action (the dropdown only offers Exact /
-  //     Wildcard at host level).
+  // Row click — opens the source viewer for the latest captured
+  // request at this exact node, mirroring DevTools' Sources tab where
+  // clicking a file shows its contents on the right. Nodes with no
+  // direct request (intermediate paths that only have descendants)
+  // fall back to expand/collapse so every row stays clickable.
   row.addEventListener('click', (e) => {
-    // Ignore clicks that landed on the host's Set Scope dropdown — it
-    // has its own change handler and shouldn't double-trigger the row.
+    // Set Scope dropdown handles its own change event — don't fire
+    // the row click for clicks landing inside it.
     if (e.target.closest('.sitemap-scope-select')) return;
-    if (isHost) {
-      applyScopePattern(`${host}/*`);
-      const networkTabBtn = document.querySelector('[data-tab="network"]');
-      if (networkTabBtn) networkTabBtn.click();
+    if (node.requests.length > 0) {
+      sitemapSelectedNode = { host, path: fullPath };
+      const latest = node.requests[node.requests.length - 1];
+      renderSitemapSource(latest, host, fullPath);
+      renderSitemapTree(); // refresh .selected highlight
       return;
     }
     if (hasChildren) toggleExpanded();
@@ -646,6 +661,251 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
   return wrapper;
 }
 
+// ============================================================
+// Site Map Source pane — renders the latest captured response at the
+// selected tree node, like DevTools' Sources tab opening a file.
+// Includes line numbers (CSS counter) and an in-source search bar.
+// ============================================================
+
+// In-source search state. Resets whenever a new body renders, but the
+// search term itself persists in the input so switching files re-runs
+// the same query against the new content.
+let _sourceSearchMarks = [];
+let _sourceSearchCursor = -1;
+
+function _resetSourceSearch() {
+  _sourceSearchMarks = [];
+  _sourceSearchCursor = -1;
+  _refreshSourceSearchUI();
+}
+
+function _refreshSourceSearchUI() {
+  const countEl = document.getElementById('sitemap-source-search-count');
+  const prevBtn = document.getElementById('sitemap-source-search-prev');
+  const nextBtn = document.getElementById('sitemap-source-search-next');
+  const total = _sourceSearchMarks.length;
+  const term = document.getElementById('sitemap-source-search').value.trim();
+  if (!term) {
+    countEl.textContent = '';
+  } else if (total === 0) {
+    countEl.textContent = 'No matches';
+  } else {
+    countEl.textContent = `${_sourceSearchCursor + 1} / ${total}`;
+  }
+  prevBtn.disabled = total === 0;
+  nextBtn.disabled = total === 0;
+}
+
+function applySourceSearch(rawTerm) {
+  const term = (rawTerm || '').trim().toLowerCase();
+  // Always strip stale marks — clearing the input or changing the
+  // term needs a clean slate before the next pass.
+  const body = document.getElementById('sitemap-source-body');
+  body.querySelectorAll('mark.source-search-mark').forEach(m => {
+    const parent = m.parentNode;
+    if (!parent) return;
+    parent.replaceChild(document.createTextNode(m.textContent), m);
+    parent.normalize();
+  });
+  if (!term) {
+    _resetSourceSearch();
+    return;
+  }
+  // Walk text nodes, wrap matches in <mark>. Skips inside existing
+  // marks so re-runs don't nest. Source body uses <pre><span class=line>
+  // so marks naturally land inside line spans (no structural breakage).
+  const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const p = node.parentNode;
+      if (!p) return NodeFilter.FILTER_REJECT;
+      if (p.nodeName === 'SCRIPT' || p.nodeName === 'STYLE') return NodeFilter.FILTER_REJECT;
+      if (p.classList && p.classList.contains('source-search-mark')) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const targets = [];
+  let n;
+  while ((n = walker.nextNode())) {
+    if (n.nodeValue && n.nodeValue.toLowerCase().includes(term)) targets.push(n);
+  }
+  for (const node of targets) {
+    const text = node.nodeValue;
+    const lower = text.toLowerCase();
+    let last = 0;
+    let idx;
+    const frag = document.createDocumentFragment();
+    while ((idx = lower.indexOf(term, last)) !== -1) {
+      if (idx > last) frag.appendChild(document.createTextNode(text.slice(last, idx)));
+      const m = document.createElement('mark');
+      m.className = 'source-search-mark';
+      m.textContent = text.slice(idx, idx + term.length);
+      frag.appendChild(m);
+      last = idx + term.length;
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  }
+  _sourceSearchMarks = Array.from(body.querySelectorAll('mark.source-search-mark'));
+  _sourceSearchCursor = _sourceSearchMarks.length > 0 ? 0 : -1;
+  if (_sourceSearchCursor === 0) _focusSourceSearchMark(0);
+  _refreshSourceSearchUI();
+}
+
+function _focusSourceSearchMark(idx) {
+  _sourceSearchMarks.forEach(m => m.classList.remove('active'));
+  if (idx < 0 || idx >= _sourceSearchMarks.length) return;
+  const m = _sourceSearchMarks[idx];
+  m.classList.add('active');
+  m.scrollIntoView({ block: 'center', behavior: 'instant' });
+}
+
+function navigateSourceSearch(direction) {
+  if (_sourceSearchMarks.length === 0) return;
+  const total = _sourceSearchMarks.length;
+  _sourceSearchCursor = (_sourceSearchCursor + direction + total) % total;
+  _focusSourceSearchMark(_sourceSearchCursor);
+  _refreshSourceSearchUI();
+}
+
+// Search bar wiring: live-search on input (300ms debounce), prev/next
+// via buttons or Shift+Enter / Enter while focused, Esc clears.
+{
+  const searchInput = document.getElementById('sitemap-source-search');
+  let _searchDebounce = 0;
+  searchInput.addEventListener('input', () => {
+    clearTimeout(_searchDebounce);
+    _searchDebounce = setTimeout(() => applySourceSearch(searchInput.value), 300);
+  });
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      // First Enter while marks are stale (e.g., user typed fast and
+      // hasn't hit debounce yet) forces an immediate search.
+      if (_sourceSearchMarks.length === 0) applySourceSearch(searchInput.value);
+      else navigateSourceSearch(e.shiftKey ? -1 : 1);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      searchInput.value = '';
+      applySourceSearch('');
+    }
+  });
+  document.getElementById('sitemap-source-search-prev').addEventListener('click', () => navigateSourceSearch(-1));
+  document.getElementById('sitemap-source-search-next').addEventListener('click', () => navigateSourceSearch(1));
+}
+
+function renderSitemapSource(req, host, path) {
+  if (!req) return;
+  sitemapSourcePane.classList.remove('hidden');
+
+  document.getElementById('sitemap-source-url').textContent = req.url;
+  document.getElementById('sitemap-source-url').title = req.url;
+  document.getElementById('sitemap-source-method').textContent = req.method || '';
+
+  const statusEl = document.getElementById('sitemap-source-status');
+  const s = req.status || 0;
+  statusEl.className = 'sitemap-source-status'
+    + (s >= 200 && s < 300 ? ' s-2xx'
+       : s >= 300 && s < 400 ? ' s-3xx'
+       : s >= 400 && s < 500 ? ' s-4xx'
+       : s >= 500 ? ' s-5xx' : '');
+  statusEl.textContent = s ? String(s) : '';
+
+  document.getElementById('sitemap-source-type').textContent = req.mimeType || req.type || '';
+  document.getElementById('sitemap-source-size').textContent = req.size || '';
+
+  const bodyEl = document.getElementById('sitemap-source-body');
+
+  // Imported requests carry no HAR entry, so an unloaded body just
+  // means the source file didn't include it (Detection-only exports).
+  if (req._imported && !req.responseBodyLoaded) {
+    bodyEl.innerHTML = '<div class="sitemap-empty">Not included in the imported file</div>';
+    return;
+  }
+
+  if (req.responseBodyLoaded) {
+    _renderSitemapSourceBody(bodyEl, req);
+    return;
+  }
+
+  // Async fetch via HAR getContent. Re-check selection at callback
+  // time so a fast double-click doesn't clobber the later selection's
+  // content with the earlier fetch's result.
+  bodyEl.innerHTML = '<div class="sitemap-empty">Loading source...</div>';
+  if (!req._harEntry || typeof req._harEntry.getContent !== 'function') {
+    bodyEl.innerHTML = '<div class="sitemap-empty">Source not available</div>';
+    return;
+  }
+  req._harEntry.getContent((body, encoding) => {
+    if (body !== undefined && body !== null) {
+      req.responseBody = body;
+      req.responseBase64 = encoding === 'base64';
+      req.responseBodyLoaded = true;
+    }
+    if (!sitemapSelectedNode
+        || sitemapSelectedNode.host !== host
+        || sitemapSelectedNode.path !== path) return;
+    _renderSitemapSourceBody(bodyEl, req);
+  });
+}
+
+function _renderSitemapSourceBody(el, req) {
+  // Reset search state for the new source — the marks from the
+  // previous body are gone, so the cursor index becomes meaningless.
+  _resetSourceSearch();
+
+  if (req.responseBody == null) {
+    el.innerHTML = '<div class="sitemap-empty">Source not available</div>';
+    return;
+  }
+  const mime = req.mimeType || '';
+
+  // Image preview
+  if (mime.startsWith('image/')) {
+    const src = req.responseBase64
+      ? `data:${mime};base64,${req.responseBody}`
+      : `data:${mime};base64,${btoa(req.responseBody)}`;
+    el.innerHTML = `<div class="sitemap-source-image"><img src="${escapeAttr(src)}" alt=""></div>`;
+    return;
+  }
+
+  // Binary base64 — too noisy to display as text
+  if (req.responseBase64) {
+    el.innerHTML = `<div class="sitemap-empty">Binary content (${formatBytes(req.responseBody.length)} base64-encoded)</div>`;
+    return;
+  }
+
+  // JSON — pretty-print + syntax highlight, then wrap each line for
+  // gutter line numbers and search marking. Falls through to plain
+  // rendering if the body isn't valid JSON.
+  let html = null;
+  try {
+    const parsed = JSON.parse(req.responseBody);
+    const pretty = JSON.stringify(parsed, null, 2);
+    html = _wrapLines(syntaxHighlightJson(pretty));
+  } catch { /* not JSON — render as plain monospace */ }
+  if (html == null) {
+    html = _wrapLines(escapeHtml(req.responseBody));
+  }
+  el.innerHTML = `<pre class="sitemap-source-code">${html}</pre>`;
+  // If the user had an active search before switching files, re-run
+  // it against the freshly-rendered body so highlights survive.
+  const term = document.getElementById('sitemap-source-search').value;
+  if (term && term.trim()) applySourceSearch(term);
+}
+
+// Wrap each line of pre-escaped HTML in a span so the CSS counter
+// produces line numbers. Splits on '\n' — JSON pretty-print + plain
+// escapeHtml never emit highlight spans that cross newlines, so naive
+// split is safe. Empty lines get a non-breaking placeholder so the
+// gutter still shows a number.
+function _wrapLines(html) {
+  const lines = html.split('\n');
+  return lines.map(line =>
+    `<span class="line">${line === '' ? ' ' : line}</span>`
+  ).join('');
+}
 
 // ============================================================
 // Send to Browser — open captured request in a new tab so it goes

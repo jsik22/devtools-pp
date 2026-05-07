@@ -36,6 +36,27 @@
         <div class="sitemap-tree-pane">
           <div id="sitemap-tree" class="sitemap-tree"></div>
         </div>
+        <div class="split-gutter split-gutter-h"></div>
+        <div class="sitemap-source-pane hidden" id="sitemap-source">
+          <div class="sitemap-source-header">
+            <span id="sitemap-source-url" class="sitemap-source-url"></span>
+            <button id="sitemap-source-close" class="btn detail-close-btn">X</button>
+          </div>
+          <div class="sitemap-source-meta">
+            <span id="sitemap-source-method" class="sitemap-source-method"></span>
+            <span id="sitemap-source-status" class="sitemap-source-status"></span>
+            <span id="sitemap-source-type" class="sitemap-source-type"></span>
+            <span id="sitemap-source-size" class="sitemap-source-size"></span>
+            <span class="sitemap-source-meta-spacer"></span>
+            <input type="text" id="sitemap-source-search" class="sitemap-source-search" placeholder="Search in source..." spellcheck="false">
+            <button id="sitemap-source-search-prev" class="btn btn-xs" title="Previous (Shift+Enter)" disabled>&#9650;</button>
+            <button id="sitemap-source-search-next" class="btn btn-xs" title="Next (Enter)" disabled>&#9660;</button>
+            <span id="sitemap-source-search-count" class="sitemap-source-search-count"></span>
+          </div>
+          <div id="sitemap-source-body" class="sitemap-source-body">
+            <div class="sitemap-empty">Click a resource in the tree to view its source.</div>
+          </div>
+        </div>
       </div>
     </section>
 

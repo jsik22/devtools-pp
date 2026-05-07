@@ -29,7 +29,6 @@ document.querySelectorAll('.tab').forEach(tab => {
 // to whichever main host was active at capture time, nested under
 // that main host's `external` map.
 const sitemapTree = {};
-let sitemapSelectedNode = null; // { host, path }
 let targetHost = null;
 const expandedNodes = new Set(); // tracks expanded tree node keys (e.g. "host:/path")
 
@@ -104,16 +103,8 @@ chrome.devtools.network.onNavigated.addListener((url) => {
   renderSitemapTree();
   updateSitemapStats();
 });
-const sitemapTypeFilter = document.getElementById('sitemap-type-filter');
-const sitemapStatusFilter = document.getElementById('sitemap-status-filter');
 const sitemapTreeEl = document.getElementById('sitemap-tree');
-const sitemapDetail = document.getElementById('sitemap-detail');
-const sitemapDetailPath = document.getElementById('sitemap-detail-path');
-const sitemapDetailList = document.getElementById('sitemap-detail-list');
 const sitemapStats = document.getElementById('sitemap-stats');
-
-const sitemapPageScanBtn = document.getElementById('sitemap-page-scan');
-sitemapPageScanBtn.addEventListener('click', runPageScan);
 
 // Auto Crawl: drives the inspected tab through a list of URLs while
 // Network monitoring records everything. Useful for sweeping a known
@@ -284,38 +275,13 @@ _crawlImportFile.addEventListener('change', (e) => {
   e.target.value = '';
 });
 
-function updatePageScanButton() {
-  // Page Scan operates on the currently-inspected page DOM. If the
-  // user has selected a node belonging to a different host (a
-  // previously-visited site preserved in the tree), the result would
-  // not correspond to that host — disable the button to avoid
-  // confusion.
-  const selectedHost = sitemapSelectedNode && sitemapSelectedNode.host;
-  const mismatch = selectedHost && targetHost && selectedHost !== targetHost;
-  if (mismatch) {
-    sitemapPageScanBtn.disabled = true;
-    sitemapPageScanBtn.title = 'Page Scan only works on the currently open page';
-  } else {
-    sitemapPageScanBtn.disabled = false;
-    sitemapPageScanBtn.title = '';
-  }
-}
 document.getElementById('sitemap-clear').addEventListener('click', () => {
   Object.keys(sitemapTree).forEach(k => delete sitemapTree[k]);
-  sitemapSelectedNode = null;
   expandedNodes.clear();
   _sitemapPending.length = 0;
   renderSitemapTree();
-  sitemapDetail.classList.add('hidden');
   updateSitemapStats();
 });
-document.getElementById('sitemap-detail-close').addEventListener('click', () => {
-  sitemapSelectedNode = null;
-  sitemapDetail.classList.add('hidden');
-  renderSitemapTree();
-});
-sitemapTypeFilter.addEventListener('change', renderSitemapTree);
-sitemapStatusFilter.addEventListener('change', renderSitemapTree);
 
 function classifyMimeType(mimeType) {
   if (!mimeType) return 'other';
@@ -328,179 +294,6 @@ function classifyMimeType(mimeType) {
   return 'other';
 }
 
-function runPageScan() {
-  const btn = document.getElementById('sitemap-page-scan');
-  btn.textContent = 'Scanning...';
-  btn.disabled = true;
-
-  const expression = `
-    (function() {
-      var results = { links: [], forms: [], scripts: [] };
-
-      // Links: <a href>
-      document.querySelectorAll('a[href]').forEach(function(a) {
-        var href = a.href;
-        if (!href || href.startsWith('javascript:') || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
-        results.links.push(href);
-      });
-
-      // Forms: <form>
-      document.querySelectorAll('form').forEach(function(form) {
-        var fields = [];
-        form.querySelectorAll('input, select, textarea').forEach(function(el) {
-          var name = el.name || el.id || '';
-          if (!name) return;
-          fields.push({
-            tag: el.tagName.toLowerCase(),
-            type: el.type || 'text',
-            name: name,
-            value: el.value || '',
-            hidden: el.type === 'hidden'
-          });
-        });
-        results.forms.push({
-          action: form.action || window.location.href,
-          method: (form.method || 'GET').toUpperCase(),
-          id: form.id || '',
-          fields: fields
-        });
-      });
-
-      // Scripts: <script src>
-      document.querySelectorAll('script[src]').forEach(function(s) {
-        results.scripts.push(s.src);
-      });
-
-      return JSON.stringify(results);
-    })()
-  `;
-
-  chrome.devtools.inspectedWindow.eval(expression, (result, err) => {
-    btn.textContent = 'Page Scan';
-    btn.disabled = false;
-
-    if (err) return;
-
-    try {
-      const data = JSON.parse(result);
-      // Dedup
-      data.links = [...new Set(data.links)];
-      data.scripts = [...new Set(data.scripts)];
-      showPageScanResults(data);
-    } catch { /* ignore parse errors */ }
-  });
-}
-
-function showPageScanResults(data) {
-  sitemapSelectedNode = null;
-  sitemapDetail.classList.remove('hidden');
-  sitemapDetailList.innerHTML = '';
-
-  // Single-line header: "Page Scan · 110 Links · 2 Forms · 13 Scripts".
-  // Matches the Network detail panel header style (system font,
-  // light gray bar). Reset class first so prior path-display state
-  // doesn't bleed into the page-scan view.
-  sitemapDetailPath.className = 'sitemap-detail-path page-scan-title';
-  const links = data.links.length;
-  const forms = data.forms.length;
-  const scripts = data.scripts.length;
-  if (links === 0 && forms === 0 && scripts === 0) {
-    sitemapDetailPath.innerHTML = 'Page Scan · <span class="page-scan-empty">No results</span>';
-  } else {
-    const stat = (n, label) =>
-      `<span class="page-scan-stat"><strong>${n}</strong> ${label}</span>`;
-    sitemapDetailPath.innerHTML = 'Page Scan · ' +
-      stat(links, 'Links') + ' · ' + stat(forms, 'Forms') + ' · ' + stat(scripts, 'Scripts');
-  }
-
-  // Links section
-  buildPageScanSection('Links', data.links, url => {
-    const item = document.createElement('div');
-    item.className = 'scan-item-row';
-    const urlEl = document.createElement('span');
-    urlEl.className = 'scan-item-url';
-    urlEl.textContent = url;
-    urlEl.title = url;
-    item.appendChild(urlEl);
-    const btn = document.createElement('button');
-    btn.className = 'btn';
-    btn.textContent = 'Open';
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      window.open(url, '_blank');
-    });
-    item.appendChild(btn);
-    return item;
-  });
-
-  // Forms section
-  buildPageScanSection('Forms', data.forms, form => {
-    const wrapper = document.createElement('div');
-    const item = document.createElement('div');
-    item.className = 'scan-item-row';
-    const methodEl = document.createElement('span');
-    methodEl.className = `sd-method ${form.method.toLowerCase()}`;
-    methodEl.textContent = form.method;
-    item.appendChild(methodEl);
-    const urlEl = document.createElement('span');
-    urlEl.className = 'scan-item-url';
-    urlEl.textContent = form.action;
-    urlEl.title = form.action;
-    item.appendChild(urlEl);
-    const btn = document.createElement('button');
-    btn.className = 'btn';
-    btn.textContent = 'Replay';
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      sendToReplay({
-        method: form.method, url: form.action,
-        requestHeaders: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        requestPostData: form.fields.map(f => encodeURIComponent(f.name) + '=' + encodeURIComponent(f.value)).join('&')
-      });
-    });
-    item.appendChild(btn);
-    wrapper.appendChild(item);
-    if (form.fields.length > 0) {
-      const fieldsEl = document.createElement('div');
-      fieldsEl.className = 'sitemap-form-fields';
-      fieldsEl.innerHTML = '<span class="sf-label">Fields:</span> ' +
-        form.fields.map(f => {
-          const cls = f.hidden ? 'sf-field sf-hidden' : 'sf-field';
-          const val = f.value ? `=${escapeHtml(f.value.substring(0, 30))}` : '';
-          return `<span class="${cls}" title="${escapeHtml(f.type)}">${escapeHtml(f.name)}${val}</span>`;
-        }).join(' ');
-      wrapper.appendChild(fieldsEl);
-    }
-    return wrapper;
-  });
-
-  // Scripts section
-  buildPageScanSection('Scripts', data.scripts, url => {
-    const item = document.createElement('div');
-    item.className = 'scan-item-row scan-script';
-    item.textContent = url;
-    item.title = url;
-    return item;
-  });
-}
-
-function buildPageScanSection(title, items, renderItem) {
-  if (items.length === 0) return;
-  const header = document.createElement('div');
-  header.className = 'scan-section-header';
-  header.innerHTML = `<span class="arrow">&#9660;</span> ${title} (${items.length})`;
-  sitemapDetailList.appendChild(header);
-  const list = document.createElement('div');
-  list.className = 'scan-section-list';
-  items.forEach(item => list.appendChild(renderItem(item)));
-  sitemapDetailList.appendChild(list);
-  let collapsed = false;
-  header.addEventListener('click', () => {
-    collapsed = !collapsed;
-    header.querySelector('.arrow').innerHTML = collapsed ? '&#9654;' : '&#9660;';
-    list.style.display = collapsed ? 'none' : '';
-  });
-}
 
 function addToSitemap(req) {
   let parsed;
@@ -596,22 +389,10 @@ function updateSitemapStats() {
 }
 
 function matchesSitemapFilters(req) {
-  // Scope is now a view filter too — out-of-scope previously-captured
+  // Site Map's only filter is the global Scope — out-of-scope captured
   // requests get hidden from the tree until the user clears the scope.
-  if (!inGlobalScope(req.url)) return false;
-
-  const typeF = sitemapTypeFilter.value;
-  if (typeF && classifyMimeType(req.mimeType) !== typeF) return false;
-
-  const statusF = sitemapStatusFilter.value;
-  if (statusF) {
-    const s = req.status;
-    if (statusF === '2xx' && (s < 200 || s >= 300)) return false;
-    if (statusF === '3xx' && (s < 300 || s >= 400)) return false;
-    if (statusF === '4xx' && (s < 400 || s >= 500)) return false;
-    if (statusF === '5xx' && (s < 500 || s >= 600)) return false;
-  }
-  return true;
+  // Type/Status filtering lives exclusively in the Network tab now.
+  return inGlobalScope(req.url);
 }
 
 function nodeHasFilteredRequests(node) {
@@ -657,12 +438,6 @@ function renderSitemapTree() {
     const el = buildTreeNode(host, sitemapTree[host], host, '', true);
     if (el) sitemapTreeEl.appendChild(el);
   }
-
-  // Restore selection state
-  if (sitemapSelectedNode) {
-    renderSitemapDetail();
-  }
-  updatePageScanButton();
 }
 
 // Per-main-host External group. Lives as a child of the main host's
@@ -734,10 +509,6 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
   row.className = 'sitemap-node';
   const isHost = currentPath === '';
   const fullPath = currentPath || '/';
-  const isSelected = sitemapSelectedNode &&
-    sitemapSelectedNode.host === host &&
-    sitemapSelectedNode.path === fullPath;
-  if (isSelected) row.classList.add('selected');
   // Highlight whichever host is the currently-active inspected page,
   // and show "where the user last was on this host" as a tooltip on
   // any host that's been visited during this session.
@@ -839,137 +610,42 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
     wrapper.appendChild(childrenEl);
   }
 
-  // Event: toggle
-  toggle.addEventListener('click', (e) => {
-    e.stopPropagation();
+  // Toggle helper — expands or collapses this node's children. Used
+  // by both the explicit toggle arrow and the row-click fallback.
+  function toggleExpanded() {
     const collapsed = childrenEl.classList.toggle('collapsed');
     toggle.textContent = collapsed ? '▶' : '▼';
     if (collapsed) expandedNodes.delete(nodeKey); else expandedNodes.add(nodeKey);
+  }
+
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleExpanded();
   });
 
-  // Event: node click → detail panel
-  row.addEventListener('click', () => {
-    sitemapSelectedNode = { host, path: fullPath };
-    renderSitemapTree();
-    sitemapDetail.classList.remove('hidden');
-    renderSitemapDetail();
+  // Row click:
+  //   - Host node → set the global scope to host/* and jump to the
+  //     Network tab. Same effect as the "Exact" entry of the Set Scope
+  //     dropdown, just without the extra hover step.
+  //   - Path / leaf node → expand or collapse its subtree. Path nodes
+  //     have no scope-jump action (the dropdown only offers Exact /
+  //     Wildcard at host level).
+  row.addEventListener('click', (e) => {
+    // Ignore clicks that landed on the host's Set Scope dropdown — it
+    // has its own change handler and shouldn't double-trigger the row.
+    if (e.target.closest('.sitemap-scope-select')) return;
+    if (isHost) {
+      applyScopePattern(`${host}/*`);
+      const networkTabBtn = document.querySelector('[data-tab="network"]');
+      if (networkTabBtn) networkTabBtn.click();
+      return;
+    }
+    if (hasChildren) toggleExpanded();
   });
 
   return wrapper;
 }
 
-function collectNodeRequests(node) {
-  let reqs = [...node.requests];
-  Object.values(node.children).forEach(child => {
-    reqs = reqs.concat(collectNodeRequests(child));
-  });
-  return reqs;
-}
-
-function getNodeByPath(host, path) {
-  // The host might be a top-level main host or an external host
-  // nested under any main host's `external` map.
-  let hostNode = sitemapTree[host];
-  if (!hostNode) {
-    for (const mainHost of Object.keys(sitemapTree)) {
-      const ext = sitemapTree[mainHost].external;
-      if (ext && ext[host]) { hostNode = ext[host]; break; }
-    }
-  }
-  if (!hostNode) return null;
-  if (path === '/') return hostNode;
-  const segments = path.split('/').filter(Boolean);
-  let node = hostNode;
-  for (const seg of segments) {
-    if (!node.children[seg]) return null;
-    node = node.children[seg];
-  }
-  return node;
-}
-
-function renderSitemapDetail() {
-  if (!sitemapSelectedNode) return;
-  const { host, path } = sitemapSelectedNode;
-  const node = getNodeByPath(host, path);
-  if (!node) return;
-
-  sitemapDetailPath.className = 'sitemap-detail-path';
-  sitemapDetailPath.textContent = host + path;
-
-  const allReqs = collectNodeRequests(node).filter(matchesSitemapFilters);
-  sitemapDetailList.innerHTML = '';
-
-  if (allReqs.length === 0) {
-    sitemapDetailList.innerHTML = '<div class="sitemap-empty">No requests matching filter</div>';
-    return;
-  }
-
-  for (const req of allReqs) {
-    const item = document.createElement('div');
-    item.className = 'sitemap-detail-item';
-
-    const mLower = req.method.toLowerCase();
-
-    // Method
-    const methodEl = document.createElement('span');
-    methodEl.className = `sd-method ${mLower}`;
-    methodEl.textContent = req.method;
-    item.appendChild(methodEl);
-
-    // URL
-    const urlEl = document.createElement('span');
-    urlEl.className = 'sd-url';
-    urlEl.textContent = req.url;
-    urlEl.title = req.url;
-    item.appendChild(urlEl);
-
-    // Status
-    const statusEl = document.createElement('span');
-    statusEl.className = 'sd-status';
-    const s = req.status;
-    if (s >= 200 && s < 300) statusEl.classList.add('s-2xx');
-    else if (s >= 300 && s < 400) statusEl.classList.add('s-3xx');
-    else if (s >= 400) statusEl.classList.add('s-4xx');
-    statusEl.textContent = s || (req._discovered ? 'scan' : '-');
-    item.appendChild(statusEl);
-
-    // Type
-    const typeEl = document.createElement('span');
-    typeEl.className = 'sd-type';
-    typeEl.textContent = req.type || '-';
-    item.appendChild(typeEl);
-
-    // Replay button
-    const actionsEl = document.createElement('span');
-    actionsEl.className = 'sd-actions';
-    const replayBtn = document.createElement('button');
-    replayBtn.className = 'btn';
-    replayBtn.textContent = 'Replay';
-    replayBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      sendToReplay(req);
-    });
-    actionsEl.appendChild(replayBtn);
-    item.appendChild(actionsEl);
-
-    sitemapDetailList.appendChild(item);
-
-    // Show form fields if this is a scanned form
-    if (req._formData) {
-      const fieldsEl = document.createElement('div');
-      fieldsEl.className = 'sitemap-form-fields';
-      const f = req._formData;
-      let fieldsHtml = '<span class="sf-label">Fields:</span> ';
-      fieldsHtml += f.fields.map(field => {
-        const cls = field.hidden ? 'sf-field sf-hidden' : 'sf-field';
-        const val = field.value ? `=${escapeHtml(field.value.substring(0, 30))}` : '';
-        return `<span class="${cls}" title="${escapeHtml(field.type)}">${escapeHtml(field.name)}${val}</span>`;
-      }).join(' ');
-      fieldsEl.innerHTML = fieldsHtml;
-      sitemapDetailList.appendChild(fieldsEl);
-    }
-  }
-}
 
 // ============================================================
 // Send to Browser — open captured request in a new tab so it goes
@@ -1119,25 +795,12 @@ function sendToReplay(req) {
 
   // Track which captured request is being replayed so renderDiffBadges
   // / the "Original" restore button can find the right baseline. Site
-  // Map / scan-result Replay paths previously left selectedRequestId
-  // at whatever was last clicked in the Network table, so the diff
-  // badge compared the replay against an unrelated request (e.g. a
-  // 200 GET while the user was actually replaying a 500 POST).
+  // Map's Replay button previously left selectedRequestId at whatever
+  // was last clicked in the Network table, so the diff badge compared
+  // the replay against an unrelated request.
   selectedRequestId = req.requestId || null;
 
-  // For scanned forms, build a proper request object with form fields as body
-  if (req._formData) {
-    const form = req._formData;
-    const formReq = {
-      method: form.method,
-      url: form.action,
-      requestHeaders: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      requestPostData: form.fields.map(f => encodeURIComponent(f.name) + '=' + encodeURIComponent(f.value)).join('&')
-    };
-    populateReplayForm(formReq);
-  } else {
-    populateReplayForm(req);
-  }
+  populateReplayForm(req);
 }
 
 // ============================================================

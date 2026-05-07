@@ -29,38 +29,12 @@
     <!-- Site Map tab -->
     <section id="sitemap" class="tab-content active">
       <div class="toolbar">
-        <button id="sitemap-page-scan" class="btn btn-primary">Page Scan</button>
         <button id="sitemap-clear" class="btn">Clear</button>
         <span id="sitemap-stats" class="badge">0 hosts · 0 endpoints</span>
-        <select id="sitemap-type-filter">
-          <option value="">All Types</option>
-          <option value="api">API (json/xml)</option>
-          <option value="page">Pages (html)</option>
-          <option value="script">Scripts (js)</option>
-          <option value="style">Styles (css)</option>
-          <option value="image">Images</option>
-          <option value="font">Fonts</option>
-          <option value="other">Other</option>
-        </select>
-        <select id="sitemap-status-filter">
-          <option value="">All Status</option>
-          <option value="2xx">2xx Success</option>
-          <option value="3xx">3xx Redirect</option>
-          <option value="4xx">4xx Client Error</option>
-          <option value="5xx">5xx Server Error</option>
-        </select>
       </div>
       <div class="sitemap-split">
         <div class="sitemap-tree-pane">
           <div id="sitemap-tree" class="sitemap-tree"></div>
-        </div>
-        <div class="split-gutter split-gutter-h"></div>
-        <div class="sitemap-detail-pane hidden" id="sitemap-detail">
-          <div class="sitemap-detail-header">
-            <span id="sitemap-detail-path" class="sitemap-detail-path">/</span>
-            <button id="sitemap-detail-close" class="btn detail-close-btn">X</button>
-          </div>
-          <div id="sitemap-detail-list" class="sitemap-detail-list"></div>
         </div>
       </div>
     </section>

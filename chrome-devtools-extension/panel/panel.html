@@ -90,6 +90,27 @@
           <button id="network-selection-clear" class="btn btn-xs" title="Clear selection">X</button>
         </span>
         <button id="network-auto-crawl" class="btn">Auto Crawl</button>
+        <div class="network-filter-dropdown">
+          <button id="network-filter-btn" class="btn" title="Filter visible requests by type and status code">Filter ▾</button>
+          <div id="network-filter-menu" class="network-filter-menu hidden">
+            <div class="network-filter-section">Type</div>
+            <label class="network-filter-item"><input type="checkbox" data-filter-type="api"> API <span class="muted">(json/xml)</span></label>
+            <label class="network-filter-item"><input type="checkbox" data-filter-type="page"> Pages <span class="muted">(html)</span></label>
+            <label class="network-filter-item"><input type="checkbox" data-filter-type="script"> Scripts <span class="muted">(js)</span></label>
+            <label class="network-filter-item"><input type="checkbox" data-filter-type="style"> Styles <span class="muted">(css)</span></label>
+            <label class="network-filter-item"><input type="checkbox" data-filter-type="image"> Images</label>
+            <label class="network-filter-item"><input type="checkbox" data-filter-type="font"> Fonts</label>
+            <label class="network-filter-item"><input type="checkbox" data-filter-type="other"> Other</label>
+            <div class="network-filter-divider"></div>
+            <div class="network-filter-section">Status</div>
+            <label class="network-filter-item"><input type="checkbox" data-filter-status="2xx"> 2xx Success</label>
+            <label class="network-filter-item"><input type="checkbox" data-filter-status="3xx"> 3xx Redirect</label>
+            <label class="network-filter-item"><input type="checkbox" data-filter-status="4xx"> 4xx Client Error</label>
+            <label class="network-filter-item"><input type="checkbox" data-filter-status="5xx"> 5xx Server Error</label>
+            <div class="network-filter-divider"></div>
+            <button id="network-filter-reset" class="btn btn-xs network-filter-reset">Reset</button>
+          </div>
+        </div>
         <div class="network-search-group">
           <input type="text" id="network-search" class="filter-input network-search-input" placeholder="Search requests...">
           <button id="network-search-clear" class="btn btn-xs network-search-btn hidden" title="Clear search (Esc)">X</button>

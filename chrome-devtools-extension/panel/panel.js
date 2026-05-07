@@ -1155,6 +1155,37 @@ let networkIdCounter = 0;
 const selectedExportIds = new Set();
 let _lastCheckedReqId = null; // anchor for shift-click range selection
 
+// View filter — multi-select Type (mime category) + Status (HTTP code
+// range). Empty Set on either side means "no filter on that axis";
+// when both are empty the filter is fully inactive. Independent of
+// Scope (which acts as a domain gate) and Search (which marks but
+// doesn't hide). Applied at render time only — captured data stays
+// intact in networkRequests so toggling filters never loses anything.
+const networkFilter = {
+  types: new Set(),    // 'api' | 'page' | 'script' | 'style' | 'image' | 'font' | 'other'
+  statuses: new Set(), // '2xx' | '3xx' | '4xx' | '5xx'
+};
+
+function networkFilterIsActive() {
+  return networkFilter.types.size > 0 || networkFilter.statuses.size > 0;
+}
+
+function matchesNetworkFilter(req) {
+  if (networkFilter.types.size > 0) {
+    if (!networkFilter.types.has(classifyMimeType(req.mimeType))) return false;
+  }
+  if (networkFilter.statuses.size > 0) {
+    const s = req.status;
+    let bucket = null;
+    if (s >= 200 && s < 300) bucket = '2xx';
+    else if (s >= 300 && s < 400) bucket = '3xx';
+    else if (s >= 400 && s < 500) bucket = '4xx';
+    else if (s >= 500 && s < 600) bucket = '5xx';
+    if (!bucket || !networkFilter.statuses.has(bucket)) return false;
+  }
+  return true;
+}
+
 const networkTable = document.querySelector('#network-table tbody');
 const networkCount = document.getElementById('network-count');
 const networkDetail = document.getElementById('network-detail');
@@ -1664,6 +1695,67 @@ document.addEventListener('click', (e) => {
   _exportMenu.classList.add('hidden');
 });
 
+// ---------- Network Filter (Type / Status multi-select) ----------
+const _filterBtn = document.getElementById('network-filter-btn');
+const _filterMenu = document.getElementById('network-filter-menu');
+_filterBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  _filterMenu.classList.toggle('hidden');
+});
+document.addEventListener('click', (e) => {
+  if (_filterMenu.classList.contains('hidden')) return;
+  if (e.target.closest('.network-filter-dropdown')) return;
+  _filterMenu.classList.add('hidden');
+});
+
+// Sync the menu's checkbox state into the networkFilter Sets and re-
+// render. Called on every change inside the menu — filtering is
+// instant, so toggling a checkbox immediately reflects in the table.
+function applyNetworkFilterFromUI() {
+  networkFilter.types.clear();
+  networkFilter.statuses.clear();
+  _filterMenu.querySelectorAll('input[data-filter-type]').forEach(cb => {
+    if (cb.checked) networkFilter.types.add(cb.dataset.filterType);
+  });
+  _filterMenu.querySelectorAll('input[data-filter-status]').forEach(cb => {
+    if (cb.checked) networkFilter.statuses.add(cb.dataset.filterStatus);
+  });
+  _refreshFilterButtonLabel();
+  renderNetworkTable();
+  // Selection persists across filter toggles (same model as Scope) but
+  // master indeterminate ratio depends on what's visible.
+  updateSelectionUI();
+  // Search match list ANDs with what's visible — a filter change can
+  // flip rows in / out of the matched set.
+  if (searchTerm) {
+    recomputeSearchMatches();
+    refreshAllRowDots();
+    refreshSearchUI();
+  }
+}
+
+function _refreshFilterButtonLabel() {
+  const total = networkFilter.types.size + networkFilter.statuses.size;
+  if (total === 0) {
+    _filterBtn.textContent = 'Filter ▾';
+    _filterBtn.classList.remove('has-active');
+  } else {
+    _filterBtn.textContent = `Filter ▾ (${total})`;
+    _filterBtn.classList.add('has-active');
+  }
+}
+
+_filterMenu.querySelectorAll('input[data-filter-type], input[data-filter-status]').forEach(cb => {
+  cb.addEventListener('change', applyNetworkFilterFromUI);
+});
+
+document.getElementById('network-filter-reset').addEventListener('click', () => {
+  _filterMenu.querySelectorAll('input[data-filter-type], input[data-filter-status]').forEach(cb => {
+    cb.checked = false;
+  });
+  applyNetworkFilterFromUI();
+});
+
 function fetchResponseBody(req) {
   if (req.responseBodyLoaded) return;
   if (!req._harEntry) return;
@@ -1798,11 +1890,17 @@ function buildNetworkRow(r) {
 
 function updateNetworkCount() {
   const total = networkRequests.length;
-  // When a scope is active, count how many existing requests pass the
-  // current view filter so the badge can show "filtered / total".
-  if (globalScope.regex) {
+  // When Scope or the Type/Status Filter is active, show "visible / total
+  // (filtered)" so the user knows part of the captured set is hidden.
+  const hasScope = !!globalScope.regex;
+  const hasFilter = networkFilterIsActive();
+  if (hasScope || hasFilter) {
     let filtered = 0;
-    for (const r of networkRequests) if (inGlobalScope(r.url)) filtered++;
+    for (const r of networkRequests) {
+      if (hasScope && !inGlobalScope(r.url)) continue;
+      if (hasFilter && !matchesNetworkFilter(r)) continue;
+      filtered++;
+    }
     networkCount.textContent = filtered === total
       ? `${total} requests`
       : `${filtered} / ${total} requests (filtered)`;
@@ -1838,11 +1936,19 @@ function updateNetworkRowBadges(req) {
 // use the append/batch path below to avoid O(n²) rebuilds.
 function renderNetworkTable() {
   networkTable.innerHTML = '';
-  // Apply the Scope as a view filter — out-of-scope requests captured
-  // earlier are hidden until the user clears the scope.
-  const visible = globalScope.regex
-    ? networkRequests.filter(r => inGlobalScope(r.url))
-    : networkRequests;
+  // Apply Scope (domain gate) + Type/Status Filter (view filter) so
+  // earlier-captured rows reflect the current toggle state. Both are
+  // pure view filters — networkRequests is unchanged.
+  const hasScope = !!globalScope.regex;
+  const hasFilter = networkFilterIsActive();
+  let visible = networkRequests;
+  if (hasScope || hasFilter) {
+    visible = networkRequests.filter(r => {
+      if (hasScope && !inGlobalScope(r.url)) return false;
+      if (hasFilter && !matchesNetworkFilter(r)) return false;
+      return true;
+    });
+  }
   const fragment = document.createDocumentFragment();
   const start = Math.max(0, visible.length - MAX_NETWORK_ROWS);
   for (let i = start; i < visible.length; i++) {
@@ -1869,13 +1975,22 @@ function scheduleAppendNetworkRow(req) {
 
 function flushPendingNetworkRows() {
   if (_pendingNetworkRows.length === 0) return;
+  const hasFilter = networkFilterIsActive();
   const fragment = document.createDocumentFragment();
+  let appended = 0;
   for (const r of _pendingNetworkRows) {
+    // Streaming row gets the same view filter the full re-render uses.
+    // Scope is already enforced upstream in processNetworkRequest, so
+    // we only re-check Type/Status here.
+    if (hasFilter && !matchesNetworkFilter(r)) continue;
     fragment.appendChild(buildNetworkRow(r));
+    appended++;
   }
   _pendingNetworkRows.length = 0;
-  networkTable.appendChild(fragment);
-  enforceMaxNetworkRows();
+  if (appended > 0) {
+    networkTable.appendChild(fragment);
+    enforceMaxNetworkRows();
+  }
   updateNetworkCount();
   // New unchecked rows can flip master state from checked → indeterminate.
   if (selectedExportIds.size > 0) updateSelectionUI();
@@ -1910,13 +2025,18 @@ networkTable.addEventListener('click', (e) => {
 // Multi-select for export
 // ============================================================
 // `getVisibleRequests` returns requests in the same order as the
-// rendered table (Scope-filtered when active). All selection ops —
-// select-all, range, Cmd+A — operate on this view, not the full
-// `networkRequests` array, so what the user sees matches what they get.
+// rendered table (Scope + Type/Status Filter applied). All selection
+// ops — select-all, range, Cmd+A — operate on this view so what the
+// user sees matches what they select.
 function getVisibleRequests() {
-  return globalScope.regex
-    ? networkRequests.filter(r => inGlobalScope(r.url))
-    : networkRequests;
+  const hasScope = !!globalScope.regex;
+  const hasFilter = networkFilterIsActive();
+  if (!hasScope && !hasFilter) return networkRequests;
+  return networkRequests.filter(r => {
+    if (hasScope && !inGlobalScope(r.url)) return false;
+    if (hasFilter && !matchesNetworkFilter(r)) return false;
+    return true;
+  });
 }
 
 function setRowCheckedClass(reqId, checked) {
@@ -2185,8 +2305,10 @@ function recomputeSearchMatches() {
     return;
   }
   const matched = [];
+  const hasFilter = networkFilterIsActive();
   for (const req of networkRequests) {
     if (!inGlobalScope(req.url)) continue;
+    if (hasFilter && !matchesNetworkFilter(req)) continue;
     if (req._searchIndex == null) buildSearchIndex(req);
     if (reqMatchesSearch(req)) matched.push(req.requestId);
   }

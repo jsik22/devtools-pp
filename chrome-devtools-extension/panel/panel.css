@@ -2402,6 +2402,74 @@ tr.selected td {
   background: transparent;
 }
 
+/* ============================================================
+   Network Filter dropdown — multi-select Type / Status filtering
+   ============================================================ */
+.network-filter-dropdown {
+  position: relative;
+  display: inline-block;
+}
+/* Active state: button gets a subtle blue accent when any filter is on,
+   so users can spot at a glance that the visible set is reduced. */
+#network-filter-btn.has-active {
+  background: #E8F0FE;
+  border-color: #C5D9FB;
+  color: #1A73E8;
+}
+.network-filter-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 2px;
+  background: #fff;
+  border: 1px solid #c4c4c4;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  min-width: 200px;
+  padding: 4px 0;
+}
+.network-filter-menu.hidden { display: none; }
+.network-filter-section {
+  padding: 4px 12px 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #5f6368;
+  pointer-events: none;
+}
+.network-filter-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: #1e1e1e;
+  cursor: pointer;
+  user-select: none;
+}
+.network-filter-item:hover {
+  background: #f0f4ff;
+}
+.network-filter-item input {
+  margin: 0;
+  cursor: pointer;
+}
+.network-filter-item .muted {
+  color: #999;
+  font-size: 11px;
+}
+.network-filter-divider {
+  height: 1px;
+  background: #e0e0e0;
+  margin: 4px 0;
+}
+.network-filter-reset {
+  margin: 4px 12px 4px;
+  display: block;
+}
+
 mark.network-search-mark {
   background: #fde68a;
   color: inherit;

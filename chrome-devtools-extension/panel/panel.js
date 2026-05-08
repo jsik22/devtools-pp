@@ -284,6 +284,14 @@ _crawlImportFile.addEventListener('change', (e) => {
   e.target.value = '';
 });
 
+document.getElementById('sitemap-reload').addEventListener('click', () => {
+  // Hard reload — bypass the HTTP cache so cached CSS / JS / images
+  // come back through the network layer and land in the capture. A
+  // normal reload would let the browser serve them from the cache
+  // and skip the chrome.devtools.network event entirely, which would
+  // leave the tree with silent gaps.
+  chrome.devtools.inspectedWindow.reload({ ignoreCache: true });
+});
 document.getElementById('sitemap-clear').addEventListener('click', () => {
   Object.keys(sitemapTree).forEach(k => delete sitemapTree[k]);
   expandedNodes.clear();

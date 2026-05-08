@@ -75,7 +75,13 @@ function detectTargetHost() {
     }
     _flushSitemapPending();
     renderSitemapTree();
-    updateSitemapStats();
+    // Tab for the initial inspected page — DevTools++ opened on an
+    // already-loaded page won't see an onNavigated event, so seed
+    // the tab here so the user has something to scope into.
+    if (typeof ensureTab === 'function') {
+      ensureTab(targetHost);
+      if (typeof setActiveTab === 'function') setActiveTab(targetHost);
+    }
   });
 }
 detectTargetHost();
@@ -104,16 +110,19 @@ chrome.devtools.network.onNavigated.addListener((url) => {
   ensureTargetInTree();
   _flushSitemapPending();
   renderSitemapTree();
-  updateSitemapStats();
+  // Browser-side navigation = user's analysis focus shifted. Pull the
+  // host's tab to active so the list / detail follow. Revisiting an
+  // earlier host reuses its existing tab (ensureTab is idempotent
+  // and setActiveTab no-ops when already active), so accumulation
+  // continues seamlessly.
+  if (newHost) {
+    if (typeof ensureTab === 'function') {
+      ensureTab(newHost);
+      if (typeof setActiveTab === 'function') setActiveTab(newHost);
+    }
+  }
 });
 const sitemapTreeEl = document.getElementById('sitemap-tree');
-const sitemapStats = document.getElementById('sitemap-stats');
-const sitemapSourcePane = document.getElementById('sitemap-source');
-document.getElementById('sitemap-source-close').addEventListener('click', () => {
-  sitemapSelectedNode = null;
-  sitemapSourcePane.classList.add('hidden');
-  renderSitemapTree();
-});
 
 // Auto Crawl: drives the inspected tab through a list of URLs while
 // Network monitoring records everything. Useful for sweeping a known
@@ -284,22 +293,13 @@ _crawlImportFile.addEventListener('change', (e) => {
   e.target.value = '';
 });
 
-document.getElementById('sitemap-reload').addEventListener('click', () => {
+document.getElementById('network-reload').addEventListener('click', () => {
   // Hard reload — bypass the HTTP cache so cached CSS / JS / images
   // come back through the network layer and land in the capture. A
   // normal reload would let the browser serve them from the cache
   // and skip the chrome.devtools.network event entirely, which would
-  // leave the tree with silent gaps.
+  // leave the tree / list with silent gaps.
   chrome.devtools.inspectedWindow.reload({ ignoreCache: true });
-});
-document.getElementById('sitemap-clear').addEventListener('click', () => {
-  Object.keys(sitemapTree).forEach(k => delete sitemapTree[k]);
-  expandedNodes.clear();
-  _sitemapPending.length = 0;
-  sitemapSelectedNode = null;
-  sitemapSourcePane.classList.add('hidden');
-  renderSitemapTree();
-  updateSitemapStats();
 });
 
 function classifyMimeType(mimeType) {
@@ -363,7 +363,6 @@ function addToSitemap(req) {
   }
 
   scheduleSitemapRender();
-  updateSitemapStats();
 }
 
 // Throttled tree render for the per-request hot path. Renders at most
@@ -386,26 +385,6 @@ function scheduleSitemapRender() {
   });
 }
 
-function updateSitemapStats() {
-  let hosts = 0;
-  let endpoints = 0;
-  function countNode(node) {
-    endpoints += node.requests.length;
-    Object.values(node.children).forEach(countNode);
-  }
-  for (const mainHost of Object.keys(sitemapTree)) {
-    hosts++;
-    const main = sitemapTree[mainHost];
-    countNode(main);
-    if (main.external) {
-      for (const extHost of Object.keys(main.external)) {
-        hosts++;
-        countNode(main.external[extHost]);
-      }
-    }
-  }
-  sitemapStats.textContent = `${hosts} hosts · ${endpoints} endpoints`;
-}
 
 function matchesSitemapFilters(req) {
   // Site Map's only filter is the global Scope — out-of-scope captured
@@ -573,7 +552,8 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
   }
 
   // Host-only: "Set Scope" dropdown on hover — pin this domain (or its
-  // wildcard form) as the global scope.
+  // wildcard form) as the global scope. Cuts down on Intercept noise
+  // without forcing the user to type the pattern by hand.
   if (isHost) {
     const scopeSelect = document.createElement('select');
     scopeSelect.className = 'btn btn-xs sitemap-scope-select';
@@ -652,267 +632,42 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
   // clicking a file shows its contents on the right. Nodes with no
   // direct request (intermediate paths that only have descendants)
   // fall back to expand/collapse so every row stays clickable.
+  // Tree click — when the node has a directly-captured request,
+  // jump to it in the Network list (selectNetworkRequest opens the
+  // detail panel and highlights the row). Intermediate path nodes
+  // with only descendants fall back to expand/collapse so every row
+  // stays clickable.
   row.addEventListener('click', (e) => {
-    // Set Scope dropdown handles its own change event — don't fire
-    // the row click for clicks landing inside it.
+    // Ignore clicks that landed on the host's Set Scope dropdown — it
+    // has its own change handler and shouldn't double-trigger the row.
     if (e.target.closest('.sitemap-scope-select')) return;
     if (node.requests.length > 0) {
-      sitemapSelectedNode = { host, path: fullPath };
       const latest = node.requests[node.requests.length - 1];
-      renderSitemapSource(latest, host, fullPath);
-      renderSitemapTree(); // refresh .selected highlight
+      if (latest && latest.requestId && networkRequestMap.has(latest.requestId)) {
+        // Switch the active tab only when the click landed on a main
+        // host (top-level in sitemapTree, which == tabHosts entry).
+        // External-host nodes (under some main host's `external` map)
+        // don't get their own tabs, so leave the current tab alone
+        // and just open the detail.
+        const reqHost = _reqHost(latest);
+        if (reqHost && reqHost !== activeTabHost && tabHosts.indexOf(reqHost) >= 0) {
+          setActiveTab(reqHost);
+        }
+        sitemapSelectedNode = { host, path: fullPath };
+        selectNetworkRequest(latest.requestId, { scroll: true });
+        renderSitemapTree(); // refresh .selected highlight
+        return;
+      }
+      // Captured outside of monitoring → not in the Network detail
+      // map. Surface a hint instead of a silent no-op so the user
+      // knows the row was clickable but produced nothing.
+      showToast('Start Monitoring to inspect this request');
       return;
     }
     if (hasChildren) toggleExpanded();
   });
 
   return wrapper;
-}
-
-// ============================================================
-// Site Map Source pane — renders the latest captured response at the
-// selected tree node, like DevTools' Sources tab opening a file.
-// Includes line numbers (CSS counter) and an in-source search bar.
-// ============================================================
-
-// In-source search state. Resets whenever a new body renders, but the
-// search term itself persists in the input so switching files re-runs
-// the same query against the new content.
-let _sourceSearchMarks = [];
-let _sourceSearchCursor = -1;
-
-function _resetSourceSearch() {
-  _sourceSearchMarks = [];
-  _sourceSearchCursor = -1;
-  _refreshSourceSearchUI();
-}
-
-function _refreshSourceSearchUI() {
-  const countEl = document.getElementById('sitemap-source-search-count');
-  const prevBtn = document.getElementById('sitemap-source-search-prev');
-  const nextBtn = document.getElementById('sitemap-source-search-next');
-  const total = _sourceSearchMarks.length;
-  const term = document.getElementById('sitemap-source-search').value.trim();
-  if (!term) {
-    countEl.textContent = '';
-  } else if (total === 0) {
-    countEl.textContent = 'No matches';
-  } else {
-    countEl.textContent = `${_sourceSearchCursor + 1} / ${total}`;
-  }
-  prevBtn.disabled = total === 0;
-  nextBtn.disabled = total === 0;
-}
-
-function applySourceSearch(rawTerm) {
-  const term = (rawTerm || '').trim().toLowerCase();
-  // Always strip stale marks — clearing the input or changing the
-  // term needs a clean slate before the next pass.
-  const body = document.getElementById('sitemap-source-body');
-  body.querySelectorAll('mark.source-search-mark').forEach(m => {
-    const parent = m.parentNode;
-    if (!parent) return;
-    parent.replaceChild(document.createTextNode(m.textContent), m);
-    parent.normalize();
-  });
-  if (!term) {
-    _resetSourceSearch();
-    return;
-  }
-  // Walk text nodes, wrap matches in <mark>. Skips inside existing
-  // marks so re-runs don't nest. Source body uses <pre><span class=line>
-  // so marks naturally land inside line spans (no structural breakage).
-  const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const p = node.parentNode;
-      if (!p) return NodeFilter.FILTER_REJECT;
-      if (p.nodeName === 'SCRIPT' || p.nodeName === 'STYLE') return NodeFilter.FILTER_REJECT;
-      if (p.classList && p.classList.contains('source-search-mark')) {
-        return NodeFilter.FILTER_REJECT;
-      }
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  const targets = [];
-  let n;
-  while ((n = walker.nextNode())) {
-    if (n.nodeValue && n.nodeValue.toLowerCase().includes(term)) targets.push(n);
-  }
-  for (const node of targets) {
-    const text = node.nodeValue;
-    const lower = text.toLowerCase();
-    let last = 0;
-    let idx;
-    const frag = document.createDocumentFragment();
-    while ((idx = lower.indexOf(term, last)) !== -1) {
-      if (idx > last) frag.appendChild(document.createTextNode(text.slice(last, idx)));
-      const m = document.createElement('mark');
-      m.className = 'source-search-mark';
-      m.textContent = text.slice(idx, idx + term.length);
-      frag.appendChild(m);
-      last = idx + term.length;
-    }
-    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
-    node.parentNode.replaceChild(frag, node);
-  }
-  _sourceSearchMarks = Array.from(body.querySelectorAll('mark.source-search-mark'));
-  _sourceSearchCursor = _sourceSearchMarks.length > 0 ? 0 : -1;
-  if (_sourceSearchCursor === 0) _focusSourceSearchMark(0);
-  _refreshSourceSearchUI();
-}
-
-function _focusSourceSearchMark(idx) {
-  _sourceSearchMarks.forEach(m => m.classList.remove('active'));
-  if (idx < 0 || idx >= _sourceSearchMarks.length) return;
-  const m = _sourceSearchMarks[idx];
-  m.classList.add('active');
-  m.scrollIntoView({ block: 'center', behavior: 'instant' });
-}
-
-function navigateSourceSearch(direction) {
-  if (_sourceSearchMarks.length === 0) return;
-  const total = _sourceSearchMarks.length;
-  _sourceSearchCursor = (_sourceSearchCursor + direction + total) % total;
-  _focusSourceSearchMark(_sourceSearchCursor);
-  _refreshSourceSearchUI();
-}
-
-// Search bar wiring: live-search on input (300ms debounce), prev/next
-// via buttons or Shift+Enter / Enter while focused, Esc clears.
-{
-  const searchInput = document.getElementById('sitemap-source-search');
-  let _searchDebounce = 0;
-  searchInput.addEventListener('input', () => {
-    clearTimeout(_searchDebounce);
-    _searchDebounce = setTimeout(() => applySourceSearch(searchInput.value), 300);
-  });
-  searchInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      // First Enter while marks are stale (e.g., user typed fast and
-      // hasn't hit debounce yet) forces an immediate search.
-      if (_sourceSearchMarks.length === 0) applySourceSearch(searchInput.value);
-      else navigateSourceSearch(e.shiftKey ? -1 : 1);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      searchInput.value = '';
-      applySourceSearch('');
-    }
-  });
-  document.getElementById('sitemap-source-search-prev').addEventListener('click', () => navigateSourceSearch(-1));
-  document.getElementById('sitemap-source-search-next').addEventListener('click', () => navigateSourceSearch(1));
-}
-
-function renderSitemapSource(req, host, path) {
-  if (!req) return;
-  sitemapSourcePane.classList.remove('hidden');
-
-  document.getElementById('sitemap-source-url').textContent = req.url;
-  document.getElementById('sitemap-source-url').title = req.url;
-  document.getElementById('sitemap-source-method').textContent = req.method || '';
-
-  const statusEl = document.getElementById('sitemap-source-status');
-  const s = req.status || 0;
-  statusEl.className = 'sitemap-source-status'
-    + (s >= 200 && s < 300 ? ' s-2xx'
-       : s >= 300 && s < 400 ? ' s-3xx'
-       : s >= 400 && s < 500 ? ' s-4xx'
-       : s >= 500 ? ' s-5xx' : '');
-  statusEl.textContent = s ? String(s) : '';
-
-  document.getElementById('sitemap-source-type').textContent = req.mimeType || req.type || '';
-  document.getElementById('sitemap-source-size').textContent = req.size || '';
-
-  const bodyEl = document.getElementById('sitemap-source-body');
-
-  // Imported requests carry no HAR entry, so an unloaded body just
-  // means the source file didn't include it (Detection-only exports).
-  if (req._imported && !req.responseBodyLoaded) {
-    bodyEl.innerHTML = '<div class="sitemap-empty">Not included in the imported file</div>';
-    return;
-  }
-
-  if (req.responseBodyLoaded) {
-    _renderSitemapSourceBody(bodyEl, req);
-    return;
-  }
-
-  // Async fetch via HAR getContent. Re-check selection at callback
-  // time so a fast double-click doesn't clobber the later selection's
-  // content with the earlier fetch's result.
-  bodyEl.innerHTML = '<div class="sitemap-empty">Loading source...</div>';
-  if (!req._harEntry || typeof req._harEntry.getContent !== 'function') {
-    bodyEl.innerHTML = '<div class="sitemap-empty">Source not available</div>';
-    return;
-  }
-  req._harEntry.getContent((body, encoding) => {
-    if (body !== undefined && body !== null) {
-      req.responseBody = body;
-      req.responseBase64 = encoding === 'base64';
-      req.responseBodyLoaded = true;
-    }
-    if (!sitemapSelectedNode
-        || sitemapSelectedNode.host !== host
-        || sitemapSelectedNode.path !== path) return;
-    _renderSitemapSourceBody(bodyEl, req);
-  });
-}
-
-function _renderSitemapSourceBody(el, req) {
-  // Reset search state for the new source — the marks from the
-  // previous body are gone, so the cursor index becomes meaningless.
-  _resetSourceSearch();
-
-  if (req.responseBody == null) {
-    el.innerHTML = '<div class="sitemap-empty">Source not available</div>';
-    return;
-  }
-  const mime = req.mimeType || '';
-
-  // Image preview
-  if (mime.startsWith('image/')) {
-    const src = req.responseBase64
-      ? `data:${mime};base64,${req.responseBody}`
-      : `data:${mime};base64,${btoa(req.responseBody)}`;
-    el.innerHTML = `<div class="sitemap-source-image"><img src="${escapeAttr(src)}" alt=""></div>`;
-    return;
-  }
-
-  // Binary base64 — too noisy to display as text
-  if (req.responseBase64) {
-    el.innerHTML = `<div class="sitemap-empty">Binary content (${formatBytes(req.responseBody.length)} base64-encoded)</div>`;
-    return;
-  }
-
-  // JSON — pretty-print + syntax highlight, then wrap each line for
-  // gutter line numbers and search marking. Falls through to plain
-  // rendering if the body isn't valid JSON.
-  let html = null;
-  try {
-    const parsed = JSON.parse(req.responseBody);
-    const pretty = JSON.stringify(parsed, null, 2);
-    html = _wrapLines(syntaxHighlightJson(pretty));
-  } catch { /* not JSON — render as plain monospace */ }
-  if (html == null) {
-    html = _wrapLines(escapeHtml(req.responseBody));
-  }
-  el.innerHTML = `<pre class="sitemap-source-code">${html}</pre>`;
-  // If the user had an active search before switching files, re-run
-  // it against the freshly-rendered body so highlights survive.
-  const term = document.getElementById('sitemap-source-search').value;
-  if (term && term.trim()) applySourceSearch(term);
-}
-
-// Wrap each line of pre-escaped HTML in a span so the CSS counter
-// produces line numbers. Splits on '\n' — JSON pretty-print + plain
-// escapeHtml never emit highlight spans that cross newlines, so naive
-// split is safe. Empty lines get a non-breaking placeholder so the
-// gutter still shows a number.
-function _wrapLines(html) {
-  const lines = html.split('\n');
-  return lines.map(line =>
-    `<span class="line">${line === '' ? ' ' : line}</span>`
-  ).join('');
 }
 
 // ============================================================
@@ -1025,7 +780,9 @@ function sendToBrowserNewTab() {
     type: 'open_new_tab_for_intercept',
     payload,
   });
-  showToast('Opening new tab — switch back here once it lands in the queue');
+  const interceptTabBtn = document.querySelector('.tab[data-tab="intercept"]');
+  if (interceptTabBtn) interceptTabBtn.click();
+  showToast('Opening new tab — watch the Intercept queue');
 }
 
 function updateSendToBrowserButton() {
@@ -1046,30 +803,6 @@ function updateSendToBrowserButton() {
 
 document.getElementById('detail-send-to-browser').addEventListener('click', sendToBrowserNewTab);
 
-function sendToReplay(req) {
-  // Switch to Network tab + activate Replay tab + populate form
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-  document.querySelector('[data-tab="network"]').classList.add('active');
-  document.getElementById('network').classList.add('active');
-
-  // Open detail panel + Replay tab
-  networkDetail.classList.remove('hidden');
-  networkSplit.classList.add('has-detail');
-  document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.detail-content').forEach(c => c.classList.remove('active'));
-  document.querySelector('[data-detail="replay"]').classList.add('active');
-  document.getElementById('detail-replay').classList.add('active');
-
-  // Track which captured request is being replayed so renderDiffBadges
-  // / the "Original" restore button can find the right baseline. Site
-  // Map's Replay button previously left selectedRequestId at whatever
-  // was last clicked in the Network table, so the diff badge compared
-  // the replay against an unrelated request.
-  selectedRequestId = req.requestId || null;
-
-  populateReplayForm(req);
-}
 
 // ============================================================
 // 1. Network monitoring (using chrome.devtools.network API - no debugger needed)
@@ -1079,6 +812,15 @@ const networkRequestMap = new Map(); // requestId -> request object
 let networkMonitoring = false;
 let selectedRequestId = null;
 let networkIdCounter = 0;
+
+// Per-host tabs above the Network list. Each captured host gets its
+// own tab the first time a request lands; the active tab acts as a
+// host filter on the global networkRequests array (data isn't
+// duplicated per tab — a single source plus a render-time filter).
+// Browser navigation auto-switches the active tab; revisiting an
+// earlier host reuses its existing tab so accumulation continues.
+const tabHosts = []; // ordered list of host strings (display order)
+let activeTabHost = null;
 
 // Multi-select for export. Tracks request IDs the user has checked via
 // the per-row checkbox or master checkbox; independent from
@@ -1121,6 +863,171 @@ const networkTable = document.querySelector('#network-table tbody');
 const networkCount = document.getElementById('network-count');
 const networkDetail = document.getElementById('network-detail');
 const networkSplit = document.querySelector('.network-split');
+const networkTabsEl = document.getElementById('network-tabs');
+
+// Pull the host out of a request URL once. Stored on the request the
+// first time it's looked up so repeated tab-filter checks don't
+// re-parse the URL on every render frame.
+function _reqHost(req) {
+  if (req._host != null) return req._host;
+  try { req._host = new URL(req.url).host; }
+  catch { req._host = ''; }
+  return req._host;
+}
+
+function matchesActiveTab(req) {
+  if (!activeTabHost) return true;
+  return _reqHost(req) === activeTabHost;
+}
+
+// Make sure a tab exists for the given host. Called from the request
+// pipeline (every captured request) and from explicit user actions
+// (tree click, navigation event). Returns true if a new tab was
+// added — caller can use this to decide whether to redraw.
+function ensureTab(host) {
+  if (!host) return false;
+  if (tabHosts.indexOf(host) >= 0) return false;
+  tabHosts.push(host);
+  if (activeTabHost == null) activeTabHost = host;
+  renderNetworkTabs();
+  return true;
+}
+
+// Switch the active tab. Re-renders all the host-filtered views so
+// the list / count / search-match-set / selection-master all reflect
+// the new tab in one shot.
+function setActiveTab(host) {
+  if (!host || activeTabHost === host) return;
+  ensureTab(host);
+  activeTabHost = host;
+  // Stale row highlight from the prior tab — the request might no
+  // longer be in the visible set. Clear before re-rendering.
+  if (selectedRequestId) {
+    const sel = networkRequestMap.get(selectedRequestId);
+    if (!sel || _reqHost(sel) !== host) {
+      closeDetail();
+    }
+  }
+  renderNetworkTabs();
+  renderNetworkTable();
+  updateSelectionUI();
+  if (searchTerm) {
+    recomputeSearchMatches();
+    refreshAllRowDots();
+    refreshSearchUI();
+  }
+}
+
+// Close a tab — wipes that host's captured requests from the global
+// store and drops the corresponding tree subtree so both views
+// agree. The user gets a confirm dialog first because data loss is
+// irreversible (no undo / no buffer).
+function closeTab(host) {
+  if (!host) return;
+  const count = networkRequests.filter(r => _reqHost(r) === host).length;
+  const msg = count > 0
+    ? `Close tab "${host}" and discard its ${count} captured request${count === 1 ? '' : 's'}?`
+    : `Close tab "${host}"?`;
+  if (!window.confirm(msg)) return;
+
+  // Drop matching requests in place (preserves array reference).
+  for (let i = networkRequests.length - 1; i >= 0; i--) {
+    if (_reqHost(networkRequests[i]) === host) {
+      const req = networkRequests[i];
+      networkRequestMap.delete(req.requestId);
+      selectedExportIds.delete(req.requestId);
+      networkRequests.splice(i, 1);
+    }
+  }
+  // Tree: drop main host bucket + any external-of-other-hosts that
+  // pointed at this host. The ones we own at the top level are the
+  // visible tab's subtree.
+  if (sitemapTree[host]) delete sitemapTree[host];
+  for (const mainHost of Object.keys(sitemapTree)) {
+    const ext = sitemapTree[mainHost].external;
+    if (ext && ext[host]) delete ext[host];
+  }
+  // Tab list itself.
+  const idx = tabHosts.indexOf(host);
+  if (idx >= 0) tabHosts.splice(idx, 1);
+  if (activeTabHost === host) {
+    activeTabHost = tabHosts.length > 0 ? tabHosts[Math.min(idx, tabHosts.length - 1)] : null;
+  }
+  // The selection might have pointed at a now-gone request.
+  if (selectedRequestId && !networkRequestMap.has(selectedRequestId)) {
+    closeDetail();
+  }
+  renderNetworkTabs();
+  renderNetworkTable();
+  renderSitemapTree();
+  updateSelectionUI();
+  if (searchTerm) {
+    recomputeSearchMatches();
+    refreshAllRowDots();
+    refreshSearchUI();
+  }
+}
+
+function renderNetworkTabs() {
+  if (tabHosts.length === 0) {
+    networkTabsEl.classList.add('hidden');
+    networkTabsEl.innerHTML = '';
+    _updateExportMenuTabLabels(0);
+    return;
+  }
+  networkTabsEl.classList.remove('hidden');
+  // Per-tab counts walk networkRequests once and bucket by host.
+  const counts = new Map();
+  for (const r of networkRequests) {
+    const h = _reqHost(r);
+    counts.set(h, (counts.get(h) || 0) + 1);
+  }
+  let html = '';
+  for (const host of tabHosts) {
+    const isActive = host === activeTabHost;
+    const count = counts.get(host) || 0;
+    html += `<button class="network-tab${isActive ? ' active' : ''}" data-host="${escapeAttr(host)}">` +
+      `<span class="tab-host" title="${escapeAttr(host)}">${escapeHtml(host)}</span>` +
+      `<span class="tab-count">${count}</span>` +
+      `<span class="tab-close" data-close="${escapeAttr(host)}" title="Close tab">×</span>` +
+      `</button>`;
+  }
+  networkTabsEl.innerHTML = html;
+  _updateExportMenuTabLabels(tabHosts.length);
+}
+
+// Reflect the current active tab + total tab count in the Export
+// menu's section headers so the user can tell at a glance which scope
+// each option will write out.
+function _updateExportMenuTabLabels(tabCount) {
+  const tabSec = document.getElementById('export-menu-section-tab');
+  const allSec = document.getElementById('export-menu-section-all');
+  if (tabSec) {
+    tabSec.textContent = activeTabHost
+      ? `Current tab (${activeTabHost})`
+      : 'Current tab';
+  }
+  if (allSec) {
+    allSec.textContent = tabCount > 0
+      ? `All tabs (${tabCount} host${tabCount === 1 ? '' : 's'})`
+      : 'All tabs';
+  }
+}
+
+// Click delegation — switches active tab on label/count click,
+// closes on the X click. data-host carries the target through the
+// re-render so we don't need per-element listeners.
+networkTabsEl.addEventListener('click', (e) => {
+  const closeEl = e.target.closest('.tab-close');
+  if (closeEl) {
+    e.stopPropagation();
+    closeTab(closeEl.dataset.close);
+    return;
+  }
+  const tabEl = e.target.closest('.network-tab');
+  if (!tabEl) return;
+  setActiveTab(tabEl.dataset.host);
+});
 
 document.getElementById('network-start').addEventListener('click', startNetworkMonitoring);
 document.getElementById('network-stop').addEventListener('click', stopNetworkMonitoring);
@@ -1246,9 +1153,20 @@ function processNetworkRequest(harEntry) {
 
   // Network list only when monitoring is ON
   if (!networkMonitoring) return;
+  // Tag the request if it matches a recent replay Send — purely
+  // local correlation (URL + method match within a short TTL), no
+  // header injection so origin servers see a clean request.
+  if (consumeReplayFireMatch(req.url, req.method)) {
+    req._isReplay = true;
+  }
   networkRequests.push(req);
   networkRequestMap.set(reqId, req);
   reindexRequestForSearch(req);
+  // Tabs follow main-host navigation only — third-party / CDN /
+  // analytics requests don't get their own tabs (they'd flood the
+  // bar). detectTargetHost + onNavigated handle tab creation on
+  // browser-side navigation; per-request ensureTab here would
+  // create one for every external resource.
   scheduleAppendNetworkRow(req);
 
   // Eagerly load the body for text-like responses so the scanner can
@@ -1266,7 +1184,7 @@ function processNetworkRequest(harEntry) {
         updateNetworkRowBadges(req);
         reindexRequestForSearch(req);
         if (selectedRequestId === req.requestId) {
-          renderResponseBody(req);
+          renderResponsePane(req);
           renderDetection(req);
           applyDetailHighlights(req);
         }
@@ -1322,8 +1240,18 @@ function clearNetwork() {
   _ingestedRequestKeys.clear();
   selectedExportIds.clear();
   _lastCheckedReqId = null;
+  // Tree shares the data the list is built from, so Clear wipes both.
+  Object.keys(sitemapTree).forEach(k => delete sitemapTree[k]);
+  expandedNodes.clear();
+  _sitemapPending.length = 0;
+  // Tabs are derived from captured data — wipe them too so the bar
+  // reflects the empty state, not a row of orphan host names.
+  tabHosts.length = 0;
+  activeTabHost = null;
+  renderNetworkTabs();
   closeDetail();
   renderNetworkTable();
+  renderSitemapTree();
   updateSelectionUI();
   // Drop search matches but preserve the term so the user can keep
   // typing into a freshly cleared list.
@@ -1365,10 +1293,8 @@ function _exportMetadata() {
 // only requests with findings, request metadata kept minimal, no
 // response bodies. Includes per-category / per-severity totals so
 // false-positive-heavy rules show up at a glance.
-function exportDetectionResults(selectedOnly) {
-  const source = selectedOnly
-    ? networkRequests.filter(r => selectedExportIds.has(r.requestId))
-    : networkRequests;
+function exportDetectionResults(scope) {
+  const source = _exportSource(scope);
   const stats = {
     totalRequests: source.length,
     requestsWithFindings: 0,
@@ -1411,10 +1337,8 @@ function exportDetectionResults(selectedOnly) {
 // Export every captured request — full headers, bodies (where loaded),
 // scan results, and initiator. Heavier than the detection export; use
 // when you need a complete snapshot, e.g. for offline analysis.
-function exportAllRequests(selectedOnly) {
-  const source = selectedOnly
-    ? networkRequests.filter(r => selectedExportIds.has(r.requestId))
-    : networkRequests;
+function exportAllRequests(scope) {
+  const source = _exportSource(scope);
   const items = source.map(r => ({
     request: {
       method: r.method,
@@ -1513,6 +1437,8 @@ function _applyImport(reqs, mode, filename) {
     networkRequestMap.clear();
     selectedExportIds.clear();
     _lastCheckedReqId = null;
+    tabHosts.length = 0;
+    activeTabHost = null;
     closeDetail();
     renderNetworkTable();
     updateSelectionUI();
@@ -1522,8 +1448,12 @@ function _applyImport(reqs, mode, filename) {
     networkRequestMap.set(r.requestId, r);
     buildSearchIndex(r);
   }
-  // Re-render the visible window — append-only would be fine, but a
-  // full re-render keeps the cap logic simple for large imports.
+  // Imported data has no navigation context, so we can't tell which
+  // hosts were "main" vs third-party — auto-creating a tab per host
+  // would flood the bar. Leave the current tab list alone; with no
+  // active tab the import is fully visible, and any existing tab
+  // continues filtering as before.
+  renderNetworkTabs();
   renderNetworkTable();
   updateSelectionUI();
   if (searchTerm) {
@@ -1614,12 +1544,32 @@ document.querySelectorAll('.export-menu-item').forEach(item => {
   item.addEventListener('click', () => {
     if (item.disabled) return;
     const mode = item.dataset.mode;
-    const selectedOnly = item.dataset.scope === 'selected';
+    const scope = item.dataset.scope; // 'tab' | 'selected' | 'all'
     _exportMenu.classList.add('hidden');
-    if (mode === 'detection') exportDetectionResults(selectedOnly);
-    else if (mode === 'all') exportAllRequests(selectedOnly);
+    if (mode === 'detection') exportDetectionResults(scope);
+    else if (mode === 'all') exportAllRequests(scope);
   });
 });
+
+// Source-set picker for the three export scopes.
+//   'tab'      — current active host tab only (default)
+//   'selected' — only the requests checked via row checkboxes
+//   'all'      — every captured request across all tabs
+// The ENTIRE networkRequests array IS the storage; filtering happens
+// per call so the data is never duplicated.
+function _exportSource(scope) {
+  if (scope === 'selected') {
+    return networkRequests.filter(r => selectedExportIds.has(r.requestId));
+  }
+  if (scope === 'all') {
+    return networkRequests;
+  }
+  // Default 'tab' — when no tab is active fall back to all so an
+  // "Export current tab" click on an empty state still produces a
+  // useful file rather than silently empty.
+  if (!activeTabHost) return networkRequests;
+  return networkRequests.filter(r => _reqHost(r) === activeTabHost);
+}
 document.addEventListener('click', (e) => {
   if (_exportMenu.classList.contains('hidden')) return;
   if (e.target.closest('.export-dropdown')) return;
@@ -1697,8 +1647,7 @@ function fetchResponseBody(req) {
       req.responseBodyLoaded = true;
       reindexRequestForSearch(req);
       if (selectedRequestId === req.requestId) {
-        renderResponseBody(req);
-        renderPreview(req);
+        renderResponsePane(req);
         applyDetailHighlights(req);
       }
     }
@@ -1804,12 +1753,20 @@ function buildNetworkRow(r) {
   if (r.requestId === selectedRequestId) tr.classList.add('selected');
   if (selectedExportIds.has(r.requestId)) tr.classList.add('row-checked');
   if (searchTerm && searchMatchedIds.includes(r.requestId)) tr.classList.add('search-hit');
+  if (r._isReplay) tr.classList.add('row-replay');
   const checkedAttr = selectedExportIds.has(r.requestId) ? 'checked' : '';
+  // Replay-originated requests get a small ↻ badge prefix in the URL
+  // cell so they're distinguishable in the timeline at a glance —
+  // user can tell which entries came from their own Replay Sends vs
+  // browser-driven captures.
+  const replayBadge = r._isReplay
+    ? '<span class="row-replay-badge" title="Sent via Replay">↻</span> '
+    : '';
   tr.innerHTML =
     `<td class="select-cell"><input type="checkbox" class="row-select" ${checkedAttr}></td>` +
     `<td class="host-cell ${hostKindClass}" title="${escapeHtml(r.url)}">${escapeHtml(host)}</td>` +
     `<td><strong>${escapeHtml(r.method)}</strong></td>` +
-    `<td title="${escapeHtml(r.url)}">${escapeHtml(truncateUrl(r.url))}</td>` +
+    `<td title="${escapeHtml(r.url)}">${replayBadge}${escapeHtml(truncateUrl(r.url))}</td>` +
     `<td class="${statusClass}">${r.status}</td>` +
     `<td>${escapeHtml(r.type)}</td>` +
     `<td>${r.size}</td>` +
@@ -1821,13 +1778,18 @@ function buildNetworkRow(r) {
 
 function updateNetworkCount() {
   const total = networkRequests.length;
-  // When Scope or the Type/Status Filter is active, show "visible / total
-  // (filtered)" so the user knows part of the captured set is hidden.
+  // The active host tab is its own filter axis: requests outside the
+  // current tab don't render, exactly like Scope hides out-of-scope
+  // captures. When any of (tab, Scope, Type/Status filter) is active
+  // we surface "visible / total (filtered)" so the user knows what's
+  // hidden.
+  const hasTab = activeTabHost != null;
   const hasScope = !!globalScope.regex;
   const hasFilter = networkFilterIsActive();
-  if (hasScope || hasFilter) {
+  if (hasTab || hasScope || hasFilter) {
     let filtered = 0;
     for (const r of networkRequests) {
+      if (hasTab && !matchesActiveTab(r)) continue;
       if (hasScope && !inGlobalScope(r.url)) continue;
       if (hasFilter && !matchesNetworkFilter(r)) continue;
       filtered++;
@@ -1867,14 +1829,16 @@ function updateNetworkRowBadges(req) {
 // use the append/batch path below to avoid O(n²) rebuilds.
 function renderNetworkTable() {
   networkTable.innerHTML = '';
-  // Apply Scope (domain gate) + Type/Status Filter (view filter) so
-  // earlier-captured rows reflect the current toggle state. Both are
-  // pure view filters — networkRequests is unchanged.
+  // Apply active-tab + Scope + Type/Status as view filters. All three
+  // are pure view filters — networkRequests stays intact, so toggling
+  // any of them is reversible without losing data.
+  const hasTab = activeTabHost != null;
   const hasScope = !!globalScope.regex;
   const hasFilter = networkFilterIsActive();
   let visible = networkRequests;
-  if (hasScope || hasFilter) {
+  if (hasTab || hasScope || hasFilter) {
     visible = networkRequests.filter(r => {
+      if (hasTab && !matchesActiveTab(r)) return false;
       if (hasScope && !inGlobalScope(r.url)) return false;
       if (hasFilter && !matchesNetworkFilter(r)) return false;
       return true;
@@ -1906,13 +1870,22 @@ function scheduleAppendNetworkRow(req) {
 
 function flushPendingNetworkRows() {
   if (_pendingNetworkRows.length === 0) return;
+  const hasTab = activeTabHost != null;
   const hasFilter = networkFilterIsActive();
   const fragment = document.createDocumentFragment();
   let appended = 0;
+  let countTouchedTabs = false;
   for (const r of _pendingNetworkRows) {
-    // Streaming row gets the same view filter the full re-render uses.
-    // Scope is already enforced upstream in processNetworkRequest, so
-    // we only re-check Type/Status here.
+    // Streaming row inherits the same filter axes as the full re-
+    // render (active tab + Scope + Type/Status). Scope is already
+    // enforced upstream in processNetworkRequest so we only re-check
+    // tab + filter here. Tabs surface request counts on the bar; if
+    // any incoming row's host has a tab, mark for re-render.
+    if (hasTab && !matchesActiveTab(r)) {
+      // Out-of-tab rows still update the inactive tab's count badge.
+      if (tabHosts.includes(_reqHost(r))) countTouchedTabs = true;
+      continue;
+    }
     if (hasFilter && !matchesNetworkFilter(r)) continue;
     fragment.appendChild(buildNetworkRow(r));
     appended++;
@@ -1921,7 +1894,10 @@ function flushPendingNetworkRows() {
   if (appended > 0) {
     networkTable.appendChild(fragment);
     enforceMaxNetworkRows();
+    // The active tab itself just got more rows — refresh its count.
+    countTouchedTabs = true;
   }
+  if (countTouchedTabs) renderNetworkTabs();
   updateNetworkCount();
   // New unchecked rows can flip master state from checked → indeterminate.
   if (selectedExportIds.size > 0) updateSelectionUI();
@@ -1956,14 +1932,16 @@ networkTable.addEventListener('click', (e) => {
 // Multi-select for export
 // ============================================================
 // `getVisibleRequests` returns requests in the same order as the
-// rendered table (Scope + Type/Status Filter applied). All selection
-// ops — select-all, range, Cmd+A — operate on this view so what the
-// user sees matches what they select.
+// rendered table (active tab + Scope + Type/Status Filter applied).
+// All selection ops — select-all, range, Cmd+A — operate on this
+// view so what the user sees matches what they select.
 function getVisibleRequests() {
+  const hasTab = activeTabHost != null;
   const hasScope = !!globalScope.regex;
   const hasFilter = networkFilterIsActive();
-  if (!hasScope && !hasFilter) return networkRequests;
+  if (!hasTab && !hasScope && !hasFilter) return networkRequests;
   return networkRequests.filter(r => {
+    if (hasTab && !matchesActiveTab(r)) return false;
     if (hasScope && !inGlobalScope(r.url)) return false;
     if (hasFilter && !matchesNetworkFilter(r)) return false;
     return true;
@@ -2236,8 +2214,10 @@ function recomputeSearchMatches() {
     return;
   }
   const matched = [];
+  const hasTab = activeTabHost != null;
   const hasFilter = networkFilterIsActive();
   for (const req of networkRequests) {
+    if (hasTab && !matchesActiveTab(req)) continue;
     if (!inGlobalScope(req.url)) continue;
     if (hasFilter && !matchesNetworkFilter(req)) continue;
     if (req._searchIndex == null) buildSearchIndex(req);
@@ -2370,11 +2350,10 @@ function highlightMarksIn(rootEl, term) {
   return count;
 }
 
-// Tabs eligible for body-level highlighting + tab badge. Initiator,
-// Preview and Replay are excluded by design — Initiator searches stack
-// frames (out of scope), Preview is image/binary rendering, Replay is
-// an editable composer.
-const SEARCH_TARGET_TABS = ['headers', 'payload', 'response', 'detection'];
+// Tabs eligible for body-level highlighting + tab badge. Initiator
+// is excluded by design — its content is call-stack frames, not a
+// good fit for keyword search.
+const SEARCH_TARGET_TABS = ['message', 'detection'];
 
 function applyDetailHighlights(req) {
   // Always clear stale marks/badges so a cleared term wipes the UI.
@@ -2460,38 +2439,557 @@ function applyDetailHighlights(req) {
 // ============================================================
 
 function showDetail(req) {
-  renderGeneralInfo(req);
-  renderHeaders(req);
-  renderPayload(req);
-  renderResponseBody(req);
-  renderPreview(req);
+  renderMessageTab(req);
   renderInitiator(req);
   renderDetection(req);
-  populateReplayForm(req);
   applyDetailHighlights(req);
 }
 
-function makeSectionHtml(title, id, rows) {
-  return `
-    <div class="section-title" data-section-id="${id}">
-      <span class="arrow" id="arrow-${id}">&#9660;</span>${escapeHtml(title)}
-    </div>
-    <div class="section-body" id="body-${id}">
-      ${rows}
-    </div>
-  `;
+// ============================================================
+// Message tab — vertical Request / Response split rendering raw HTTP.
+// This is the differentiator vs native DevTools: instead of separating
+// header-name/value into a table, we show the on-the-wire message
+// (request line + headers + blank line + body, response status line +
+// headers + blank line + body). Replay edits happen in-place via a
+// textarea overlay on the request pane.
+// ============================================================
+
+// Per-request UI state for the new tab. Keyed by selectedRequestId so
+// switching between requests resets format toggles / replay edit mode
+// to a clean default (we don't want a half-edited replay textarea
+// surviving a row change).
+let msgRequestFormat = 'raw';   // 'raw' | 'pretty'
+let msgResponseFormat = 'raw';  // 'raw' | 'pretty'
+let msgReplayEditing = false;
+let msgReplayOriginalRaw = '';  // text the editor was opened with — drives Original/Modified state
+let msgPreviewMode = 'raw';     // 'raw' | 'preview'
+let msgReplayLastResponse = null; // overrides original response display when set
+
+function renderMessageTab(req) {
+  // Reset per-request UI state on row change.
+  msgRequestFormat = 'raw';
+  msgResponseFormat = 'raw';
+  msgReplayEditing = false;
+  msgPreviewMode = 'raw';
+  msgReplayLastResponse = null;
+  // Reset toggles in the DOM so the active class lines up.
+  document.querySelectorAll('.msg-format-toggle .msg-format-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.fmt === 'raw');
+  });
+  document.getElementById('msg-replay-bar').classList.add('hidden');
+  document.getElementById('msg-replay-toggle').classList.remove('active');
+  document.getElementById('msg-preview-toggle').classList.remove('active');
+
+  renderRequestPane(req);
+  renderResponsePane(req);
 }
 
-// Section toggle via event delegation (inline onclick blocked by MV3 CSP)
-document.addEventListener('click', (e) => {
-  const titleEl = e.target.closest('.section-title[data-section-id]');
-  if (!titleEl) return;
-  const id = titleEl.dataset.sectionId;
-  const body = document.getElementById('body-' + id);
-  if (!body) return;
-  const isCollapsed = body.classList.toggle('collapsed');
-  titleEl.classList.toggle('collapsed', isCollapsed);
+function renderRequestPane(req) {
+  const meta = document.getElementById('msg-request-meta');
+  meta.textContent = `${req.method || ''} ${truncateUrl(req.url || '')}`;
+  meta.title = req.url || '';
+
+  const bodyEl = document.getElementById('msg-request-body');
+  if (msgReplayEditing) {
+    // Editor stays in place — text already populated by enter handler.
+    return;
+  }
+  const text = buildRawRequest(req, msgRequestFormat);
+  bodyEl.innerHTML = `<pre class="msg-raw">${_renderRawHtml(text)}</pre>`;
+}
+
+function renderResponsePane(req) {
+  const meta = document.getElementById('msg-response-meta');
+  const resp = msgReplayLastResponse;
+  if (resp) {
+    // Active replay result overrides the captured response display.
+    const sCls = _statusClass(resp.status);
+    meta.innerHTML = `<span class="${sCls}">${resp.status} ${escapeHtml(resp.statusText || '')}</span> · ${resp.time} ms · ${formatBytes((resp.body || '').length)}` +
+      ` <span style="color:#8a6d00">(replay)</span>`;
+  } else {
+    const sCls = _statusClass(req.status);
+    const size = req.size && req.size !== '-' ? ` · ${req.size}` : '';
+    const time = req.time && req.time !== '-' ? ` · ${req.time}` : '';
+    meta.innerHTML = `<span class="${sCls}">${req.status || '-'}${req.statusText ? ' ' + escapeHtml(req.statusText) : ''}</span>${time}${size}`;
+  }
+
+  const bodyEl = document.getElementById('msg-response-body');
+  if (msgPreviewMode === 'preview') {
+    _renderResponsePreview(bodyEl, req, resp);
+    return;
+  }
+
+  // Raw / pretty text path — handle imports / unloaded body / base64
+  // identically so replay results and captures share the same code.
+  const view = resp ? _viewFromReplay(resp) : _viewFromCapture(req);
+  if (view.placeholder) {
+    bodyEl.innerHTML = `<div class="msg-empty">${escapeHtml(view.placeholder)}</div>`;
+    return;
+  }
+  const text = buildRawResponse(view, msgResponseFormat);
+  let html = `<pre class="msg-raw">${_renderRawHtml(text)}</pre>`;
+  // Diff badge for replay results — same logic as the old Replay tab,
+  // appended after the rendered raw response.
+  if (resp && req && req.responseBodyLoaded && req.responseBody !== null) {
+    html += _renderReplayDiff(req, resp);
+  }
+  bodyEl.innerHTML = html;
+}
+
+function _statusClass(s) {
+  if (!s) return '';
+  if (s >= 200 && s < 300) return 's-2xx';
+  if (s >= 300 && s < 400) return 's-3xx';
+  if (s >= 400 && s < 500) return 's-4xx';
+  if (s >= 500) return 's-5xx';
+  return '';
+}
+
+// Wraps a captured request into the shape buildRawResponse expects.
+function _viewFromCapture(req) {
+  if (req._imported && !req.responseBodyLoaded) {
+    return { placeholder: 'Not included in the imported file' };
+  }
+  if (!req.responseBodyLoaded) {
+    return { placeholder: 'Loading response body...' };
+  }
+  if (req.responseBase64) {
+    return {
+      status: req.status, statusText: req.statusText, headers: req.responseHeaders || {},
+      body: `[Base64 encoded data — ${formatBytes((req.responseBody || '').length)} encoded]`,
+      _bin: true,
+    };
+  }
+  return {
+    status: req.status, statusText: req.statusText,
+    headers: req.responseHeaders || {},
+    body: req.responseBody || '',
+  };
+}
+
+function _viewFromReplay(resp) {
+  return {
+    status: resp.status, statusText: resp.statusText,
+    headers: resp.headers || {}, body: resp.body || '',
+  };
+}
+
+// Build the raw HTTP request string. Path/query come from the URL so
+// the request line matches what went on the wire. Host header is
+// derived from the URL when not in the captured headers (browser
+// always sends it). Body comes verbatim from requestPostData.
+function buildRawRequest(req, format) {
+  const method = req.method || 'GET';
+  let path = '/';
+  let host = '';
+  try {
+    const u = new URL(req.url);
+    path = (u.pathname || '/') + (u.search || '');
+    host = u.host;
+  } catch { /* fall back */ }
+
+  const headers = req.requestHeaders || {};
+  const lines = [`${method} ${path} HTTP/1.1`];
+  // Synthesize Host if absent — readers expect it on a raw HTTP line.
+  if (host && !_findHeaderCI(headers, 'host')) {
+    lines.push(`Host: ${host}`);
+  }
+  for (const [k, v] of Object.entries(headers)) {
+    lines.push(`${k}: ${v}`);
+  }
+  const body = req.requestPostData || '';
+  return lines.join('\n') + '\n\n' + (format === 'pretty' ? _prettyBody(body, headers) : body);
+}
+
+// Build the raw HTTP response string from a view object (works for
+// both captures and replay results since both share {status, headers,
+// body}).
+function buildRawResponse(view, format) {
+  const status = view.status || 0;
+  const statusText = view.statusText || '';
+  const headers = view.headers || {};
+  const lines = [`HTTP/1.1 ${status}${statusText ? ' ' + statusText : ''}`];
+  for (const [k, v] of Object.entries(headers)) {
+    lines.push(`${k}: ${v}`);
+  }
+  const body = view.body || '';
+  if (view._bin) return lines.join('\n') + '\n\n' + body; // binary placeholder string
+  return lines.join('\n') + '\n\n' + (format === 'pretty' ? _prettyBody(body, headers) : body);
+}
+
+// Tokenize a built raw HTTP message string into HTML with the request /
+// status line in blue and header names in red-bold. The first line
+// (request line for requests, status line for responses) is colored
+// distinctly; subsequent lines until the first blank line are
+// "Header-Name: value" pairs. Everything after the blank line is body
+// content rendered as-is.
+function _renderRawHtml(text) {
+  if (!text) return '';
+  const blankIdx = text.indexOf('\n\n');
+  const headerPart = blankIdx >= 0 ? text.slice(0, blankIdx) : text;
+  const body = blankIdx >= 0 ? text.slice(blankIdx + 2) : '';
+  const lines = headerPart.split('\n');
+  const out = [];
+  if (lines.length > 0) {
+    out.push(`<span class="msg-line-status">${escapeHtml(lines[0])}</span>`);
+  }
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    const colon = line.indexOf(':');
+    if (colon < 0) {
+      out.push(escapeHtml(line));
+    } else {
+      const name = line.slice(0, colon);
+      const rest = line.slice(colon); // includes ':' + value
+      out.push(`<span class="msg-header-name">${escapeHtml(name)}</span>${escapeHtml(rest)}`);
+    }
+  }
+  // Blank separator line between headers and body, then body verbatim.
+  return out.join('\n') + '\n\n' + (body ? escapeHtml(body) : '');
+}
+
+function _findHeaderCI(headers, name) {
+  const lower = name.toLowerCase();
+  for (const k of Object.keys(headers)) {
+    if (k.toLowerCase() === lower) return headers[k];
+  }
+  return null;
+}
+
+// Pretty-print the body when the Content-Type makes the format clear.
+// JSON gets indented to 2 spaces. Anything else stays as-is — partial
+// XML / HTML pretty-printing without a parser tends to mangle, and
+// the user can always switch back to Raw.
+function _prettyBody(body, headers) {
+  if (!body || typeof body !== 'string') return body;
+  const ct = (_findHeaderCI(headers, 'content-type') || '').toLowerCase();
+  if (ct.includes('json') || (body.trimStart().startsWith('{') || body.trimStart().startsWith('['))) {
+    try { return JSON.stringify(JSON.parse(body), null, 2); }
+    catch { /* not valid JSON — fall through */ }
+  }
+  return body;
+}
+
+// Preview button on the response pane. Toggles between raw text and
+// the most useful rendered form for the response's mime type.
+function _renderResponsePreview(bodyEl, req, replayResp) {
+  const view = replayResp ? _viewFromReplay(replayResp) : _viewFromCapture(req);
+  if (view.placeholder) {
+    bodyEl.innerHTML = `<div class="msg-empty">${escapeHtml(view.placeholder)}</div>`;
+    return;
+  }
+  const mime = (replayResp ? (_findHeaderCI(view.headers, 'content-type') || '') : (req.mimeType || ''))
+    .toLowerCase();
+  const body = view.body || '';
+
+  if (mime.includes('html') || mime.includes('xhtml')) {
+    bodyEl.innerHTML = `<iframe class="msg-preview-iframe" sandbox srcdoc="${escapeAttr(body)}"></iframe>`;
+    return;
+  }
+  if (mime.startsWith('image/')) {
+    const isBase64 = !replayResp && req.responseBase64;
+    const src = isBase64 ? `data:${mime};base64,${body}` : `data:${mime};base64,${btoa(body)}`;
+    bodyEl.innerHTML = `<div class="msg-preview-image"><img src="${escapeAttr(src)}" alt=""></div>`;
+    return;
+  }
+  // JSON tree
+  if (mime.includes('json') || body.trim().startsWith('{') || body.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(body);
+      bodyEl.innerHTML = `<div class="msg-preview-tree">${renderJsonTree(parsed)}</div>`;
+      return;
+    } catch { /* fall through */ }
+  }
+  // No useful preview — show raw + a notice.
+  showToast('No preview available for this content type');
+  msgPreviewMode = 'raw';
+  document.getElementById('msg-preview-toggle').classList.remove('active');
+  renderResponsePane(req);
+}
+
+// Format toggle (Raw / Pretty) — delegated. Only toggles the side
+// the click landed in; the other side keeps its current mode.
+document.querySelectorAll('.msg-format-toggle').forEach(group => {
+  const side = group.dataset.pane; // 'request' | 'response'
+  group.querySelectorAll('.msg-format-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      group.querySelectorAll('.msg-format-btn').forEach(b => {
+        b.classList.toggle('active', b === btn);
+      });
+      const fmt = btn.dataset.fmt;
+      if (side === 'request') {
+        msgRequestFormat = fmt;
+        // No re-render in replay edit mode — the textarea content is
+        // user-owned and shouldn't be reset by a format toggle.
+        if (!msgReplayEditing) {
+          const req = networkRequestMap.get(selectedRequestId);
+          if (req) renderRequestPane(req);
+        }
+      } else {
+        msgResponseFormat = fmt;
+        const req = networkRequestMap.get(selectedRequestId);
+        if (req) renderResponsePane(req);
+      }
+    });
+  });
 });
+
+// Replay button — toggles the request pane between raw view and
+// editable textarea. Pressing once enters edit mode and seeds the
+// textarea with the current raw request; pressing again cancels.
+document.getElementById('msg-replay-toggle').addEventListener('click', () => {
+  if (msgReplayEditing) {
+    _exitReplayEdit();
+    return;
+  }
+  const req = networkRequestMap.get(selectedRequestId);
+  if (!req) return;
+  _enterReplayEdit(req);
+});
+
+function _enterReplayEdit(req) {
+  msgReplayEditing = true;
+  const bodyEl = document.getElementById('msg-request-body');
+  msgReplayOriginalRaw = buildRawRequest(req, 'raw');
+  bodyEl.innerHTML = '';
+  const ta = document.createElement('textarea');
+  ta.id = 'msg-replay-textarea';
+  ta.className = 'msg-replay-textarea';
+  ta.spellcheck = false;
+  ta.value = msgReplayOriginalRaw;
+  ta.addEventListener('input', _refreshReplayState);
+  bodyEl.appendChild(ta);
+  document.getElementById('msg-replay-bar').classList.remove('hidden');
+  document.getElementById('msg-replay-toggle').classList.add('active');
+  _refreshReplayState();
+}
+
+function _exitReplayEdit() {
+  msgReplayEditing = false;
+  document.getElementById('msg-replay-bar').classList.add('hidden');
+  document.getElementById('msg-replay-toggle').classList.remove('active');
+  const req = networkRequestMap.get(selectedRequestId);
+  if (req) renderRequestPane(req);
+}
+
+function _refreshReplayState() {
+  const ta = document.getElementById('msg-replay-textarea');
+  const stateBtn = document.getElementById('msg-replay-state');
+  if (!ta || !stateBtn) return;
+  const isModified = ta.value !== msgReplayOriginalRaw;
+  stateBtn.textContent = isModified ? 'Modified' : 'Original';
+  stateBtn.classList.toggle('modified', isModified);
+}
+
+// Original/Modified button — restores the textarea to the request
+// the editor was opened with.
+document.getElementById('msg-replay-state').addEventListener('click', () => {
+  const ta = document.getElementById('msg-replay-textarea');
+  if (!ta) return;
+  ta.value = msgReplayOriginalRaw;
+  _refreshReplayState();
+});
+
+// Send button — parse the textarea's raw HTTP, fire the fetch via
+// inspectedWindow.eval (page context, so cookies attach naturally),
+// poll for the result, then update the response pane.
+document.getElementById('msg-replay-send').addEventListener('click', () => {
+  const ta = document.getElementById('msg-replay-textarea');
+  if (!ta) return;
+  const req = networkRequestMap.get(selectedRequestId);
+  if (!req) return;
+  const parsed = parseRawHttpRequest(ta.value, req.url);
+  if (!parsed) {
+    showToast('Could not parse the raw request — check the request line and headers');
+    return;
+  }
+  _sendReplayFetch(req, parsed);
+});
+
+// Parse a raw HTTP request text. Returns { method, url, headers, body }
+// or null when the structure is unrecognizable. The original captured
+// URL is reused as the base for the request line's path so editing
+// just the headers/body doesn't require fixing absolute-URL fields.
+function parseRawHttpRequest(text, originalUrl) {
+  if (!text) return null;
+  // Split request line + headers from body at the first blank line.
+  const headerEnd = text.indexOf('\n\n');
+  const headerPart = headerEnd >= 0 ? text.slice(0, headerEnd) : text;
+  const body = headerEnd >= 0 ? text.slice(headerEnd + 2) : '';
+  const lines = headerPart.split('\n');
+  const requestLine = lines[0] || '';
+  const m = requestLine.match(/^(\S+)\s+(\S+)\s+HTTP\/[\d.]+/);
+  if (!m) return null;
+  const method = m[1];
+  const path = m[2];
+  // Resolve path against the original captured URL so absolute /path
+  // input becomes a full URL the fetch API can use.
+  let url;
+  try {
+    url = new URL(path, originalUrl).href;
+  } catch {
+    url = path;
+  }
+  const headers = {};
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    const colon = line.indexOf(':');
+    if (colon < 0) continue;
+    const k = line.slice(0, colon).trim();
+    const v = line.slice(colon + 1).trim();
+    if (k) headers[k] = v;
+  }
+  // fetch() refuses these — they're set by the browser regardless.
+  delete headers['Host'];
+  delete headers['host'];
+  delete headers['Content-Length'];
+  delete headers['content-length'];
+  return { method, url, headers, body: body || null };
+}
+
+// Replay-fire queue — short-TTL list of recent (url, method) tuples
+// so the network capture pipeline can tag the matching incoming
+// request as "_isReplay" without bouncing through a header that
+// would leak to the origin server.
+const _replayFireQueue = [];
+const _REPLAY_FIRE_TTL_MS = 10000;
+
+function _markReplayFired(url, method) {
+  const now = Date.now();
+  // Drop expired entries opportunistically — keeps the queue tiny.
+  for (let i = _replayFireQueue.length - 1; i >= 0; i--) {
+    if (now - _replayFireQueue[i].t > _REPLAY_FIRE_TTL_MS) {
+      _replayFireQueue.splice(i, 1);
+    }
+  }
+  _replayFireQueue.push({ url, method, t: now });
+}
+
+// Called from processNetworkRequest. Returns true and removes the
+// matching entry if this captured request was triggered by a recent
+// replay Send. URL match is exact (we set it ourselves to the same
+// string the page-side fetch was given).
+function consumeReplayFireMatch(url, method) {
+  const now = Date.now();
+  for (let i = 0; i < _replayFireQueue.length; i++) {
+    const e = _replayFireQueue[i];
+    if (now - e.t > _REPLAY_FIRE_TTL_MS) continue;
+    if (e.url === url && e.method === method) {
+      _replayFireQueue.splice(i, 1);
+      return true;
+    }
+  }
+  return false;
+}
+
+// Fire the parsed replay request via the inspected page's context.
+// Mirrors the polling pattern the old executeReplay used.
+function _sendReplayFetch(originalReq, payload) {
+  const sendBtn = document.getElementById('msg-replay-send');
+  sendBtn.textContent = 'Sending...';
+  sendBtn.disabled = true;
+  // Tag this fire so the eventual onRequestFinished can mark the
+  // captured row as a replay.
+  _markReplayFired(payload.url, payload.method);
+
+  const callbackId = '__replay_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+  const expr = `(function() {
+    window['${callbackId}'] = null;
+    var t0 = performance.now();
+    fetch(${JSON.stringify(payload.url)}, {
+      method: ${JSON.stringify(payload.method)},
+      headers: ${JSON.stringify(payload.headers)},
+      body: ${payload.body != null ? JSON.stringify(payload.body) : 'null'},
+      credentials: 'include',
+      redirect: 'follow'
+    }).then(function(resp) {
+      var elapsed = Math.round(performance.now() - t0);
+      var h = {};
+      resp.headers.forEach(function(v, k) { h[k] = v; });
+      return resp.text().then(function(text) {
+        window['${callbackId}'] = JSON.stringify({
+          ok: true, status: resp.status, statusText: resp.statusText,
+          headers: h, body: text, time: elapsed
+        });
+      });
+    }).catch(function(e) {
+      var elapsed = Math.round(performance.now() - t0);
+      window['${callbackId}'] = JSON.stringify({
+        ok: false, error: e.message, time: elapsed
+      });
+    });
+    return 'started';
+  })()`;
+
+  chrome.devtools.inspectedWindow.eval(expr, (_, err) => {
+    if (err) {
+      sendBtn.textContent = 'Send';
+      sendBtn.disabled = false;
+      showToast('Replay failed to start: ' + (err.value || JSON.stringify(err)));
+      return;
+    }
+    let attempts = 0;
+    const poll = setInterval(() => {
+      attempts++;
+      if (attempts > 300) {
+        clearInterval(poll);
+        sendBtn.textContent = 'Send';
+        sendBtn.disabled = false;
+        chrome.devtools.inspectedWindow.eval(`delete window['${callbackId}']`);
+        showToast('Replay timed out (30s)');
+        return;
+      }
+      chrome.devtools.inspectedWindow.eval(`window['${callbackId}']`, (raw) => {
+        if (raw == null) return;
+        clearInterval(poll);
+        sendBtn.textContent = 'Send';
+        sendBtn.disabled = false;
+        chrome.devtools.inspectedWindow.eval(`delete window['${callbackId}']`);
+        let parsed;
+        try { parsed = JSON.parse(raw); } catch { showToast('Replay result parse failed'); return; }
+        if (!parsed.ok) {
+          showToast('Replay error: ' + (parsed.error || 'unknown'));
+          return;
+        }
+        msgReplayLastResponse = parsed;
+        renderResponsePane(originalReq);
+      });
+    }, 100);
+  });
+}
+
+// Preview button — toggles the response pane between raw text and
+// rendered preview (HTML iframe / image / JSON tree).
+document.getElementById('msg-preview-toggle').addEventListener('click', () => {
+  msgPreviewMode = msgPreviewMode === 'raw' ? 'preview' : 'raw';
+  document.getElementById('msg-preview-toggle').classList.toggle('active', msgPreviewMode === 'preview');
+  const req = networkRequestMap.get(selectedRequestId);
+  if (req) renderResponsePane(req);
+});
+
+// Diff result HTML for a replay response vs the captured original.
+function _renderReplayDiff(originalReq, replayResp) {
+  const lines = [];
+  if (originalReq.status !== replayResp.status) {
+    lines.push(`<div class="diff-title">Status changed: <span class="${_statusClass(originalReq.status)}">${originalReq.status}</span> → <span class="${_statusClass(replayResp.status)}">${replayResp.status}</span></div>`);
+  }
+  if (originalReq.responseBody === replayResp.body) {
+    return `<div class="msg-diff-badge"><div class="msg-diff-identical">Response body identical to original.</div></div>`;
+  }
+  // JSON diff if both parse
+  try {
+    const origObj = JSON.parse(originalReq.responseBody);
+    const newObj = JSON.parse(replayResp.body);
+    const diffHtml = generateJsonDiff(origObj, newObj);
+    if (diffHtml) {
+      return `<div class="msg-diff-badge">${lines.join('')}<div class="diff-title">Body changes:</div>${diffHtml}</div>`;
+    }
+  } catch { /* not JSON */ }
+  return lines.length > 0
+    ? `<div class="msg-diff-badge">${lines.join('')}</div>`
+    : '';
+}
+
 
 function headerRowsHtml(headers, extraClass) {
   const cls = extraClass || '';
@@ -2505,210 +3003,6 @@ function headerRowsHtml(headers, extraClass) {
     ).join('');
 }
 
-function renderGeneralInfo(req) {
-  const container = document.getElementById('detail-general');
-  const general = {
-    'Request URL': req.url,
-    'Request Method': req.method,
-    'Status Code': `${req.status} ${req.statusText}`,
-  };
-  if (req.remoteAddress) general['Remote Address'] = req.remoteAddress;
-  if (req.protocol) general['Protocol'] = req.protocol;
-
-  const rows = Object.entries(general).map(([name, value]) => {
-    const statusHtml = name === 'Status Code'
-      ? `<span class="${req.status >= 400 ? 'status-error' : req.status >= 300 ? 'status-redirect' : 'status-ok'} status-code">${escapeHtml(value)}</span>`
-      : escapeHtml(value);
-    return `<div class="header-row general-row">
-      <span class="header-name">${escapeHtml(name)}:</span>
-      <span class="header-value">${statusHtml}</span>
-    </div>`;
-  }).join('');
-
-  container.innerHTML = makeSectionHtml('General', 'general', rows);
-}
-
-function renderHeaders(req) {
-  // Response headers
-  const respContainer = document.getElementById('detail-response-headers');
-  const respCount = Object.keys(req.responseHeaders).length;
-  if (respCount > 0) {
-    respContainer.innerHTML = makeSectionHtml(
-      `Response Headers (${respCount})`,
-      'resp-headers',
-      headerRowsHtml(req.responseHeaders)
-    );
-  } else {
-    respContainer.innerHTML = '';
-  }
-
-  // Request headers
-  const reqContainer = document.getElementById('detail-request-headers');
-  const reqCount = Object.keys(req.requestHeaders).length;
-  if (reqCount > 0) {
-    reqContainer.innerHTML = makeSectionHtml(
-      `Request Headers (${reqCount})`,
-      'req-headers',
-      headerRowsHtml(req.requestHeaders)
-    );
-  } else {
-    reqContainer.innerHTML = '';
-  }
-
-  // Auto-decode pass over both header sets
-  const findings = [
-    ...autoDecodeScanHeaders(req.responseHeaders, 'Response header'),
-    ...autoDecodeScanHeaders(req.requestHeaders, 'Request header'),
-  ];
-  renderDecodedSection(document.getElementById('detail-headers'), findings);
-}
-
-function renderPayload(req) {
-  const queryContainer = document.getElementById('detail-query-params');
-  const bodyContainer = document.getElementById('detail-request-body');
-
-  // Query string parameters
-  try {
-    const url = new URL(req.url);
-    const params = Array.from(url.searchParams.entries());
-    if (params.length > 0) {
-      const rows = params.map(([name, value]) =>
-        `<div class="query-param-row">
-          <span class="param-name">${escapeHtml(decodeURIComponent(name))}</span>
-          <span class="param-value">${escapeHtml(decodeURIComponent(value))}</span>
-        </div>`
-      ).join('');
-      queryContainer.innerHTML = makeSectionHtml(`Query String Parameters (${params.length})`, 'query-params', rows);
-    } else {
-      queryContainer.innerHTML = '';
-    }
-  } catch {
-    queryContainer.innerHTML = '';
-  }
-
-  // Request body (POST data)
-  if (req.requestPostData) {
-    let bodyHtml;
-    // Try to parse as form data
-    try {
-      const parsed = new URLSearchParams(req.requestPostData);
-      const entries = Array.from(parsed.entries());
-      if (entries.length > 0 && !req.requestPostData.startsWith('{') && !req.requestPostData.startsWith('[')) {
-        const rows = entries.map(([name, value]) =>
-          `<div class="query-param-row">
-            <span class="param-name">${escapeHtml(name)}</span>
-            <span class="param-value">${escapeHtml(value)}</span>
-          </div>`
-        ).join('');
-        bodyHtml = rows;
-      } else {
-        throw new Error('not form data');
-      }
-    } catch {
-      // Try JSON
-      let formatted = req.requestPostData;
-      try {
-        formatted = JSON.stringify(JSON.parse(req.requestPostData), null, 2);
-      } catch { /* keep raw */ }
-      bodyHtml = `<div class="response-body-content">${syntaxHighlightJson(formatted)}</div>`;
-    }
-    bodyContainer.innerHTML = makeSectionHtml('Request Body', 'req-body', bodyHtml);
-  } else {
-    bodyContainer.innerHTML = '';
-  }
-
-  // Auto-decode: query params + request body
-  const findings = [];
-  try {
-    const url = new URL(req.url);
-    for (const [k, v] of url.searchParams) {
-      if (findings.length >= AUTODECODE_MAX_FINDINGS) break;
-      const f = detectInString(v);
-      if (f) findings.push({ ...f, location: `Query: ${k}` });
-    }
-  } catch { /* malformed URL */ }
-  if (req.requestPostData) {
-    findings.push(...autoDecodeScanBody(req.requestPostData, 'Request body'));
-  }
-  renderDecodedSection(document.getElementById('detail-payload'), findings);
-}
-
-function renderResponseBody(req) {
-  const container = document.getElementById('detail-response-body');
-  const tabPane = document.getElementById('detail-response');
-  // Imported requests don't have a HAR entry to fetch from, so an
-  // unloaded body means the source file simply didn't include it
-  // (typical for Detection-only exports).
-  if (req._imported && !req.responseBodyLoaded) {
-    container.innerHTML = '<div class="detail-loading">Not included in the imported file</div>';
-    renderDecodedSection(tabPane, []);
-    return;
-  }
-  if (!req.responseBodyLoaded) {
-    container.innerHTML = '<div class="detail-loading">Loading response body...</div>';
-    renderDecodedSection(tabPane, []);
-    return;
-  }
-  if (req.responseBody === null || req.responseBody === undefined) {
-    container.innerHTML = '<div class="detail-loading">Response body not available.</div>';
-    renderDecodedSection(tabPane, []);
-    return;
-  }
-  if (req.responseBase64) {
-    container.innerHTML = `<div class="response-body-content" style="color:#999">[Base64 encoded data - ${formatBytes(req.responseBody.length)} encoded]</div>`;
-    renderDecodedSection(tabPane, []);
-    return;
-  }
-
-  let body = req.responseBody;
-  // Try to pretty-print JSON
-  try {
-    const parsed = JSON.parse(body);
-    body = JSON.stringify(parsed, null, 2);
-    container.innerHTML = `<div class="response-body-content">${syntaxHighlightJson(body)}</div>`;
-  } catch {
-    container.innerHTML = `<div class="response-body-content">${escapeHtml(body)}</div>`;
-  }
-
-  renderDecodedSection(tabPane, autoDecodeScanBody(req.responseBody, 'Response body'));
-}
-
-function renderPreview(req) {
-  const container = document.getElementById('detail-preview-body');
-  if (!req.responseBodyLoaded || !req.responseBody) {
-    container.innerHTML = '<div class="detail-loading">Preview not available.</div>';
-    return;
-  }
-
-  const mime = req.mimeType || '';
-
-  // JSON preview
-  if (mime.includes('json') || (req.responseBody.trim().startsWith('{') || req.responseBody.trim().startsWith('['))) {
-    try {
-      const parsed = JSON.parse(req.responseBody);
-      container.innerHTML = `<div class="response-body-content">${renderJsonTree(parsed)}</div>`;
-      return;
-    } catch { /* fall through */ }
-  }
-
-  // HTML preview
-  if (mime.includes('html')) {
-    container.innerHTML = `<iframe class="preview-iframe" sandbox srcdoc="${escapeHtml(req.responseBody)}"></iframe>`;
-    return;
-  }
-
-  // Image preview
-  if (mime.startsWith('image/')) {
-    const src = req.responseBase64
-      ? `data:${mime};base64,${req.responseBody}`
-      : `data:${mime};base64,${btoa(req.responseBody)}`;
-    container.innerHTML = `<div style="padding:12px"><img src="${src}" style="max-width:100%;height:auto" /></div>`;
-    return;
-  }
-
-  // Fallback: show raw text
-  container.innerHTML = `<div class="response-body-content">${escapeHtml(truncate(req.responseBody, 10000))}</div>`;
-}
 
 // ============================================================
 // Initiator — Call stack trace + sensitive pattern detection
@@ -4532,562 +4826,30 @@ function _onDetectionGroupClick(e) {
   if (toggle) toggle.textContent = desc.classList.contains('hidden') ? '▾' : '▴';
 }
 
-// ============================================================
-// 1b. Replay & Tamper
-// ============================================================
-
-const replayHistory = [];
-const SKIP_HEADERS = new Set([
-  'host', 'connection', 'content-length', 'accept-encoding',
-  'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform',
-  'sec-fetch-site', 'sec-fetch-mode', 'sec-fetch-dest',
-  'upgrade-insecure-requests',
-]);
-
-// Section toggle
-document.querySelectorAll('.replay-section-title').forEach(title => {
-  title.addEventListener('click', (e) => {
-    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'SELECT') return;
-    const bodyId = title.dataset.toggle;
-    if (!bodyId) return;
-    const body = document.getElementById(bodyId);
-    if (!body) return;
-    body.classList.toggle('collapsed');
-    title.classList.toggle('collapsed');
-  });
-});
-
-// Response sub-tabs
-document.querySelectorAll('.replay-resp-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.replay-resp-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.replay-resp-pane').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById('replay-resp-' + tab.dataset.rtab + '-pane').classList.add('active');
-  });
-});
-
-document.getElementById('replay-send').addEventListener('click', executeReplay);
-document.getElementById('replay-state').addEventListener('click', () => {
-  if (!replayOriginalSnapshot) return;
-  const req = selectedRequestId ? networkRequestMap.get(selectedRequestId) : null;
-  if (req) populateReplayForm(req);
-});
-document.getElementById('replay-add-header').addEventListener('click', (e) => {
-  e.stopPropagation();
-  addKvRow('replay-headers-list', '', '', true);
-  checkReplayModified();
-});
-document.getElementById('replay-add-param').addEventListener('click', (e) => {
-  e.stopPropagation();
-  addKvRow('replay-params-list', '', '', true);
-  checkReplayModified();
-});
-document.getElementById('replay-format-body').addEventListener('click', (e) => {
-  e.stopPropagation();
-  formatReplayBody();
-});
-document.getElementById('replay-clear-history').addEventListener('click', (e) => {
-  e.stopPropagation();
-  replayHistory.length = 0;
-  document.getElementById('replay-history-list').innerHTML = '';
-});
-
-// Sync query params when URL changes
-document.getElementById('replay-url').addEventListener('blur', syncParamsFromUrl);
-
-// Replay form state tracking
-let replayOriginalSnapshot = null;
-
-function captureKvSnapshot(listId) {
-  const rows = document.querySelectorAll(`#${listId} .replay-kv-row`);
-  const entries = [];
-  rows.forEach(row => {
-    const enabled = row.querySelector('.kv-toggle').checked;
-    const name = row.querySelector('.kv-name').value;
-    const value = row.querySelector('.kv-value').value;
-    entries.push([enabled, name, value]);
-  });
-  return entries;
+// Attribute-safe HTML escape (over and above escapeHtml since attrs
+// also need to handle the quote character).
+function escapeAttr(str) {
+  if (str == null) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function captureReplaySnapshot() {
-  return JSON.stringify({
-    method: document.getElementById('replay-method').value,
-    url: document.getElementById('replay-url').value,
-    body: document.getElementById('replay-body').value,
-    bodyType: document.getElementById('replay-body-type').value,
-    headers: captureKvSnapshot('replay-headers-list'),
-    params: captureKvSnapshot('replay-params-list'),
-  });
-}
-
-function checkReplayModified() {
-  const stateBtn = document.getElementById('replay-state');
-  if (!replayOriginalSnapshot) {
-    stateBtn.textContent = 'Original';
-    stateBtn.classList.remove('modified');
-    return;
-  }
-  const current = captureReplaySnapshot();
-  const modified = current !== replayOriginalSnapshot;
-  stateBtn.textContent = modified ? 'Modified' : 'Original';
-  stateBtn.classList.toggle('modified', modified);
-}
-
-// Attach change detection to replay form inputs
-['replay-method', 'replay-body-type'].forEach(id => {
-  document.getElementById(id).addEventListener('change', checkReplayModified);
-});
-// The body-type <select> sits inside a clickable section header that
-// toggles collapse on click. Stop propagation so opening the dropdown
-// doesn't also fold the section. (Replaces inline onclick that
-// violated MV3 CSP.)
-document.getElementById('replay-body-type').addEventListener('click', (e) => {
-  e.stopPropagation();
-});
-['replay-url', 'replay-body'].forEach(id => {
-  document.getElementById(id).addEventListener('input', checkReplayModified);
-});
-// Event delegation for KV row changes (headers, params)
-['replay-headers-list', 'replay-params-list'].forEach(id => {
-  const el = document.getElementById(id);
-  el.addEventListener('input', checkReplayModified);
-  el.addEventListener('change', checkReplayModified);
-});
-
-// Populate form with selected request data when Replay tab activates
-// Reset the Replay response panes so a stale result from a previous
-// request doesn't sit alongside the form for a newly-selected one.
-function clearReplayResponse() {
-  const statusEl = document.getElementById('replay-status');
-  statusEl.textContent = '';
-  statusEl.className = 'replay-status';
-  document.getElementById('replay-timing').textContent = '';
-  document.getElementById('replay-resp-size').textContent = '';
-  document.getElementById('replay-resp-body').innerHTML = '';
-  document.getElementById('replay-resp-headers').innerHTML = '';
-}
-
-function populateReplayForm(req) {
-  if (!req) return;
-
-  // The response panes belong to the previously-replayed request; once
-  // we re-populate the form they no longer line up with what's shown.
-  clearReplayResponse();
-
-  document.getElementById('replay-method').value = req.method;
-  document.getElementById('replay-url').value = req.url;
-
-  // Headers
-  const headersList = document.getElementById('replay-headers-list');
-  headersList.innerHTML = '';
-  const headers = req.requestHeaders || {};
-  Object.entries(headers).forEach(([name, value]) => {
-    if (name.startsWith(':')) return; // skip HTTP/2 pseudo-headers
-    const skip = SKIP_HEADERS.has(name.toLowerCase());
-    addKvRow('replay-headers-list', name, value, !skip);
-  });
-
-  // Query params
-  const paramsList = document.getElementById('replay-params-list');
-  paramsList.innerHTML = '';
-  try {
-    const url = new URL(req.url);
-    url.searchParams.forEach((value, name) => {
-      addKvRow('replay-params-list', name, value, true);
-    });
-  } catch { /* ignore */ }
-
-  // Body
-  const bodyEl = document.getElementById('replay-body');
-  const bodyTypeEl = document.getElementById('replay-body-type');
-  if (req.requestPostData) {
-    bodyEl.value = req.requestPostData;
-    // Detect type
-    try {
-      JSON.parse(req.requestPostData);
-      bodyTypeEl.value = 'json';
-    } catch {
-      if (req.requestPostData.includes('=') && !req.requestPostData.includes('{')) {
-        bodyTypeEl.value = 'form';
-      } else {
-        bodyTypeEl.value = 'raw';
-      }
-    }
-  } else {
-    bodyEl.value = '';
-    bodyTypeEl.value = 'none';
-  }
-
-  replayOriginalSnapshot = captureReplaySnapshot();
-  checkReplayModified();
-}
-
-function addKvRow(listId, name, value, enabled) {
-  const list = document.getElementById(listId);
-  const row = document.createElement('div');
-  row.className = 'replay-kv-row' + (enabled ? '' : ' disabled');
-  row.innerHTML = `
-    <input type="checkbox" class="kv-toggle" ${enabled ? 'checked' : ''}>
-    <input type="text" class="kv-name" value="${escapeAttr(name)}" placeholder="Name">
-    <input type="text" class="kv-value" value="${escapeAttr(value)}" placeholder="Value">
-    <button class="kv-remove" title="Remove">&times;</button>
-  `;
-
-  const toggle = row.querySelector('.kv-toggle');
-  toggle.addEventListener('change', () => {
-    row.classList.toggle('disabled', !toggle.checked);
-  });
-
-  row.querySelector('.kv-remove').addEventListener('click', () => {
-    row.remove();
-    checkReplayModified();
-  });
-
-  // Sync URL when query param changes
-  if (listId === 'replay-params-list') {
-    row.querySelector('.kv-name').addEventListener('blur', syncUrlFromParams);
-    row.querySelector('.kv-value').addEventListener('blur', syncUrlFromParams);
-    toggle.addEventListener('change', syncUrlFromParams);
-  }
-
-  list.appendChild(row);
-}
-
-function getKvEntries(listId) {
-  const rows = document.querySelectorAll(`#${listId} .replay-kv-row`);
-  const entries = [];
-  rows.forEach(row => {
-    const enabled = row.querySelector('.kv-toggle').checked;
-    if (!enabled) return;
-    const name = row.querySelector('.kv-name').value.trim();
-    const value = row.querySelector('.kv-value').value;
-    if (name) entries.push([name, value]);
-  });
-  return entries;
-}
-
-function syncUrlFromParams() {
-  const urlInput = document.getElementById('replay-url');
-  try {
-    const url = new URL(urlInput.value);
-    url.search = '';
-    getKvEntries('replay-params-list').forEach(([k, v]) => {
-      url.searchParams.append(k, v);
-    });
-    urlInput.value = url.toString();
-  } catch { /* ignore invalid URL */ }
-}
-
-function syncParamsFromUrl() {
-  const urlInput = document.getElementById('replay-url');
-  try {
-    const url = new URL(urlInput.value);
-    const list = document.getElementById('replay-params-list');
-    list.innerHTML = '';
-    url.searchParams.forEach((value, name) => {
-      addKvRow('replay-params-list', name, value, true);
-    });
-  } catch { /* ignore */ }
-}
-
-function formatReplayBody() {
-  const bodyEl = document.getElementById('replay-body');
-  try {
-    const parsed = JSON.parse(bodyEl.value);
-    bodyEl.value = JSON.stringify(parsed, null, 2);
-  } catch { /* not JSON */ }
-}
-
-function buildReplayRequest() {
-  const method = document.getElementById('replay-method').value;
-  const url = document.getElementById('replay-url').value;
-  const bodyType = document.getElementById('replay-body-type').value;
-  let body = document.getElementById('replay-body').value;
-
-  const headers = {};
-  getKvEntries('replay-headers-list').forEach(([k, v]) => {
-    if (k.startsWith(':')) return; // skip HTTP/2 pseudo-headers
-    headers[k] = v;
-  });
-
-  // Auto content-type
-  if (bodyType === 'json' && !headers['Content-Type'] && !headers['content-type']) {
-    headers['Content-Type'] = 'application/json';
-  } else if (bodyType === 'form' && !headers['Content-Type'] && !headers['content-type']) {
-    headers['Content-Type'] = 'application/x-www-form-urlencoded';
-  }
-
-  const hasBody = method !== 'GET' && method !== 'HEAD' && bodyType !== 'none' && body;
-
-  return { method, url, headers, body: hasBody ? body : null };
-}
-
-function executeReplay() {
-  const { method, url, headers, body } = buildReplayRequest();
-  if (!url) return;
-
-  const sendBtn = document.getElementById('replay-send');
-  const statusEl = document.getElementById('replay-status');
-  const timingEl = document.getElementById('replay-timing');
-  const sizeEl = document.getElementById('replay-resp-size');
-  const bodyPane = document.getElementById('replay-resp-body');
-  const headersPane = document.getElementById('replay-resp-headers');
-
-  sendBtn.textContent = 'Sending...';
-  sendBtn.disabled = true;
-  statusEl.textContent = '';
-  statusEl.className = 'replay-status';
-  timingEl.textContent = '';
-  sizeEl.textContent = '';
-  bodyPane.innerHTML = '<span style="color:#8a6d00">Sending request...</span>';
-  headersPane.innerHTML = '';
-
-  // eval() doesn't support async, so store result in global variable and poll
-  const callbackId = '__replay_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-  const headersJson = JSON.stringify(headers);
-  const bodyJson = body ? JSON.stringify(body) : 'null';
-
-  // Step 1: Start fetch in page context, store result in window[callbackId]
-  const fetchExpression = `
-    (function() {
-      window['${callbackId}'] = null;
-      var startTime = performance.now();
-      fetch(${JSON.stringify(url)}, {
-        method: ${JSON.stringify(method)},
-        headers: ${headersJson},
-        body: ${bodyJson},
-        credentials: 'include',
-        redirect: 'follow'
-      }).then(function(resp) {
-        var elapsed = Math.round(performance.now() - startTime);
-        var respHeaders = {};
-        resp.headers.forEach(function(v, k) { respHeaders[k] = v; });
-        return resp.text().then(function(text) {
-          window['${callbackId}'] = JSON.stringify({
-            ok: true,
-            status: resp.status,
-            statusText: resp.statusText,
-            headers: respHeaders,
-            body: text,
-            time: elapsed,
-            url: resp.url,
-            redirected: resp.redirected
-          });
-        });
-      }).catch(function(e) {
-        var elapsed = Math.round(performance.now() - startTime);
-        window['${callbackId}'] = JSON.stringify({
-          ok: false,
-          error: e.message,
-          time: elapsed
-        });
-      });
-      return 'started';
-    })()
-  `;
-
-  chrome.devtools.inspectedWindow.eval(fetchExpression, (startResult, startErr) => {
-    if (startErr) {
-      sendBtn.textContent = 'Send';
-      sendBtn.disabled = false;
-      statusEl.textContent = 'ERROR';
-      statusEl.className = 'replay-status s5xx';
-      bodyPane.innerHTML = `<span class="status-error">${escapeHtml(startErr.value || JSON.stringify(startErr))}</span>`;
-      return;
-    }
-
-    // Step 2: Poll for result
-    let attempts = 0;
-    const maxAttempts = 300; // 30s timeout
-    const pollInterval = setInterval(() => {
-      attempts++;
-      if (attempts > maxAttempts) {
-        clearInterval(pollInterval);
-        sendBtn.textContent = 'Send';
-        sendBtn.disabled = false;
-        statusEl.textContent = 'TIMEOUT';
-        statusEl.className = 'replay-status s5xx';
-        bodyPane.innerHTML = '<span class="status-error">Request timed out (30s)</span>';
-        chrome.devtools.inspectedWindow.eval(`delete window['${callbackId}']`);
-        return;
-      }
-
-      chrome.devtools.inspectedWindow.eval(`window['${callbackId}']`, (result) => {
-        if (result === null || result === undefined) return; // Still waiting
-
-        clearInterval(pollInterval);
-        sendBtn.textContent = 'Send';
-        sendBtn.disabled = false;
-
-        // Clean up global variable
-        chrome.devtools.inspectedWindow.eval(`delete window['${callbackId}']`);
-
-        handleReplayResult(result, method, url, bodyPane, headersPane, statusEl, timingEl, sizeEl);
-      });
-    }, 100);
-  });
-}
-
-// CORS-bypass fallback: re-runs the current Replay form values via the
-// background service worker (which has <all_urls> host_permissions).
-// Triggered by the "Retry via background" button on a page-context
-// fetch error. Reads the form fresh so any user edits since the failed
-// send are honoured.
-function executeReplayViaBackground() {
-  const { method, url, headers, body } = buildReplayRequest();
-  if (!url) return;
-
-  const sendBtn = document.getElementById('replay-send');
-  const statusEl = document.getElementById('replay-status');
-  const timingEl = document.getElementById('replay-timing');
-  const sizeEl = document.getElementById('replay-resp-size');
-  const bodyPane = document.getElementById('replay-resp-body');
-  const headersPane = document.getElementById('replay-resp-headers');
-
-  sendBtn.textContent = 'Sending...';
-  sendBtn.disabled = true;
-  statusEl.textContent = '';
-  statusEl.className = 'replay-status';
-  timingEl.textContent = '';
-  sizeEl.textContent = '';
-  bodyPane.innerHTML = '<span style="color:#8a6d00">Sending via background...</span>';
-  headersPane.innerHTML = '';
-
-  chrome.runtime.sendMessage(
-    { type: 'replay_fetch', method, url, headers, body: body || null },
-    (resp) => {
-      sendBtn.textContent = 'Send';
-      sendBtn.disabled = false;
-      if (chrome.runtime.lastError || !resp) {
-        statusEl.textContent = 'FAILED';
-        statusEl.className = 'replay-status s5xx';
-        const errMsg = chrome.runtime.lastError ? chrome.runtime.lastError.message : 'No response from background';
-        bodyPane.innerHTML = `<span class="status-error">Background fetch failed: ${escapeHtml(errMsg)}</span>`;
-        return;
-      }
-      handleReplayResult(
-        JSON.stringify(resp),
-        method, url, bodyPane, headersPane, statusEl, timingEl, sizeEl,
-        { viaBackground: true }
-      );
-    }
-  );
-}
-
-function handleReplayResult(result, method, url, bodyPane, headersPane, statusEl, timingEl, sizeEl, opts) {
-  opts = opts || {};
-  try {
-    const resp = JSON.parse(result);
-
-    if (!resp.ok) {
-      statusEl.textContent = 'FAILED';
-      statusEl.className = 'replay-status s5xx';
-      timingEl.textContent = resp.time + ' ms';
-      // Page-context fetch errors (typically CORS) get a one-click
-      // retry button that re-runs the request from the background SW
-      // where host_permissions bypass cross-origin restrictions. We
-      // suppress the button on a background retry to avoid loops.
-      let html = `<span class="status-error">Fetch Error: ${escapeHtml(resp.error)}</span>`;
-      if (!opts.viaBackground) {
-        html += ` <button class="btn btn-xs replay-retry-bg">Retry via background</button>`;
-        html += ` <span class="replay-retry-hint">bypasses CORS — sent from extension context, not page</span>`;
-      }
-      bodyPane.innerHTML = html;
-      const retryBtn = bodyPane.querySelector('.replay-retry-bg');
-      if (retryBtn) retryBtn.addEventListener('click', executeReplayViaBackground);
-      addReplayHistoryEntry(method, url, 'ERR', resp.time, false);
-      return;
-    }
-
-    // Status
-    const sClass = resp.status < 300 ? 's2xx' : resp.status < 400 ? 's3xx' : resp.status < 500 ? 's4xx' : 's5xx';
-    statusEl.textContent = `${resp.status} ${resp.statusText}`;
-    statusEl.className = `replay-status ${sClass}`;
-    timingEl.textContent = resp.time + ' ms';
-    sizeEl.textContent = formatBytes(resp.body.length);
-
-    if (resp.redirected) {
-      timingEl.textContent += ` (redirected to ${resp.url})`;
-    }
-    if (opts.viaBackground) {
-      timingEl.textContent += ' (via background)';
-    }
-
-    // Response Body
-    let bodyHtml;
-    try {
-      const parsed = JSON.parse(resp.body);
-      const pretty = JSON.stringify(parsed, null, 2);
-      bodyHtml = syntaxHighlightJson(pretty);
-    } catch {
-      bodyHtml = escapeHtml(resp.body);
-    }
-    bodyPane.innerHTML = bodyHtml;
-
-    // Response Headers
-    headersPane.innerHTML = headerRowsHtml(resp.headers);
-
-    // Diff - Compare with original response
-    const originalReq = selectedRequestId ? networkRequestMap.get(selectedRequestId) : null;
-    if (originalReq && originalReq.responseBodyLoaded && originalReq.responseBody !== null) {
-      renderDiffBadges(originalReq, resp);
-    }
-
-    // History
-    addReplayHistoryEntry(method, url, resp.status, resp.time, true);
-
-  } catch (e) {
-    statusEl.textContent = 'PARSE ERROR';
-    statusEl.className = 'replay-status s5xx';
-    bodyPane.innerHTML = `<span class="status-error">Failed to parse response: ${escapeHtml(e.message)}</span>`;
-  }
-}
-
-function renderDiffBadges(originalReq, replayResp) {
-  // Status difference
-  const statusEl = document.getElementById('replay-status');
-  if (originalReq.status !== replayResp.status) {
-    statusEl.textContent += ` (was ${originalReq.status})`;
-  }
-
-  // Show response body difference
-  const bodyPane = document.getElementById('replay-resp-body');
-  if (originalReq.responseBody !== replayResp.body) {
-    // Try JSON diff
-    try {
-      const origObj = JSON.parse(originalReq.responseBody);
-      const newObj = JSON.parse(replayResp.body);
-      const diffHtml = generateJsonDiff(origObj, newObj);
-      if (diffHtml) {
-        bodyPane.innerHTML += `\n\n<div style="margin-top:12px;padding-top:12px;border-top:1px solid #d4d4d4">
-          <div style="font-weight:600;color:#8a6d00;margin-bottom:8px">Changes from original response:</div>
-          ${diffHtml}
-        </div>`;
-      }
-    } catch { /* not JSON, skip diff */ }
-  } else {
-    bodyPane.innerHTML += `\n\n<div style="margin-top:8px;color:#0b7a3e;font-size:12px">Response identical to original.</div>`;
-  }
-}
-
+// Recursive JSON diff used by the Message tab's replay-result diff.
+// Walks both trees in lock-step and emits add / remove / changed
+// rows. Reused from the older Replay tab — same structure renders
+// inside the new replay diff badge.
 function generateJsonDiff(orig, curr, path) {
   path = path || '';
   const lines = [];
-
   if (typeof orig !== typeof curr) {
     lines.push(`<div class="diff-changed header-row"><span class="header-name">${escapeHtml(path || '(root)')}</span><span class="header-value"><span class="status-error">${escapeHtml(JSON.stringify(orig))}</span> → <span class="status-ok">${escapeHtml(JSON.stringify(curr))}</span></span></div>`);
     return lines.join('');
   }
-
   if (orig === null || curr === null || typeof orig !== 'object') {
     if (orig !== curr) {
       lines.push(`<div class="diff-changed header-row"><span class="header-name">${escapeHtml(path || '(root)')}</span><span class="header-value"><span class="status-error">${escapeHtml(JSON.stringify(orig))}</span> → <span class="status-ok">${escapeHtml(JSON.stringify(curr))}</span></span></div>`);
     }
     return lines.join('');
   }
-
   const allKeys = new Set([...Object.keys(orig), ...Object.keys(curr)]);
   for (const key of allKeys) {
     const subPath = path ? `${path}.${key}` : key;
@@ -5100,60 +4862,9 @@ function generateJsonDiff(orig, curr, path) {
       if (sub) lines.push(sub);
     }
   }
-
   return lines.join('');
 }
 
-function addReplayHistoryEntry(method, url, status, time, success) {
-  const entry = { method, url, status, time, timestamp: new Date() };
-  replayHistory.unshift(entry);
-  if (replayHistory.length > 50) replayHistory.pop();
-  renderReplayHistory();
-}
-
-function renderReplayHistory() {
-  const list = document.getElementById('replay-history-list');
-  list.innerHTML = replayHistory.map((h, i) => {
-    const sClass = typeof h.status === 'number'
-      ? (h.status < 300 ? 'status-ok' : h.status < 400 ? 'status-redirect' : 'status-error')
-      : 'status-error';
-    let shortUrl;
-    try { shortUrl = new URL(h.url).pathname; } catch { shortUrl = h.url; }
-    return `<div class="replay-history-item" data-hist-idx="${i}">
-      <span class="hist-method">${escapeHtml(h.method)}</span>
-      <span class="hist-url" title="${escapeHtml(h.url)}">${escapeHtml(shortUrl)}</span>
-      <span class="hist-status ${sClass}">${h.status}</span>
-      <span class="hist-time">${h.time} ms</span>
-    </div>`;
-  }).join('');
-
-  // History item click → restore form with that request
-  list.querySelectorAll('.replay-history-item').forEach(item => {
-    item.addEventListener('click', () => {
-      const idx = parseInt(item.dataset.histIdx);
-      const h = replayHistory[idx];
-      if (!h) return;
-      document.getElementById('replay-method').value = h.method;
-      document.getElementById('replay-url').value = h.url;
-      syncParamsFromUrl();
-    });
-  });
-}
-
-function escapeAttr(str) {
-  if (str == null) return '';
-  return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-// Auto-populate Replay form on detail tab switch
-document.querySelectorAll('.detail-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    if (tab.dataset.detail === 'replay' && selectedRequestId) {
-      const req = networkRequestMap.get(selectedRequestId);
-      if (req) populateReplayForm(req);
-    }
-  });
-});
 
 // ============================================================
 // 1c. Intercept (Proxy Mode via Native Messaging + local MITM)
@@ -5337,9 +5048,17 @@ function handleBgMessage(msg) {
       handleResponseIntercepted(msg);
       break;
 
-    case 'request_timeout':
-      addInterceptLog('timeout', '', msg.id, 'req');
+    case 'request_timeout': {
+      // Pull method/url from the captured snapshot so the log row
+      // shows what timed out instead of an empty / / time string.
+      const cap = capturedRequests.get(msg.id);
+      upsertInterceptLog(msg.id, {
+        action: 'timeout',
+        method: cap ? cap.method : '',
+        url: cap ? cap.url : '',
+      });
       break;
+    }
 
     case 'pong':
       updateProxyStatus('active', `Proxy: ${msg.pendingCount || 0} pending`);
@@ -5471,16 +5190,14 @@ function applyGlobalScope() {
   }
   refreshGlobalScopeButtonState();
   flashGlobalScopeApply();
-  // Scope is also a view filter — re-render Network table and Site
-  // Map tree so already-captured data reflects the new pattern
-  // immediately. updateSitemapStats picks up scope through
-  // matchesSitemapFilters via getNodeRequestCount.
+  // Scope is also a view filter — re-render Network list + tree so
+  // already-captured data reflects the new pattern immediately.
+  // matchesSitemapFilters consults inGlobalScope via the same path.
   renderNetworkTable();
   // Selection persists across Scope changes, but the master checkbox's
   // visible-vs-selected ratio depends on which rows are visible now.
   updateSelectionUI();
   renderSitemapTree();
-  updateSitemapStats();
   // Search ANDs with Scope, so a Scope change can flip requests in or
   // out of the matched set.
   if (searchTerm) {
@@ -5491,26 +5208,6 @@ function applyGlobalScope() {
   // Persist the last-applied pattern so the action popup can show it
   // even when DevTools is closed.
   safeStorageSet({ globalScopeInput: input });
-}
-
-// Apply an arbitrary scope pattern (used by Site Map "Set Scope" dropdown).
-function applyScopePattern(pattern) {
-  document.getElementById('global-scope-input').value = pattern;
-  applyGlobalScope();
-}
-
-// Wildcard form of a host: drop the leftmost label for 3+ part hosts
-// (www.site.com -> *.site.com), or prepend *. for 2-part hosts
-// (site.com -> *.site.com, meaning subdomains). Returns null for IPs,
-// single-label hosts, and anything we can't safely wildcard.
-function wildcardHost(host) {
-  if (!host) return null;
-  if (/^[\d.]+$/.test(host)) return null; // IPv4
-  if (host.includes(':')) return null; // IPv6 or host:port
-  const parts = host.split('.');
-  if (parts.length < 2) return null; // e.g. "localhost"
-  if (parts.length === 2) return `*.${host}`;
-  return `*.${parts.slice(1).join('.')}`;
 }
 
 // Toggle dirty highlight on the Apply button when input != applied value.
@@ -5542,14 +5239,52 @@ document.getElementById('global-scope-clear').addEventListener('click', () => {
   applyGlobalScope();
 });
 
+// Apply an arbitrary scope pattern (used by the tree's Set Scope dropdown).
+function applyScopePattern(pattern) {
+  document.getElementById('global-scope-input').value = pattern;
+  applyGlobalScope();
+}
+
+// Wildcard form of a host: drop the leftmost label for 3+ part hosts
+// (www.site.com -> *.site.com), or prepend *. for 2-part hosts
+// (site.com -> *.site.com). Returns null for IPs / single-label / IPv6.
+function wildcardHost(host) {
+  if (!host) return null;
+  if (/^[\d.]+$/.test(host)) return null;
+  if (host.includes(':')) return null;
+  const parts = host.split('.');
+  if (parts.length < 2) return null;
+  if (parts.length === 2) return `*.${host}`;
+  return `*.${parts.slice(1).join('.')}`;
+}
+
 // Handle intercepted request from the proxy
 function handleProxyInterceptedRequest(msg) {
+  // Snapshot the request the moment it arrives, before any bypass
+  // logic. Stored so the log strip can re-display the request / pair
+  // after it's been resolved. Even bypassed requests get captured so
+  // a "bypassed" log row stays inspectable.
+  capturedRequests.set(msg.id, {
+    method: msg.method,
+    url: msg.url,
+    headers: msg.headers || {},
+    body: msg.body || '',
+  });
+  if (capturedRequests.size > 200) {
+    const oldest = capturedRequests.keys().next().value;
+    capturedRequests.delete(oldest);
+  }
+  // A new live intercept means whatever captured pair was on display
+  // is now stale — drop the viewing flag so the editor's action
+  // buttons re-enable.
+  if (viewingCapturedId) _clearCapturedViewing();
+
   const methodFilter = document.getElementById('icpt-method-filter').value;
 
   // Method filter
   if (methodFilter && msg.method !== methodFilter) {
     sendInterceptDecision(msg.id, { action: 'forward' });
-    addInterceptLog('bypassed', msg.method, msg.url, 'req');
+    upsertInterceptLog(msg.id, { action: 'bypassed', method: msg.method, url: msg.url });
     return;
   }
   // Global scope gate (defense in depth — the proxy already filters server-side
@@ -5557,13 +5292,13 @@ function handleProxyInterceptedRequest(msg) {
   // before the config update lands)
   if (!inGlobalScope(msg.url)) {
     sendInterceptDecision(msg.id, { action: 'forward' });
-    addInterceptLog('bypassed', msg.method, msg.url, 'req');
+    upsertInterceptLog(msg.id, { action: 'bypassed', method: msg.method, url: msg.url });
     return;
   }
   // Bypass rules
   if (interceptBypassRegex && interceptBypassRegex.test(msg.url)) {
     sendInterceptDecision(msg.id, { action: 'forward' });
-    addInterceptLog('bypassed', msg.method, msg.url, 'req');
+    upsertInterceptLog(msg.id, { action: 'bypassed', method: msg.method, url: msg.url });
     return;
   }
 
@@ -5591,9 +5326,16 @@ function handleResponseIntercepted(msg) {
     body = JSON.stringify(parsed, null, 2);
   } catch {}
 
-  // Add to response queue
+  // Same reasoning as the request side: a new live intercept means
+  // any captured-pair view is now stale.
+  if (viewingCapturedId) _clearCapturedViewing();
+
+  // Add to response queue. requestId is the original request id (no
+  // _resp suffix) — we keep it on the item so the response decision
+  // can update the right log row that the request side opened.
   const newItem = {
     id: msg.id,
+    requestId: msg.requestId || msg.id.replace(/_resp$/, ''),
     method: msg.method,
     url: msg.url,
     statusCode: msg.statusCode,
@@ -5644,7 +5386,13 @@ document.getElementById('icpt-resp-add-header').addEventListener('click', () => 
 // Common buttons
 document.getElementById('icpt-forward-all').addEventListener('click', forwardAll);
 document.getElementById('icpt-drop-all').addEventListener('click', dropAll);
-document.getElementById('icpt-clear-log').addEventListener('click', () => { interceptLog.length = 0; renderInterceptLog(); });
+document.getElementById('icpt-clear-log').addEventListener('click', () => {
+  interceptLog.length = 0;
+  capturedRequests.clear();
+  capturedResponses.clear();
+  if (viewingCapturedId) _clearCapturedViewing();
+  renderInterceptLog();
+});
 document.getElementById('icpt-bypass-apply').addEventListener('click', applyBypassRule);
 
 // Toggle the auto-forward / bypass rules row (collapsed by default).
@@ -5801,6 +5549,9 @@ function renderQueueItems(queue, el, selectedId, side) {
 
   el.querySelectorAll('.icpt-queue-item').forEach(el2 => {
     el2.addEventListener('click', () => {
+      // User picked a live queue item — drop any captured-view state
+      // so the action buttons re-enable for the live intercept.
+      if (viewingCapturedId) _clearCapturedViewing();
       const idx = parseInt(el2.dataset.icptIdx);
       if (side === 'req') {
         const item = reqQueue[idx];
@@ -5939,25 +5690,29 @@ function forwardSelected(modified) {
       getIcptKvEntries('icpt-req-headers-list').forEach(h => { headers[h.name] = h.value; });
       const body = document.getElementById('icpt-req-edit-body').value;
       sendInterceptDecision(item.id, { action: 'forward_modified', method: newMethod, url: newUrl, headers, body });
-      addInterceptLog('modified', newMethod, newUrl, 'req', item.id);
+      upsertInterceptLog(item.id, { action: 'modified', method: newMethod, url: newUrl });
     } else {
       sendInterceptDecision(item.id, { action: 'forward' });
-      addInterceptLog('forwarded', item.method, item.url, 'req', item.id);
+      upsertInterceptLog(item.id, { action: 'forwarded', method: item.method, url: item.url });
     }
     removeFromReqQueue(item.id);
   } else {
     const item = respQueue.find(q => q.id === selectedRespId);
     if (!item) return;
+    const reqId = item.requestId;
     if (modified) {
       const respStatus = parseInt(document.getElementById('icpt-resp-edit-status').value) || 200;
       const respHeaders = {};
       getIcptKvEntries('icpt-resp-headers-list').forEach(h => { respHeaders[h.name] = h.value; });
       const respBody = document.getElementById('icpt-resp-edit-body').value;
       sendInterceptDecision(item.id, { action: 'forward_modified', responseStatus: respStatus, headers: respHeaders, body: respBody });
-      addInterceptLog('modified', respStatus + '', item.url, 'resp', item.id);
+      // Save the modified response so the log click can re-display it.
+      capturedResponses.set(reqId, { statusCode: respStatus, headers: respHeaders, body: respBody, bodyLength: (respBody || '').length });
+      upsertInterceptLog(reqId, { responseAction: 'modified', responseStatus: respStatus });
     } else {
       sendInterceptDecision(item.id, { action: 'forward' });
-      addInterceptLog('forwarded', item.method || (item.statusCode + ''), item.url, 'resp', item.id);
+      capturedResponses.set(reqId, { statusCode: item.statusCode, headers: item.headers, body: item.body, bodyTruncated: item.bodyTruncated });
+      upsertInterceptLog(reqId, { responseAction: 'forwarded', responseStatus: item.statusCode });
     }
     removeFromRespQueue(item.id);
   }
@@ -5968,13 +5723,14 @@ function dropSelected() {
     const item = reqQueue.find(q => q.id === selectedReqId);
     if (!item) return;
     sendInterceptDecision(item.id, { action: 'drop' });
-    addInterceptLog('dropped', item.method, item.url, 'req');
+    upsertInterceptLog(item.id, { action: 'dropped', method: item.method, url: item.url });
     removeFromReqQueue(item.id);
   } else {
     const item = respQueue.find(q => q.id === selectedRespId);
     if (!item) return;
+    const reqId = item.requestId;
     sendInterceptDecision(item.id, { action: 'drop' });
-    addInterceptLog('dropped', item.method, item.url, 'resp');
+    upsertInterceptLog(reqId, { responseAction: 'dropped' });
     removeFromRespQueue(item.id);
   }
 }
@@ -5997,7 +5753,14 @@ function mockResponseSelected() {
     responseHeaders: headers,
     responseBody: body
   });
-  addInterceptLog('mocked', item.method, item.url, 'req');
+  // Mock returns synthetic response — store it so log click shows
+  // the mock's headers/body, not whatever the server would have said.
+  const mockHeaders = {};
+  headers.forEach(h => { mockHeaders[h.name] = h.value; });
+  capturedResponses.set(item.id, { statusCode: status, headers: mockHeaders, body });
+  upsertInterceptLog(item.id, {
+    action: 'mocked', method: item.method, url: item.url, responseStatus: status,
+  });
   removeFromReqQueue(item.id);
 }
 
@@ -6005,12 +5768,13 @@ function forwardAll() {
   while (reqQueue.length > 0) {
     const item = reqQueue.shift();
     sendInterceptDecision(item.id, { action: 'forward' });
-    addInterceptLog('forwarded', item.method, item.url, 'req', item.id);
+    upsertInterceptLog(item.id, { action: 'forwarded', method: item.method, url: item.url });
   }
   while (respQueue.length > 0) {
     const item = respQueue.shift();
     sendInterceptDecision(item.id, { action: 'forward' });
-    addInterceptLog('forwarded', item.method || (item.statusCode + ''), item.url, 'resp', item.id);
+    capturedResponses.set(item.requestId, { statusCode: item.statusCode, headers: item.headers, body: item.body, bodyTruncated: item.bodyTruncated });
+    upsertInterceptLog(item.requestId, { responseAction: 'forwarded', responseStatus: item.statusCode });
   }
   hideReqEditor();
   hideRespEditor();
@@ -6022,12 +5786,12 @@ function dropAll() {
   while (reqQueue.length > 0) {
     const item = reqQueue.shift();
     sendInterceptDecision(item.id, { action: 'drop' });
-    addInterceptLog('dropped', item.method, item.url, 'req');
+    upsertInterceptLog(item.id, { action: 'dropped', method: item.method, url: item.url });
   }
   while (respQueue.length > 0) {
     const item = respQueue.shift();
     sendInterceptDecision(item.id, { action: 'drop' });
-    addInterceptLog('dropped', item.method, item.url, 'resp');
+    upsertInterceptLog(item.requestId, { responseAction: 'dropped' });
   }
   hideReqEditor();
   hideRespEditor();
@@ -6035,8 +5799,18 @@ function dropAll() {
   renderRespQueue();
 }
 
-// Response capture history (id → response)
+// Response + request capture history (id → captured payload). Used by
+// the log strip — clicking a log row replays both into the editors so
+// the user can re-inspect a request/response pair after it's been
+// resolved (forwarded / dropped / etc.). Both maps are bounded at 200
+// entries so a long monitoring session doesn't accumulate unbounded
+// data.
 const capturedResponses = new Map();
+const capturedRequests = new Map();
+// While a captured pair is on display in the editors (not a live
+// pending intercept) this holds the log id. Auto-cleared when a new
+// pending intercept arrives or when the user clicks a queue item.
+let viewingCapturedId = null;
 
 function handleResponseCaptured(msg) {
   capturedResponses.set(msg.id, {
@@ -6059,68 +5833,169 @@ function handleResponseCaptured(msg) {
   }
 }
 
-function addInterceptLog(action, method, url, stage, id) {
-  interceptLog.unshift({ action, method, url, stage, time: new Date(), id: id || null });
+// Upsert a log entry keyed by request id. Each captured request /
+// response cycle owns ONE log row — `action` records the request-side
+// decision (forwarded / modified / dropped / mocked / bypassed), and
+// later events (response intercept decision, response capture) update
+// `responseAction` / `responseStatus` on the same row instead of
+// adding a duplicate. A request without an id (shouldn't happen in
+// practice) still gets a one-shot row by falling back to a synthetic
+// key.
+function upsertInterceptLog(id, fields) {
+  if (!id) {
+    interceptLog.unshift({ id: null, time: new Date(), ...fields });
+  } else {
+    const existing = interceptLog.find(l => l.id === id);
+    if (existing) {
+      Object.assign(existing, fields);
+    } else {
+      interceptLog.unshift({ id, time: new Date(), ...fields });
+    }
+  }
   if (interceptLog.length > 200) interceptLog.pop();
   renderInterceptLog();
 }
 
 function renderInterceptLog() {
-  icptLogEl.innerHTML = interceptLog.slice(0, 100).map((l, idx) => {
-    const cls = 'log-' + l.action;
+  icptLogEl.innerHTML = interceptLog.slice(0, 100).map((l) => {
+    const cls = 'log-' + (l.action || 'pending');
     let shortUrl;
-    try { shortUrl = new URL(l.url).pathname; } catch { shortUrl = l.url; }
+    try { shortUrl = new URL(l.url || '').pathname; } catch { shortUrl = l.url || ''; }
     const time = l.time.toLocaleTimeString(undefined, { hour12: false });
+    const hasReq = l.id && capturedRequests.has(l.id);
     const hasResp = l.id && capturedResponses.has(l.id);
-    const respStatus = l.responseStatus ? `<span style="color:${l.responseStatus < 400 ? '#0b7a3e' : '#d32f2f'};min-width:28px">${l.responseStatus}</span>` : '';
-    const clickAttr = hasResp ? `data-resp-id="${l.id}" style="cursor:pointer"` : '';
-    return `<div class="icpt-log-item" ${clickAttr}>
-      <span class="log-action ${cls}">${l.action}</span>
-      <span style="color:#0451a5;min-width:36px">${escapeHtml(l.method)}</span>
-      ${respStatus}
-      <span class="log-url" title="${escapeHtml(l.url)}">${escapeHtml(shortUrl)}</span>
-      <span style="color:#999">${time}</span>
+    // Status column: shows the response decision in priority order —
+    // explicit "DROP" if the response was dropped, the response code
+    // (with ✎ prefix if the response was modified) if known, "—"
+    // otherwise (request dropped, or response not yet captured).
+    let statusCell;
+    if (l.responseAction === 'dropped') {
+      statusCell = `<span class="log-resp-drop">DROP</span>`;
+    } else if (l.responseStatus != null) {
+      const s = l.responseStatus;
+      const color = s < 400 ? '#0b7a3e' : '#d32f2f';
+      const mark = l.responseAction === 'modified' ? '✎' : '';
+      statusCell = `<span class="log-resp-status" style="color:${color}">${mark}${s}</span>`;
+    } else {
+      statusCell = `<span class="log-resp-status log-resp-none">—</span>`;
+    }
+    // Any log row with a captured request OR response is clickable;
+    // the click handler populates whichever sides have data.
+    const clickAttr = (hasReq || hasResp)
+      ? `data-log-id="${escapeAttr(l.id)}" style="cursor:pointer"`
+      : '';
+    const isViewing = l.id && l.id === viewingCapturedId;
+    return `<div class="icpt-log-item${isViewing ? ' viewing' : ''}" ${clickAttr}>
+      <span class="log-action ${cls}">${l.action || ''}</span>
+      <span class="log-method">${escapeHtml(l.method || '')}</span>
+      ${statusCell}
+      <span class="log-url" title="${escapeAttr(l.url || '')}">${escapeHtml(shortUrl)}</span>
+      <span class="log-time">${time}</span>
     </div>`;
   }).join('');
 }
 
-// Show response detail on log click
+// Click on a log row → re-display the captured request + response in
+// their respective editors. Blocked while there's an unresolved live
+// intercept queued so the user doesn't lose in-progress edits or
+// accidentally drop a held connection by switching what the editor
+// shows.
 icptLogEl.addEventListener('click', (e) => {
-  const item = e.target.closest('[data-resp-id]');
+  const item = e.target.closest('[data-log-id]');
   if (!item) return;
-  const resp = capturedResponses.get(item.dataset.respId);
-  if (!resp) return;
-  showCapturedResponse(resp);
+  if (reqQueue.length > 0 || respQueue.length > 0) {
+    showToast('Resolve pending intercepts first (Forward / Drop / Mock)');
+    return;
+  }
+  _viewCapturedById(item.dataset.logId);
 });
 
-function showCapturedResponse(resp) {
-  // Display captured response in Response side editor
-  respPlaceholder.style.display = 'none';
-  respEditorContent.classList.remove('hidden');
-
-  document.getElementById('icpt-resp-edit-method').textContent = '';
-  document.getElementById('icpt-resp-edit-url').value = '';
-  document.getElementById('icpt-resp-edit-status').value = resp.statusCode || 200;
-
-  const headersList = document.getElementById('icpt-resp-headers-list');
-  headersList.innerHTML = '';
-  if (resp.headers && typeof resp.headers === 'object') {
-    Object.entries(resp.headers).forEach(([name, value]) => {
-      addIcptKvRow('icpt-resp-headers-list', name, Array.isArray(value) ? value.join(', ') : value);
+function _viewCapturedById(id) {
+  const req = capturedRequests.get(id);
+  const resp = capturedResponses.get(id);
+  if (!req && !resp) return;
+  viewingCapturedId = id;
+  // Mark editors as read-only (CSS hides action buttons + banner +
+  // resp topbar/status in this mode).
+  reqEditorContent.classList.add('icpt-viewing-captured');
+  respEditorContent.classList.add('icpt-viewing-captured');
+  if (req) {
+    showReqEditor({
+      id, reqType: 'captured',
+      method: req.method, url: req.url, headers: req.headers, postData: req.body,
     });
+  } else {
+    hideReqEditor();
   }
-
-  const bodyEl = document.getElementById('icpt-resp-edit-body');
-  let body = resp.body || '';
-  try {
-    const parsed = JSON.parse(body);
-    body = JSON.stringify(parsed, null, 2);
-  } catch {}
-  bodyEl.value = body;
-  if (resp.bodyTruncated) {
-    bodyEl.value += '\n\n--- [truncated at 512KB] ---';
+  if (resp) {
+    showRespEditor({
+      id, method: req ? req.method : '', url: req ? req.url : '',
+      statusCode: resp.statusCode, headers: resp.headers, body: resp.body,
+      bodyTruncated: resp.bodyTruncated,
+    });
+  } else {
+    hideRespEditor();
   }
+  // After populating the editors, lock the inputs. CSS readonly/
+  // disabled visuals + JS attribute set together so users can't
+  // accidentally edit fields they're only meant to inspect.
+  _setIcptEditorsReadonly(true);
+  // Re-render so the active log row gets the .viewing highlight.
+  renderInterceptLog();
 }
+
+function _clearCapturedViewing() {
+  viewingCapturedId = null;
+  if (reqEditorContent) reqEditorContent.classList.remove('icpt-viewing-captured');
+  if (respEditorContent) respEditorContent.classList.remove('icpt-viewing-captured');
+  _setIcptEditorsReadonly(false);
+  renderInterceptLog();
+}
+
+// User clicked X on the viewing banner → exit viewing mode AND wipe
+// the captured-view content from both editors so they fall back to
+// their normal placeholder state. (If a queue item was selected
+// before viewing, the natural next action is to live-intercept
+// again, not to re-show whatever was left over.)
+function _exitViewingExplicit() {
+  _clearCapturedViewing();
+  hideReqEditor();
+  hideRespEditor();
+}
+
+// Walk the inputs/textareas/selects/checkboxes inside the Intercept
+// editors and toggle their inert state. readOnly handles inputs +
+// textareas (still selectable), disabled handles checkboxes + selects
+// (no other way to lock them). The X / + Add Header buttons stay
+// active so the user can still close the view; tab buttons stay
+// active so they can switch Headers / Body / Mock panes.
+function _setIcptEditorsReadonly(on) {
+  [reqEditorContent, respEditorContent].forEach(ed => {
+    if (!ed) return;
+    ed.querySelectorAll('input, textarea, select').forEach(el => {
+      const tag = el.tagName;
+      const type = (el.type || '').toLowerCase();
+      if (type === 'checkbox' || tag === 'SELECT') {
+        el.disabled = on;
+      } else {
+        el.readOnly = on;
+      }
+    });
+    // + Add Header buttons would let the user inject rows even in
+    // viewing mode — block them by class match (they live in the
+    // kv-toolbar). Action buttons (Forward / Drop / etc.) are
+    // hidden via CSS already.
+    ed.querySelectorAll('.icpt-kv-toolbar .btn-xs').forEach(b => {
+      b.disabled = on;
+    });
+  });
+}
+
+// Close (X) on the viewing banner — delegated so it works for both
+// banners (request and response side) without per-element listeners.
+document.querySelectorAll('.icpt-viewing-close').forEach(btn => {
+  btn.addEventListener('click', _exitViewingExplicit);
+});
 
 // ============================================================
 // Utility Functions
@@ -6166,8 +6041,14 @@ function truncate(str, max) {
 // Resizable split gutters: drag to resize the next sibling pane.
 function setupSplitGutter(gutter) {
   const isVertical = gutter.classList.contains('split-gutter-v');
+  // Direction: by default the gutter resizes the *next* sibling, with
+  // the previous sibling absorbing leftover space via flex-grow. Some
+  // layouts (e.g. the Network tree pane on the left) need the
+  // opposite — set data-resize="prev" to flip which side gets sized
+  // and which side absorbs.
+  const resizesPrev = gutter.dataset.resize === 'prev';
   gutter.addEventListener('mousedown', (e) => {
-    const target = gutter.nextElementSibling;
+    const target = resizesPrev ? gutter.previousElementSibling : gutter.nextElementSibling;
     if (!target || target.classList.contains('hidden')) return;
     e.preventDefault();
     const rect = target.getBoundingClientRect();
@@ -6179,7 +6060,11 @@ function setupSplitGutter(gutter) {
 
     function onMove(ev) {
       const cur = isVertical ? ev.clientY : ev.clientX;
-      const newSize = Math.max(80, startSize - (cur - startPos));
+      // Default direction: dragging away from the target shrinks it.
+      // Prev mode reverses the sign so dragging toward the target's
+      // side (right, when target is the left pane) grows it.
+      const delta = cur - startPos;
+      const newSize = Math.max(80, resizesPrev ? startSize + delta : startSize - delta);
       target.style.flex = `0 0 ${newSize}px`;
       if (isVertical) {
         target.style.maxHeight = 'none';

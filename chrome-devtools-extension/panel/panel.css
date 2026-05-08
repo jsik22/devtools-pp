@@ -250,6 +250,27 @@ tr:hover {
   background: #f0f4ff;
 }
 
+/* Replay-originated rows in the Network list — subtle yellow tint
+   on the row + a small ↻ badge prefix in the URL cell so the user
+   can tell at a glance which entries were Sent via Replay vs picked
+   up from the browser. */
+#network-table tbody tr.row-replay td {
+  background: #fffdf2;
+}
+#network-table tbody tr.row-replay:hover td {
+  background: #fcf6e0;
+}
+#network-table tbody tr.row-replay.selected td,
+#network-table tbody tr.row-replay.row-checked.selected td {
+  background: #cce5ff;
+}
+.row-replay-badge {
+  display: inline-block;
+  color: #b06000;
+  font-weight: 600;
+  margin-right: 4px;
+}
+
 .status-ok { color: #0b7a3e; }
 .status-redirect { color: #8a6d00; }
 .status-error { color: #d32f2f; }
@@ -278,26 +299,47 @@ tr:hover {
   display: none;
 }
 
-/* Network split view */
+/* Network split view — top-level layout is [tree | gutter | main].
+   The right side wraps tabs + (list | detail) so the tree spans full
+   height under the toolbar (it's a global navigation surface), and
+   tabs sit only above the list/detail row to its right. */
 .network-split {
   flex: 1;
   display: flex;
   overflow: hidden;
 }
 
-.network-split .table-wrapper {
+.network-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.network-list-detail {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.network-list-detail .table-wrapper {
   flex: 1;
   overflow: auto;
   min-width: 0;
 }
 
+/* JS still toggles `has-detail` on the outer .network-split when the
+   detail pane opens — descendant selector still hits the inner
+   table-wrapper through the new .network-main / .network-list-detail
+   wrappers. */
 .network-split.has-detail .table-wrapper {
   flex: 1;
   border-right: 1px solid #d4d4d4;
 }
 
 .network-detail {
-  flex: 0 0 60%;
+  flex: 0 0 50%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -393,6 +435,220 @@ tr:hover {
 
 .detail-section:empty {
   display: none;
+}
+
+/* ============================================================
+   Message tab — vertical Request / Response split rendering raw
+   HTTP. The differentiator vs native DevTools is showing the
+   on-the-wire message form (status line + headers + body) instead
+   of a key-value table. Replay edits happen in-place in the same
+   request pane via the textarea overlay.
+   ============================================================ */
+.msg-split {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 100%;
+}
+.msg-pane {
+  flex: 1 1 50%;
+  display: flex;
+  flex-direction: column;
+  min-height: 80px;
+  overflow: hidden;
+}
+.msg-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: #f3f3f3;
+  border-bottom: 1px solid #d4d4d4;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.msg-pane-title {
+  font-weight: 600;
+  color: #333;
+  font-size: 11px;
+}
+.msg-pane-meta {
+  color: #555;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+}
+.msg-pane-meta .s-2xx { color: #0b7a3e; font-weight: 600; }
+.msg-pane-meta .s-3xx { color: #8a6d00; font-weight: 600; }
+.msg-pane-meta .s-4xx,
+.msg-pane-meta .s-5xx { color: #d32f2f; font-weight: 600; }
+.msg-pane-spacer { flex: 1; }
+
+/* Raw / Pretty segmented toggle */
+.msg-format-toggle {
+  display: inline-flex;
+  border: 1px solid #c4c4c4;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.msg-format-btn {
+  background: #fff;
+  border: none;
+  border-right: 1px solid #c4c4c4;
+  color: #555;
+  padding: 1px 8px;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.msg-format-btn:last-child { border-right: none; }
+.msg-format-btn:hover { background: #f0f4ff; }
+.msg-format-btn.active {
+  background: #E8F0FE;
+  color: #1A73E8;
+  font-weight: 500;
+}
+
+/* Body area — monospace raw HTTP message. Outer wrapper is a flex
+   column so its inner <pre> (read mode) or <textarea> (replay edit
+   mode) can both fill the available height via flex:1 instead of
+   relying on `height: 100%`, which falls back to 0 inside an
+   overflow:auto parent in some browsers. */
+.msg-pane-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #1e1e1e;
+  min-height: 0;
+}
+.msg-raw {
+  flex: 1;
+  margin: 0;
+  padding: 8px 12px;
+  white-space: pre;
+  tab-size: 2;
+  overflow: auto;
+}
+/* Header line + status / request line styling — color cue without
+   pulling out a full token tokenizer. */
+.msg-raw .msg-line-status {
+  color: #1a73e8;
+  font-weight: 600;
+}
+.msg-raw .msg-header-name {
+  color: #8a3324;
+  font-weight: 600;
+}
+/* Subtle color cue: the request/status line stays inline with the
+   header block so it reads like a real HTTP message, but a thin
+   left border on the body section visually separates headers from
+   body the way the blank line does on the wire. */
+.msg-headers-block { display: block; }
+.msg-body-block {
+  display: block;
+  margin-top: 0; /* the blank line itself produces the spacing */
+}
+.msg-empty {
+  padding: 16px;
+  color: #999;
+  font-size: 12px;
+  font-family: -apple-system, sans-serif;
+}
+
+/* Replay edit mode: textarea takes over the request body slot, and
+   the bar of Send / Original / hint shows below the body. */
+.msg-replay-textarea {
+  flex: 1;
+  width: 100%;
+  margin: 0;
+  padding: 8px 12px;
+  border: none;
+  outline: none;
+  resize: none;
+  background: #fffdf2;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #1e1e1e;
+  white-space: pre;
+  tab-size: 2;
+  box-sizing: border-box;
+  /* Long lines should scroll horizontally inside the textarea, not
+     wrap, so the user keeps line-by-line correspondence with the
+     read-only raw view. */
+  overflow: auto;
+  white-space: pre;
+}
+.msg-replay-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: #fef7e0;
+  border-top: 1px solid #f4dca0;
+  flex-shrink: 0;
+}
+.msg-replay-bar.hidden { display: none; }
+.msg-replay-hint {
+  font-size: 11px;
+  color: #856404;
+  margin-left: auto;
+}
+.btn-state {
+  background: #d4edda;
+  border-color: #b8dabf;
+  color: #155724;
+}
+.btn-state.modified {
+  background: #fff3cd;
+  border-color: #ffe69c;
+  color: #856404;
+}
+
+/* Preview overlay — when Preview button is on, the response body
+   area shows rendered content (iframe/img/json tree) instead of raw. */
+.msg-preview-iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+.msg-preview-image {
+  padding: 12px;
+}
+.msg-preview-image img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border: 1px solid #e0e0e0;
+}
+.msg-preview-tree {
+  padding: 8px 12px;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+/* Diff badge after a Replay Send — appended below the response body. */
+.msg-diff-badge {
+  margin: 12px 14px;
+  padding: 10px 12px;
+  border-top: 1px solid #d4d4d4;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+}
+.msg-diff-badge .diff-title {
+  font-weight: 600;
+  color: #8a6d00;
+  margin-bottom: 6px;
+}
+.msg-diff-identical {
+  color: #0b7a3e;
+  font-size: 12px;
 }
 
 /* Initiator tab */
@@ -583,42 +839,6 @@ tr:hover {
   color: #e65100;
   background: #fff3e0;
   border-bottom: 1px solid #ffe0b2;
-}
-
-.section-title {
-  display: flex;
-  align-items: center;
-  padding: 8px 12px;
-  background: #f8f8f8;
-  font-weight: 600;
-  font-size: 12px;
-  color: #333;
-  cursor: pointer;
-  user-select: none;
-  border-bottom: 1px solid #e8e8e8;
-}
-
-.section-title:hover {
-  background: #f0f0f0;
-}
-
-.section-title .arrow {
-  margin-right: 6px;
-  font-size: 9px;
-  transition: transform 0.15s;
-  display: inline-block;
-}
-
-.section-title.collapsed .arrow {
-  transform: rotate(-90deg);
-}
-
-.section-body {
-  padding: 0;
-}
-
-.section-body.collapsed {
-  display: none;
 }
 
 /* ============================================================
@@ -965,215 +1185,19 @@ tr:hover {
   font-weight: 600;
 }
 
-.response-body-content {
-  padding: 12px;
-  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 100%;
-  overflow: auto;
-}
-
+/* JSON token colors used by syntaxHighlightJson + Json tree preview. */
 .json-key { color: #0451a5; }
 .json-string { color: #a31515; }
 .json-number { color: #098658; }
 .json-boolean { color: #0451a5; }
 .json-null { color: #0451a5; }
 
-.preview-iframe {
-  width: 100%;
-  height: 100%;
-  border: none;
-  background: #fff;
-}
-
-.detail-loading {
-  padding: 12px;
-  color: #999;
-  font-style: italic;
-}
-
-tr.selected {
-  background: #cce5ff !important;
-}
-
-tr.selected td {
-  color: #000;
-}
-
-.query-param-row {
-  display: flex;
-  padding: 4px 12px 4px 24px;
-  border-bottom: 1px solid #f3f3f3;
-  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.query-param-row:hover {
-  background: #f0f4ff;
-}
-
-.query-param-row .param-name {
-  color: #0451a5;
-  min-width: 200px;
-  flex-shrink: 0;
-  font-weight: 600;
-}
-
-.query-param-row .param-value {
-  color: #000;
-  word-break: break-all;
-  flex: 1;
-}
-
-/* ============================================================
-   Replay & Tamper
-   ============================================================ */
-
-.replay-tab {
-  color: #0b7a3e !important;
-  font-weight: 600;
-}
-
-.replay-tab.active {
-  color: #0b7a3e !important;
-  border-bottom-color: #0b7a3e !important;
-}
-
-.replay-container {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-}
-
-.replay-composer {
-  flex: 1 1 50%;
-  display: flex;
-  flex-direction: column;
-  min-height: 100px;
-  overflow: hidden;
-}
-
-.replay-url-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  background: #f3f3f3;
-  border-bottom: 1px solid #d4d4d4;
-  flex-shrink: 0;
-}
-
-.replay-url-bar select {
-  background: #0078d4;
-  color: #fff;
-  border: 1px solid #0078d4;
-  padding: 5px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.replay-url-input {
-  flex: 1;
-  min-width: 0;
-  padding: 5px 8px;
-  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
-  font-size: 12px;
-}
-
-.btn-send {
-  padding: 5px 18px;
-  font-weight: 600;
-  font-size: 12px;
-}
-
-.btn-state {
-  padding: 5px 14px;
-  font-size: 12px;
-  font-weight: 600;
-  background: #e6f4ea;
-  border-color: #0b7a3e;
-  color: #0b7a3e;
-  cursor: default;
-}
-
-.btn-state.modified {
-  background: #fff3e0;
-  border-color: #e65100;
-  color: #e65100;
-  cursor: pointer;
-}
-
-.btn-state.modified:hover {
-  background: #ffe0b2;
-}
-
-.replay-sections {
-  flex: 1;
-  overflow: auto;
-}
-
-.replay-section {
-  border-bottom: 1px solid #eee;
-}
-
-.replay-section-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  background: #f3f3f3;
-  font-weight: 600;
-  font-size: 12px;
-  color: #333;
-  cursor: pointer;
-  user-select: none;
-  border-bottom: 1px solid #e8e8e8;
-}
-
-.replay-section-title:hover {
-  background: #eaeaea;
-}
-
-.replay-section-title .arrow {
-  font-size: 9px;
-  transition: transform 0.15s;
-  display: inline-block;
-}
-
-.replay-section-title.collapsed .arrow {
-  transform: rotate(-90deg);
-}
-
-.replay-section-body {
-  background: #fff;
-}
-
-.replay-section-body.collapsed {
-  display: none;
-}
-
-.btn-xs {
-  padding: 2px 8px;
-  font-size: 11px;
-  margin-left: auto;
-  background: #e8e8e8;
-  border: 1px solid #c4c4c4;
-  color: #555;
-}
-
-.btn-xs:hover {
-  background: #d4d4d4;
-  color: #1e1e1e;
-}
-
-/* Key-Value editor */
+/* Key/Value row styling — used by the Intercept editor (request /
+   response / mock headers) for inline name+value+enable+remove rows.
+   The class name carries the legacy `replay-` prefix because it was
+   originally introduced for the Replay tab; the Replay tab is gone
+   but Intercept still relies on this layout. Renaming would require
+   coordinated HTML+JS updates with no functional benefit. */
 .replay-kv-list {
   font-size: 12px;
 }
@@ -1260,179 +1284,44 @@ tr.selected td {
   text-decoration: line-through;
 }
 
-/* Body editor */
-.replay-body-editor {
-  width: 100%;
-  min-height: 80px;
-  max-height: 200px;
-  background: #fff;
+.detail-loading {
+  padding: 12px;
+  color: #999;
+  font-style: italic;
+}
+
+tr.selected {
+  background: #cce5ff !important;
+}
+
+tr.selected td {
   color: #000;
-  border: none;
-  padding: 8px 10px;
+}
+
+.query-param-row {
+  display: flex;
+  padding: 4px 12px 4px 24px;
+  border-bottom: 1px solid #f3f3f3;
   font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
   font-size: 12px;
   line-height: 1.6;
-  resize: vertical;
-  outline: none;
 }
 
-.replay-body-editor:focus {
-  background: #f8faff;
-}
-
-.replay-body-type-select {
-  margin-left: 8px;
-  font-size: 11px;
-  padding: 1px 6px;
-}
-
-/* Response area */
-.replay-response {
-  flex: 1 1 50%;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  min-height: 100px;
-}
-
-.replay-response-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 10px;
-  background: #f3f3f3;
-  border-bottom: 1px solid #d4d4d4;
-  flex-shrink: 0;
-}
-
-.replay-response-title {
-  font-weight: 600;
-  font-size: 12px;
-  color: #333;
-}
-
-.replay-status {
-  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 1px 8px;
-  border-radius: 4px;
-}
-
-.replay-status.s2xx { color: #0b7a3e; background: rgba(11, 122, 62, 0.1); }
-.replay-status.s3xx { color: #8a6d00; background: rgba(138, 109, 0, 0.1); }
-.replay-status.s4xx { color: #d32f2f; background: rgba(211, 47, 47, 0.1); }
-.replay-status.s5xx { color: #d32f2f; background: rgba(211, 47, 47, 0.15); }
-
-.replay-retry-bg {
-  margin-left: 6px;
-  vertical-align: baseline;
-}
-
-.replay-retry-hint {
-  margin-left: 6px;
-  color: #777;
-  font-size: 11px;
-}
-
-.replay-timing {
-  font-size: 12px;
-  color: #666;
-  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
-}
-
-.replay-response-tabs {
-  display: flex;
-  gap: 2px;
-  margin-left: auto;
-}
-
-.replay-resp-tab {
-  background: transparent;
-  border: none;
-  color: #666;
-  padding: 3px 10px;
-  cursor: pointer;
-  font-size: 11px;
-  border-bottom: 2px solid transparent;
-}
-
-.replay-resp-tab:hover { color: #333; }
-.replay-resp-tab.active { color: #1e1e1e; border-bottom-color: #0078d4; }
-
-.replay-resp-pane {
-  display: none;
-  flex: 1;
-  overflow: auto;
-}
-
-.replay-resp-pane.active {
-  display: block;
-}
-
-/* Replay status indicator */
-.replay-sending .btn-send {
-  background: #8a6d00;
-  border-color: #8a6d00;
-  pointer-events: none;
-}
-
-/* History */
-.replay-history {
-  flex-shrink: 0;
-  border-top: 2px solid #d4d4d4;
-  max-height: 150px;
-  overflow: auto;
-}
-
-.replay-history-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 10px;
-  font-size: 12px;
-  border-bottom: 1px solid #f3f3f3;
-  cursor: pointer;
-  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
-}
-
-.replay-history-item:hover {
+.query-param-row:hover {
   background: #f0f4ff;
 }
 
-.replay-history-item .hist-method {
-  font-weight: 700;
+.query-param-row .param-name {
   color: #0451a5;
-  min-width: 50px;
-}
-
-.replay-history-item .hist-url {
-  flex: 1;
-  color: #666;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.replay-history-item .hist-status {
-  font-weight: 700;
-  min-width: 40px;
-  text-align: right;
-}
-
-.replay-history-item .hist-time {
-  color: #999;
-  min-width: 60px;
-  text-align: right;
-}
-
-.replay-diff-badge {
-  font-size: 9px;
-  padding: 0 4px;
-  border-radius: 2px;
-  background: #fff3cd;
-  color: #664d03;
+  min-width: 200px;
+  flex-shrink: 0;
   font-weight: 600;
+}
+
+.query-param-row .param-value {
+  color: #000;
+  word-break: break-all;
+  flex: 1;
 }
 
 /* Diff highlight */
@@ -1454,19 +1343,97 @@ tr.selected td {
 }
 
 /* ============================================================
-   Site Map
+   Network tabs — one tab per captured host. Each tab acts as a host
+   filter on the global Network list / detail; the underlying data
+   stays in a single networkRequests array, the active tab just
+   scopes which rows the table renders.
    ============================================================ */
-
-.sitemap-split {
+.network-tabs {
   display: flex;
-  flex: 1;
+  align-items: stretch;
+  gap: 0;
+  padding: 0 8px;
+  background: #f3f3f3;
+  border-bottom: 1px solid #d4d4d4;
+  flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* Hidden until the first capture creates a tab. */
+}
+.network-tabs.hidden { display: none; }
+
+.network-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  color: #555;
+  padding: 5px 10px 6px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  margin-top: 4px;
+  position: relative;
+  top: 1px;
+}
+.network-tab:hover {
+  background: #e8e8e8;
+}
+.network-tab.active {
+  background: #fff;
+  border-color: #c4c4c4;
+  color: #1A73E8;
+  font-weight: 500;
+}
+.network-tab .tab-host {
+  max-width: 220px;
   overflow: hidden;
+  text-overflow: ellipsis;
+}
+.network-tab .tab-count {
+  font-size: 10px;
+  color: #888;
+}
+.network-tab.active .tab-count {
+  color: #1A73E8;
+}
+.network-tab .tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 10px;
+  color: #999;
+  margin-left: 2px;
+  visibility: hidden;
+}
+.network-tab:hover .tab-close,
+.network-tab.active .tab-close {
+  visibility: visible;
+}
+.network-tab .tab-close:hover {
+  background: #d4d4d4;
+  color: #333;
 }
 
-.sitemap-tree-pane {
-  flex: 1;
-  overflow-y: auto;
-  min-width: 0;
+/* ============================================================
+   Tree pane (host / path tree, lives in the Network split)
+   ============================================================ */
+
+/* Sits leftmost in .network-split. Sized via flex-basis so it has a
+   sensible default width but stays resizable through the gutter that
+   follows it. min-width keeps the tree from collapsing past
+   readability when the user drags the gutter all the way left. */
+.network-tree-pane {
+  flex: 0 0 320px;
+  min-width: 80px;
+  overflow: auto;
+  background: #fff;
 }
 
 .sitemap-tree {
@@ -1502,163 +1469,14 @@ tr.selected td {
   text-align: center;
 }
 
-/* ============================================================
-   Site Map Source pane — code viewer for the selected node's
-   captured response body (HTML / CSS / JS / JSON / image / etc.).
-   ============================================================ */
-.sitemap-source-pane {
-  flex: 0 0 60%;
-  min-width: 200px;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: #fff;
-}
-.sitemap-source-pane.hidden {
-  display: none;
-}
-
-.sitemap-source-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  background: #f3f3f3;
-  border-bottom: 1px solid #d4d4d4;
-  flex-shrink: 0;
-}
-
-.sitemap-source-url {
-  flex: 1;
-  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
-  font-size: 11.5px;
-  color: #1e1e1e;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sitemap-source-meta {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 4px 10px;
-  background: #fafafa;
-  border-bottom: 1px solid #eee;
-  flex-shrink: 0;
-  font-size: 11px;
-  color: #555;
-}
-.sitemap-source-method {
-  font-weight: 600;
-  color: #0451a5;
-}
-.sitemap-source-status {
-  font-weight: 600;
-}
-.sitemap-source-status.s-2xx { color: #0b7a3e; }
-.sitemap-source-status.s-3xx { color: #8a6d00; }
-.sitemap-source-status.s-4xx,
-.sitemap-source-status.s-5xx { color: #d32f2f; }
-.sitemap-source-type,
-.sitemap-source-size {
-  color: #777;
-}
-
-.sitemap-source-body {
-  flex: 1;
-  overflow: auto;
-  background: #fff;
-}
-/* The <pre> resets a CSS counter so each line span auto-numbers via
-   ::before. No extra DOM column needed — gutter is the pseudo-element. */
-.sitemap-source-code {
-  margin: 0;
-  padding: 0;
-  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
-  font-size: 12px;
-  line-height: 1.55;
-  color: #1e1e1e;
-  white-space: pre;
-  tab-size: 2;
-  counter-reset: srcline;
-}
-.sitemap-source-code .line {
-  counter-increment: srcline;
-  display: block;
-  padding-left: 4em;
-  position: relative;
-  min-height: 1.55em;
-}
-.sitemap-source-code .line::before {
-  content: counter(srcline);
-  position: absolute;
-  left: 0;
-  width: 3em;
-  padding-right: 8px;
-  text-align: right;
-  color: #999;
-  user-select: none;
-  background: #f7f7f7;
-  border-right: 1px solid #e0e0e0;
-}
-/* Slight pad so code text doesn't sit flush against the gutter. */
-.sitemap-source-code .line {
-  padding-right: 12px;
-}
-.sitemap-source-image {
-  padding: 12px;
-}
-.sitemap-source-image img {
-  max-width: 100%;
-  height: auto;
-  display: block;
-  border: 1px solid #e0e0e0;
-}
-
-/* Search bar inside the meta row */
-.sitemap-source-meta-spacer {
-  flex: 1;
-}
-.sitemap-source-search {
-  background: #fff;
-  border: 1px solid #c4c4c4;
-  border-radius: 3px;
-  padding: 2px 6px;
-  font-size: 11px;
-  width: 160px;
-}
-.sitemap-source-search:focus {
-  outline: none;
-  border-color: #0078d4;
-}
-.sitemap-source-search-count {
-  font-size: 10.5px;
-  color: #666;
-  min-width: 40px;
-  text-align: right;
-}
-
-/* Search marks inside source code — yellow background, with the
-   currently-focused match (prev/next nav) in orange. */
-.sitemap-source-body mark.source-search-mark {
-  background: #fde68a;
-  color: inherit;
-  padding: 0 1px;
-  border-radius: 2px;
-}
-.sitemap-source-body mark.source-search-mark.active {
-  background: #f59e0b;
-  color: #000;
-}
-
+/* External-host group (per-main-host nested folder of cross-origin
+   captures). The header sits on the main host's child row. */
 .sitemap-external-header {
   color: #888;
   border-top: 1px solid #e0e0e0;
   margin-top: 4px;
   padding-top: 4px;
 }
-
 .sitemap-external-label {
   color: #888;
   font-style: italic;
@@ -1720,10 +1538,12 @@ tr.selected td {
   visibility: visible;
 }
 
+/* Children are indented under their parent — the rule that visually
+   conveys hierarchy. Without this, every node would look like a peer
+   of its parent. */
 .sitemap-children {
   padding-left: 16px;
 }
-
 .sitemap-children.collapsed {
   display: none;
 }
@@ -1909,6 +1729,7 @@ tr.selected td {
   flex: 1;
   display: flex;
   overflow: hidden;
+  min-height: 0;
 }
 
 .icpt-side {
@@ -1951,10 +1772,9 @@ tr.selected td {
 }
 
 .icpt-queue-list {
-  flex: 0 1 auto;
+  flex: 0 0 100px;
   overflow: auto;
-  min-height: 50px;
-  max-height: 30%;
+  min-height: 40px;
   border-bottom: 1px solid #e0e0e0;
 }
 
@@ -1967,9 +1787,13 @@ tr.selected td {
 
 .icpt-log-strip {
   flex: 0 0 150px;
+  height: 150px;
+  max-height: 150px;
   border-top: 1px solid #d4d4d4;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
 }
 
 .icpt-log-header {
@@ -1988,6 +1812,7 @@ tr.selected td {
 .icpt-log-list {
   flex: 1;
   overflow: auto;
+  min-height: 0;
 }
 
 .icpt-mock-bar,
@@ -2071,12 +1896,116 @@ tr.selected td {
 .log-dropped { color: #d32f2f; }
 .log-mocked { color: #7b1fa2; }
 .log-bypassed { color: #999; }
+.log-timeout { color: #d32f2f; }
+.log-pending { color: #999; }
+
+.icpt-log-item .log-method {
+  color: #0451a5;
+  min-width: 50px;
+}
+
+.icpt-log-item .log-resp-status {
+  min-width: 36px;
+  font-weight: 600;
+}
+.icpt-log-item .log-resp-status.log-resp-none {
+  color: #bbb;
+  font-weight: 400;
+}
+.icpt-log-item .log-resp-drop {
+  min-width: 36px;
+  color: #d32f2f;
+  font-weight: 600;
+}
 
 .icpt-log-item .log-url {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.icpt-log-item .log-time {
+  color: #999;
+}
+
+/* Hover cursor only on rows that have captured data (data-log-id is
+   on the element). And the row currently re-displayed in the editors
+   gets a subtle highlight so the user can tell which log entry is
+   "active". */
+.icpt-log-item[data-log-id]:hover {
+  background: #f0f4ff;
+}
+.icpt-log-item.viewing {
+  background: #e8f0fe;
+}
+
+/* Captured-view mode — re-displaying a resolved request/response in
+   the editors. Action buttons (Forward / Drop / Mock / etc.) hide
+   because the intercept is already settled; the user is just
+   inspecting. A small left-border + tinted backdrop + dismissible
+   top banner make the read-only state obvious. */
+.icpt-editor-content.icpt-viewing-captured {
+  background: #fafbff;
+  border-left: 3px solid #1A73E8;
+}
+.icpt-editor-content.icpt-viewing-captured .icpt-act-btn {
+  display: none;
+}
+
+/* Banner is rendered as a real DOM element (not ::before) so its
+   close button can carry a click listener. Hidden by default; shown
+   only when the parent enters viewing mode. */
+.icpt-viewing-banner {
+  display: none;
+}
+.icpt-editor-content.icpt-viewing-captured > .icpt-viewing-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  background: #e8f0fe;
+  color: #1A73E8;
+  font-size: 11px;
+  font-weight: 500;
+  border-bottom: 1px solid #C5D9FB;
+  flex-shrink: 0;
+}
+.icpt-viewing-close {
+  background: transparent;
+  border: none;
+  color: #1A73E8;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 6px;
+  border-radius: 3px;
+}
+.icpt-viewing-close:hover {
+  background: #d4e4fc;
+}
+
+/* Response side in viewing mode — the method / URL / status code
+   inputs are duplicated info (already shown in the request side and
+   the log row's status cell) so hide them. Body and headers stay. */
+#icpt-resp-editor-content.icpt-viewing-captured .icpt-editor-topbar,
+#icpt-resp-editor-content.icpt-viewing-captured .icpt-resp-status-bar {
+  display: none;
+}
+
+/* Visual cue that inputs / textareas / checkboxes are inactive in
+   viewing mode. JS also sets readOnly / disabled so the styling
+   matches behavior. */
+.icpt-editor-content.icpt-viewing-captured input[readonly],
+.icpt-editor-content.icpt-viewing-captured textarea[readonly],
+.icpt-editor-content.icpt-viewing-captured select:disabled,
+.icpt-editor-content.icpt-viewing-captured input[disabled] {
+  background: #f5f5f5;
+  cursor: default;
+}
+.icpt-editor-content.icpt-viewing-captured .replay-kv-row .kv-toggle {
+  pointer-events: none;
+  opacity: 0.6;
 }
 
 .icpt-editor-placeholder {

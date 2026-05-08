@@ -10,8 +10,7 @@
     <header>
       <h1><span class="title-name">DevTools</span><span class="title-plus1">+</span><span class="title-plus2">+</span></h1>
       <div class="tabs">
-        <button class="tab active" data-tab="sitemap">Site Map</button>
-        <button class="tab" data-tab="network">Network</button>
+        <button class="tab active" data-tab="network">Monitor</button>
         <button class="tab intercept-tab" data-tab="intercept">Intercept</button>
       </div>
       <div class="global-scope-bar">
@@ -20,50 +19,16 @@
         <button id="global-scope-apply" class="btn btn-xs" title="Apply scope (Enter)">Apply</button>
         <button id="global-scope-clear" class="btn btn-xs" title="Clear scope (show all)">Clear</button>
       </div>
-      <label class="header-pref" title="Start Network monitoring automatically when this panel opens">
+      <label class="header-pref" title="Start monitoring automatically when this panel opens">
         <input type="checkbox" id="auto-start-monitoring">
         Auto-start
       </label>
     </header>
 
-    <!-- Site Map tab -->
-    <section id="sitemap" class="tab-content active">
-      <div class="toolbar">
-        <button id="sitemap-reload" class="btn" title="Hard reload the inspected tab (bypasses cache so cached CSS/JS/images get re-captured)">Reload</button>
-        <button id="sitemap-clear" class="btn">Clear</button>
-        <span id="sitemap-stats" class="badge">0 hosts · 0 endpoints</span>
-      </div>
-      <div class="sitemap-split">
-        <div class="sitemap-tree-pane">
-          <div id="sitemap-tree" class="sitemap-tree"></div>
-        </div>
-        <div class="split-gutter split-gutter-h"></div>
-        <div class="sitemap-source-pane hidden" id="sitemap-source">
-          <div class="sitemap-source-header">
-            <span id="sitemap-source-url" class="sitemap-source-url"></span>
-            <button id="sitemap-source-close" class="btn detail-close-btn">X</button>
-          </div>
-          <div class="sitemap-source-meta">
-            <span id="sitemap-source-method" class="sitemap-source-method"></span>
-            <span id="sitemap-source-status" class="sitemap-source-status"></span>
-            <span id="sitemap-source-type" class="sitemap-source-type"></span>
-            <span id="sitemap-source-size" class="sitemap-source-size"></span>
-            <span class="sitemap-source-meta-spacer"></span>
-            <input type="text" id="sitemap-source-search" class="sitemap-source-search" placeholder="Search in source..." spellcheck="false">
-            <button id="sitemap-source-search-prev" class="btn btn-xs" title="Previous (Shift+Enter)" disabled>&#9650;</button>
-            <button id="sitemap-source-search-next" class="btn btn-xs" title="Next (Enter)" disabled>&#9660;</button>
-            <span id="sitemap-source-search-count" class="sitemap-source-search-count"></span>
-          </div>
-          <div id="sitemap-source-body" class="sitemap-source-body">
-            <div class="sitemap-empty">Click a resource in the tree to view its source.</div>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <!-- Network tab -->
-    <section id="network" class="tab-content">
+    <section id="network" class="tab-content active">
       <div class="toolbar">
+        <button id="network-reload" class="btn" title="Hard reload the inspected tab (bypasses cache so cached CSS/JS/images get re-captured)">Reload</button>
         <button id="network-start" class="btn btn-primary">Start Monitoring</button>
         <button id="network-stop" class="btn btn-danger" disabled>Stop</button>
         <button id="network-clear" class="btn">Clear</button>
@@ -72,13 +37,17 @@
         <div class="export-dropdown">
           <button id="network-export" class="btn" title="Export captured data as JSON">Export ▾</button>
           <div id="network-export-menu" class="export-menu hidden">
-            <div class="export-menu-section">All requests</div>
-            <button class="export-menu-item" data-mode="detection" data-scope="all">Detection only</button>
-            <button class="export-menu-item" data-mode="all" data-scope="all">Full requests</button>
+            <div class="export-menu-section" id="export-menu-section-tab">Current tab</div>
+            <button class="export-menu-item" data-mode="detection" data-scope="tab">Detection only</button>
+            <button class="export-menu-item" data-mode="all" data-scope="tab">Full requests</button>
             <div class="export-menu-divider"></div>
             <div class="export-menu-section" id="export-menu-section-selected">Selected (0)</div>
             <button class="export-menu-item" data-mode="detection" data-scope="selected" disabled>Detection only</button>
             <button class="export-menu-item" data-mode="all" data-scope="selected" disabled>Full requests</button>
+            <div class="export-menu-divider"></div>
+            <div class="export-menu-section" id="export-menu-section-all">All tabs</div>
+            <button class="export-menu-item" data-mode="detection" data-scope="all">Detection only</button>
+            <button class="export-menu-item" data-mode="all" data-scope="all">Full requests</button>
           </div>
         </div>
         <span id="network-selection" class="network-selection hidden">
@@ -121,6 +90,13 @@
         <button id="network-import-notice-close" class="btn btn-xs" title="Dismiss">X</button>
       </div>
       <div class="network-split">
+        <div class="network-tree-pane" id="network-tree-pane">
+          <div id="sitemap-tree" class="sitemap-tree"></div>
+        </div>
+        <div class="split-gutter split-gutter-h" data-resize="prev"></div>
+        <div class="network-main">
+          <div id="network-tabs" class="network-tabs hidden"></div>
+          <div class="network-list-detail">
         <div class="table-wrapper" id="network-list-pane">
           <table id="network-table">
             <thead>
@@ -144,13 +120,9 @@
         <div id="network-detail" class="network-detail hidden">
           <div class="detail-header">
             <div class="detail-tabs">
-              <button class="detail-tab active" data-detail="headers">Headers</button>
-              <button class="detail-tab" data-detail="payload">Payload</button>
-              <button class="detail-tab" data-detail="response">Response</button>
-              <button class="detail-tab" data-detail="preview">Preview</button>
+              <button class="detail-tab active" data-detail="message">Message</button>
               <button class="detail-tab" data-detail="initiator">Initiator</button>
               <button class="detail-tab" data-detail="detection">Detection</button>
-              <button class="detail-tab replay-tab" data-detail="replay">Replay</button>
             </div>
             <button id="detail-send-to-browser" class="btn detail-action-btn" disabled
               title="Open this request in a new tab so it goes through Intercept (requires Intercept ON).">
@@ -158,128 +130,52 @@
             </button>
             <button id="detail-close" class="btn detail-close-btn">X</button>
           </div>
-          <div id="detail-headers" class="detail-content active">
-            <div id="detail-general" class="detail-section"></div>
-            <div id="detail-response-headers" class="detail-section"></div>
-            <div id="detail-request-headers" class="detail-section"></div>
+
+          <!-- Message tab: vertical Request / Response split with raw HTTP -->
+          <div id="detail-message" class="detail-content active">
+            <div class="msg-split">
+              <div class="msg-pane msg-request" id="msg-request-pane">
+                <div class="msg-pane-header">
+                  <span class="msg-pane-title">Request</span>
+                  <span class="msg-pane-meta" id="msg-request-meta"></span>
+                  <span class="msg-pane-spacer"></span>
+                  <div class="msg-format-toggle" data-pane="request">
+                    <button class="msg-format-btn active" data-fmt="raw">Raw</button>
+                    <button class="msg-format-btn" data-fmt="pretty">Pretty</button>
+                  </div>
+                  <button id="msg-replay-toggle" class="btn btn-xs" title="Edit and replay this request">↻ Replay</button>
+                </div>
+                <div class="msg-pane-body" id="msg-request-body"></div>
+                <div class="msg-replay-bar hidden" id="msg-replay-bar">
+                  <button id="msg-replay-send" class="btn btn-primary btn-xs">Send</button>
+                  <button id="msg-replay-state" class="btn btn-xs btn-state" title="Click to restore original request">Original</button>
+                  <span class="msg-replay-hint">Edit headers / body and click Send</span>
+                </div>
+              </div>
+              <div class="split-gutter split-gutter-v"></div>
+              <div class="msg-pane msg-response" id="msg-response-pane">
+                <div class="msg-pane-header">
+                  <span class="msg-pane-title">Response</span>
+                  <span class="msg-pane-meta" id="msg-response-meta"></span>
+                  <span class="msg-pane-spacer"></span>
+                  <div class="msg-format-toggle" data-pane="response">
+                    <button class="msg-format-btn active" data-fmt="raw">Raw</button>
+                    <button class="msg-format-btn" data-fmt="pretty">Pretty</button>
+                  </div>
+                  <button id="msg-preview-toggle" class="btn btn-xs" title="Render preview (HTML / JSON tree / image)">👁 Preview</button>
+                </div>
+                <div class="msg-pane-body" id="msg-response-body"></div>
+              </div>
+            </div>
           </div>
-          <div id="detail-payload" class="detail-content">
-            <div id="detail-query-params" class="detail-section"></div>
-            <div id="detail-request-body" class="detail-section"></div>
-          </div>
-          <div id="detail-response" class="detail-content">
-            <div id="detail-response-body" class="detail-section"></div>
-          </div>
-          <div id="detail-preview" class="detail-content">
-            <div id="detail-preview-body" class="detail-section"></div>
-          </div>
+
           <div id="detail-initiator" class="detail-content">
             <div id="detail-initiator-body" class="detail-section"></div>
           </div>
           <div id="detail-detection" class="detail-content">
             <div id="detail-detection-body" class="detail-section"></div>
           </div>
-          <!-- Replay & Tamper tab -->
-          <div id="detail-replay" class="detail-content">
-            <div class="replay-container">
-              <!-- Request Composer -->
-              <div class="replay-composer">
-                <div class="replay-url-bar">
-                  <select id="replay-method">
-                    <option>GET</option>
-                    <option>POST</option>
-                    <option>PUT</option>
-                    <option>PATCH</option>
-                    <option>DELETE</option>
-                    <option>HEAD</option>
-                    <option>OPTIONS</option>
-                  </select>
-                  <input type="text" id="replay-url" class="filter-input replay-url-input" placeholder="Request URL">
-                  <button id="replay-send" class="btn btn-primary btn-send">Send</button>
-                  <button id="replay-state" class="btn btn-state" title="Click to restore original request">Original</button>
-                </div>
-
-                <div class="replay-sections">
-                  <!-- Edit Headers -->
-                  <div class="replay-section">
-                    <div class="replay-section-title" data-toggle="replay-headers-body">
-                      <span class="arrow">&#9660;</span>
-                      Headers
-                      <button class="btn btn-xs" id="replay-add-header">+ Add</button>
-                    </div>
-                    <div class="replay-section-body" id="replay-headers-body">
-                      <div id="replay-headers-list" class="replay-kv-list"></div>
-                    </div>
-                  </div>
-
-                  <!-- Edit Query Params -->
-                  <div class="replay-section">
-                    <div class="replay-section-title" data-toggle="replay-params-body">
-                      <span class="arrow">&#9660;</span>
-                      Query Parameters
-                      <button class="btn btn-xs" id="replay-add-param">+ Add</button>
-                    </div>
-                    <div class="replay-section-body" id="replay-params-body">
-                      <div id="replay-params-list" class="replay-kv-list"></div>
-                    </div>
-                  </div>
-
-                  <!-- Edit Body -->
-                  <div class="replay-section">
-                    <div class="replay-section-title" data-toggle="replay-body-section">
-                      <span class="arrow">&#9660;</span>
-                      Request Body
-                      <select id="replay-body-type" class="replay-body-type-select">
-                        <option value="none">None</option>
-                        <option value="json">JSON</option>
-                        <option value="form">Form URL-Encoded</option>
-                        <option value="raw">Raw Text</option>
-                      </select>
-                      <button class="btn btn-xs" id="replay-format-body" title="Format JSON">Format</button>
-                    </div>
-                    <div class="replay-section-body" id="replay-body-section">
-                      <textarea id="replay-body" class="replay-body-editor" placeholder="Request body..." spellcheck="false"></textarea>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="split-gutter split-gutter-v"></div>
-
-              <!-- Replay result -->
-              <div class="replay-response" id="replay-response">
-                <div class="replay-response-header">
-                  <span class="replay-response-title">Response</span>
-                  <span id="replay-status" class="replay-status"></span>
-                  <span id="replay-timing" class="replay-timing"></span>
-                  <span id="replay-resp-size" class="replay-timing"></span>
-                  <div class="replay-response-tabs">
-                    <button class="replay-resp-tab active" data-rtab="body">Body</button>
-                    <button class="replay-resp-tab" data-rtab="headers">Headers</button>
-                  </div>
-                </div>
-                <div id="replay-resp-body-pane" class="replay-resp-pane active">
-                  <div id="replay-resp-body" class="response-body-content">
-                    <span style="color:#999">Send a request to see the response.</span>
-                  </div>
-                </div>
-                <div id="replay-resp-headers-pane" class="replay-resp-pane">
-                  <div id="replay-resp-headers"></div>
-                </div>
-              </div>
-
-              <!-- Replay history -->
-              <div class="replay-history" id="replay-history">
-                <div class="replay-section-title" data-toggle="replay-history-body">
-                  <span class="arrow">&#9660;</span>
-                  History
-                  <button class="btn btn-xs" id="replay-clear-history">Clear</button>
-                </div>
-                <div class="replay-section-body" id="replay-history-body">
-                  <div id="replay-history-list"></div>
-                </div>
-              </div>
-            </div>
+        </div>
           </div>
         </div>
       </div>
@@ -339,11 +235,16 @@
               <span id="icpt-req-badge" class="badge badge-sm">0</span>
             </div>
             <div id="icpt-req-queue" class="icpt-queue-list"></div>
+            <div class="split-gutter split-gutter-v" data-resize="prev"></div>
             <div class="icpt-side-editor">
               <div class="icpt-editor-placeholder" id="icpt-req-placeholder">
                 <p style="color:#999;font-size:12px">No pending requests</p>
               </div>
               <div class="icpt-editor-content hidden" id="icpt-req-editor-content">
+                <div class="icpt-viewing-banner">
+                  <span>🔒 Viewing captured (read-only)</span>
+                  <button class="icpt-viewing-close" title="Exit viewing mode">&times;</button>
+                </div>
                 <div class="icpt-editor-topbar">
                   <select id="icpt-req-edit-method"></select>
                   <input type="text" id="icpt-req-edit-url" class="filter-input" style="flex:1">
@@ -390,11 +291,16 @@
               <span id="icpt-resp-badge" class="badge badge-sm">0</span>
             </div>
             <div id="icpt-resp-queue" class="icpt-queue-list"></div>
+            <div class="split-gutter split-gutter-v" data-resize="prev"></div>
             <div class="icpt-side-editor">
               <div class="icpt-editor-placeholder" id="icpt-resp-placeholder">
                 <p style="color:#999;font-size:12px">No pending responses</p>
               </div>
               <div class="icpt-editor-content hidden" id="icpt-resp-editor-content">
+                <div class="icpt-viewing-banner">
+                  <span>🔒 Viewing captured (read-only)</span>
+                  <button class="icpt-viewing-close" title="Exit viewing mode">&times;</button>
+                </div>
                 <div class="icpt-editor-topbar">
                   <span id="icpt-resp-edit-method" class="icpt-resp-method-tag"></span>
                   <input type="text" id="icpt-resp-edit-url" class="filter-input" style="flex:1" readonly>

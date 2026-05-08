@@ -4589,13 +4589,25 @@ function scanRequest(req) {
       });
     }
 
-    // Internal IPv4
-    const ipMatch = body.match(/\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})\b/);
-    if (ipMatch) {
+    // Internal IPv4 — narrow to dotted-quad shape via regex, then
+    // validate octets ≤ 255 + private-range prefix in JS so a number
+    // sequence like 10.669.606.225 doesn't false-positive.
+    const ipCandidates = body.matchAll(/\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b/g);
+    let internalIp = null;
+    for (const m of ipCandidates) {
+      const a = +m[1], b = +m[2], c = +m[3], d = +m[4];
+      if (a > 255 || b > 255 || c > 255 || d > 255) continue;
+      const isPrivate =
+        a === 10 ||
+        (a === 192 && b === 168) ||
+        (a === 172 && b >= 16 && b <= 31);
+      if (isPrivate) { internalIp = m[0]; break; }
+    }
+    if (internalIp) {
       _scanAdd(findings, seen, {
         category: 'leak', badge: '⚠️ leak', severity: 'medium',
         location: `response.body (internal IP)`,
-        evidence: ipMatch[0],
+        evidence: internalIp,
       });
     }
     // Stack-trace keywords

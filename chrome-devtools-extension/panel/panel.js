@@ -3467,13 +3467,55 @@ function _sendReplayFetch(originalReq, payload) {
         let parsed;
         try { parsed = JSON.parse(raw); } catch { showToast('Replay result parse failed'); return; }
         if (!parsed.ok) {
-          showToast('Replay error: ' + (parsed.error || 'unknown'));
+          // Page-context fetch failed — usually CORS for cross-origin
+          // assets without ACAO headers. Fall back to a background-
+          // service-worker fetch (host_permissions: <all_urls>, no
+          // page-level CORS gate). Cookies still ride along via
+          // credentials:'include' for SameSite=Lax / None hosts.
+          _sendReplayFetchViaBackground(originalReq, payload, parsed.error);
           return;
         }
         msgReplayLastResponse = parsed;
         renderResponsePane(originalReq);
       });
     }, 100);
+  });
+}
+
+// Background-fetch fallback used when the page-context fetch errors
+// out (typically CORS). Doesn't run by default — only after the page
+// path actually fails — so the page's session context is preferred
+// when reachable.
+function _sendReplayFetchViaBackground(originalReq, payload, pageError) {
+  const sendBtn = document.getElementById('msg-replay-send');
+  sendBtn.textContent = 'Sending (CORS fallback)...';
+  sendBtn.disabled = true;
+  chrome.runtime.sendMessage({
+    type: 'replay_fetch',
+    url: payload.url,
+    method: payload.method,
+    headers: payload.headers,
+    body: payload.body,
+  }, (resp) => {
+    sendBtn.textContent = 'Send';
+    sendBtn.disabled = false;
+    if (chrome.runtime.lastError) {
+      showToast(`Replay error: ${pageError || 'page fetch failed'} (background also failed: ${chrome.runtime.lastError.message})`);
+      return;
+    }
+    if (!resp || !resp.ok) {
+      showToast(`Replay error: ${pageError || 'page fetch failed'} (background also failed${resp && resp.error ? ': ' + resp.error : ''})`);
+      return;
+    }
+    msgReplayLastResponse = {
+      status: resp.status,
+      statusText: resp.statusText,
+      headers: resp.headers,
+      body: resp.body,
+      time: resp.time,
+    };
+    showToast('Replay via background (CORS bypass)');
+    renderResponsePane(originalReq);
   });
 }
 

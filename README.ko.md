@@ -23,25 +23,44 @@ DevTools++는 Chrome DevTools의 native함과 전문 테스트 도구의 핵심 
 
 ---
 
+## 스크린샷
+
+**Monitor** — 좌측 글로벌 호스트 트리, 요청 목록 상단의 호스트별 세션 탭, Message 상세 탭의 raw HTTP 렌더링 (헤더 컬러링).
+![Monitor](docs/screenshots/01-monitor.png)
+
+**Replay** — 요청 패널의 KV 에디터(Method / URL / HTTP 버전 + Headers / Body 탭), forbidden 헤더 잠금, 원본 응답과의 JSON diff.
+![Replay](docs/screenshots/02-replay.png)
+
+**Detection** — 자동 보안 패턴 플래깅과 카테고리별 다음 테스트 가이드.
+![Detection](docs/screenshots/03-detection.png)
+
+**Intercept** — 요청/응답 패널의 raw HTTP 컬러링, 헤더 클릭으로만 활성화, Forward 시 양방향 포커스 자동 전환.
+![Intercept](docs/screenshots/04-intercept.png)
+
+**Initiator** — 소스맵 디코딩된 콜스택과 민감 패턴 강조 (인증 / 토큰 / 결제 / ...).
+![Initiator](docs/screenshots/05-initiator.png)
+
+---
+
 ## 주요 기능
 
 ### 📡 Monitor
 
 브라우저 트래픽 캡처 / 탐색 / 개별 요청 분석을 한 곳에서 처리하는 통합 워크스페이스입니다. 이전 버전의 Network 탭과 Site Map 탭이 여기로 합쳐졌습니다.
 
-- **호스트 트리** (좌측 패널) — 캡처된 모든 호스트를 경로 트리로 표시, gutter 드래그로 크기 조절. 노드 클릭 시 우측 요청 목록의 해당 엔드포인트로 이동.
-- **호스트별 탭** (요청 목록 상단) — 방문하는 메인 호스트마다 탭이 생성됩니다. 탭 전환 시 목록 / 트리 / 검색 / 선택이 한 번에 필터링되어 멀티 사이트 세션의 데이터가 섞이지 않습니다. 탭은 네비게이션을 거쳐도 유지되고, 동일 호스트 재방문 시 기존 탭이 그대로 사용됩니다.
+- **글로벌 호스트 트리** (좌측 패널) — 캡처된 모든 호스트를 경로 트리로 표시, gutter 드래그로 크기 조절. **Monitor와 Intercept 양쪽 탭에서 동일하게 표시**. 노드 클릭 시 우측 요청 목록의 해당 엔드포인트로 이동.
+- **세션별 탭** (요청 목록 상단) — 방문하는 메인 호스트마다 탭이 생성됩니다. 탭은 **세션** 단위로 분리됩니다: github.com 탭은 github.com 직접 요청 + 그 동안 캡처된 외부 자원(CDN, .map 파일, 광고/분석)을 함께 보여줍니다 — 페이지가 실제로 로드한 모든 트래픽 가시화. 탭은 네비게이션을 거쳐도 유지되고, 동일 호스트 재방문 시 기존 탭 재사용.
+- **All / Host only 토글** — 탭마다 segmented 컨트롤. 기본 `All` (그 세션 전체). 외부 호스트 노이즈를 빼고 동일-host 직접 요청만 보고 싶을 때 `Host only`로 전환.
 - **Set Scope** 드롭다운 — 트리의 호스트 행에 hover 시 표시. Exact (`host/*`) / Wildcard (`*.parent.com/*`) 중 선택해 글로벌 Scope를 한 번에 적용 (수동 입력 불필요).
 - **Append-only 요청 테이블** — 페이지당 200개 이상의 요청이 발생하는 사이트에 최적화 (rAF 배치 처리, 바디 로드 큐, 최대 1,000행 표시 / 전체 히스토리 유지).
 - **컬럼**: Host / Method / URL / Status / Type / Size / Time / Initiator / Detection
 - **상세 패널** (우측) — 행 클릭 시 3개 탭으로 표시:
-  - **Message** — Request와 Response를 상하로 배치, on-the-wire raw HTTP 형식 (request/status line + 헤더 + 빈 줄 + body). 헤더명은 컬러 강조. Raw / Pretty 토글 각 사이드별 제공. **Replay**는 요청 패널의 버튼: `↻ Replay` 클릭 → body가 raw 텍스트로 채워진 편집 가능한 textarea로 전환 → 자유 편집 → Send → 응답이 응답 패널에 표시 (`(replay)` 태그 + 원본 응답과의 JSON diff 배지). **Preview**는 응답 패널의 버튼 (HTML iframe / 이미지 / JSON 트리).
+  - **Message** — Request와 Response를 상하로 배치, on-the-wire raw HTTP 형식. **실제 wire 프로토콜 버전 반영** (HTTP/1.1 vs HTTP/2 — h2 pseudo-header(`:authority` 등) 자동 감지해 request line에 정직하게 표기). 헤더명 컬러 강조, Raw / Pretty 토글. **Replay**는 요청 패널 버튼 (아래 참조). **Preview**는 응답 패널 버튼 (HTML iframe / 이미지 / JSON 트리).
   - **Initiator** — HAR `_initiator` 콜스택 + 민감 패턴 플래깅 + 소스맵 디코딩.
   - **Detection** — 해당 요청의 보안 패턴 finding.
-- **Send to Browser** — 캡처한 요청을 새 탭에서 재발사. 응답이 실제 렌더링되면서 navigation은 Intercept 큐에 잡힙니다.
+- **Send to Browser** — 캡처한 요청을 새 탭에서 재발사. 응답이 실제 렌더링되면서 navigation은 Intercept 큐에 잡힙니다. HTTP/2 캡처도 안전하게 처리 (pseudo-header 자동 제거 후 forward).
 - **Auto Crawl** — URL 목록을 임포트해 자동 순차 방문하면서 트래픽 전체 캡처.
 - **Replay 발생 요청** — Send 클릭 후 매칭되는 캡처는 요청 목록에 노란색 + ↻ 배지로 표시되어, 라이브 캡처와 즉시 구분 가능.
-- **Import / Export** — Detection만 또는 전체 요청 / Current tab / Selected rows / All tabs 범위 선택.
 - **Auto-start** 옵션 — DevTools 열릴 때 자동으로 모니터링 시작.
 - **요청 검색** — 캡처된 요청의 URL / 헤더 / body / Detection 결과까지 검색, prev / next 네비게이션.
 
@@ -85,30 +104,32 @@ DevTools++는 Chrome DevTools의 native함과 전문 테스트 도구의 핵심 
 
 캡처한 요청을 선택해 무엇이든 수정 후 즉시 재전송합니다 — Message 탭 안에서 그대로 처리됩니다.
 
-- 요청 패널의 `↻ Replay` 버튼 한 번으로 raw HTTP view → 편집 가능한 textarea 전환
-- Method, URL, 헤더, body 모두 한 에디터에서 — wire에서 보는 형식 그대로 편집
-- **Original / Modified** 상태 버튼으로 원본 복원
-- 응답은 `(replay)` 태그와 함께 응답 패널에 표시
-- 원본 응답과 자동 JSON diff
+- 요청 패널의 `↻ Replay` 버튼 한 번으로 raw HTTP view → KV 에디터 전환: Method 드롭다운 · URL · HTTP version · Headers 탭(체크박스 + name + value 행) · Body 탭.
+- **Forbidden 헤더 자동 잠금** — `Cookie`, `User-Agent`, `Origin`, `Referer`, `Sec-*`, `Proxy-*`, `Access-Control-*` 등 페이지 컨텍스트 fetch가 silently drop하는 헤더는 시각적으로 잠김(🔒) 표시 + 값 편집 불가. wire에 안 나가는 값을 편집하느라 시간 낭비 안 함. 이름을 non-forbidden으로 바꾸면 잠금 해제.
+- **POST body Form 뷰** — `application/x-www-form-urlencoded` 페이로드를 KV 행 형태로 표시 (체크박스 + name + value), 네이티브 DevTools의 Payload 탭과 동일. Form ↔ Raw 토글로 양방향 변환. JSON / multipart 등은 raw 텍스트 유지.
+- **HTTP version 필드 편집 가능** — 보안 테스트 시나리오용 (실제 wire는 fetch가 항상 HTTP/1.1로 송신).
+- **Original / Modified** 상태 버튼으로 원본 복원.
+- 응답은 `(replay)` 태그와 함께 응답 패널에 표시.
+- **자동 JSON diff** — 원본 응답과의 차이를 트리 형태로.
+- **CORS 자동 폴백** — 페이지 컨텍스트 fetch가 실패하면 (보통 cross-origin 자원의 `Access-Control-Allow-Origin` 누락) 자동으로 Service Worker fetch로 재시도 (`<all_urls>` host_permissions, 페이지 CORS 게이트 우회). 폴백 사용 시 토스트로 안내.
 
 ### 🔎 Initiator
 
 각 요청이 무엇에 의해 발생했는지 보여주고, 소스맵이 있으면 원본 소스코드까지 역추적합니다.
 
-- 요청 테이블에 **script** / **parser** / **↑ Mapped** 타입 표시
-- Initiator 셀 클릭 시 Initiator 탭으로 바로 이동
-- **소스맵 디코딩** — 번들된 콜스택 프레임을 원본 파일명과 라인으로 역추적 (예: `bundle.js:1:12345` → `Auth.tsx:42:5`)
-- **민감 패턴 감지** — 인증, 토큰, 자격증명, 결제 등 보안 관련 함수명이 있는 콜스택 프레임 강조
+- 요청 테이블에 **script** / **parser** / **↑ Mapped** 타입 표시 — `↑ Mapped`는 캡처 시점에 **선제적으로** 매핑 시도하므로 사용자가 행을 클릭하지 않아도 컬럼에 최종 상태가 반영됨.
+- Initiator 셀 클릭 시 Initiator 탭으로 바로 이동.
+- **소스맵 디코딩** — 번들된 콜스택 프레임을 원본 파일명과 라인으로 역추적 (예: `bundle.js:1:12345` → `Auth.tsx:42:5`).
+- **민감 패턴 감지** — 인증, 토큰, 자격증명, 결제 등 보안 관련 함수명이 있는 콜스택 프레임 강조.
 
 ### 📦 Import / Export
 
 캡처한 모든 요청과 응답을 JSON 파일로 저장하고, 언제든 다시 불러올 수 있습니다.
 
-- **Full Export** — 요청/응답 헤더, 바디, Detection 결과, Initiator 콜스택까지 전체 트랜잭션을 JSON으로 저장
-- **Detection Export** — Detection 결과만 추출해 경량 보고서 형태로 저장
-- **범위 지정** — Current tab / Selected rows / All tabs
-- **Import** — 저장된 JSON을 불러와 DevTools++ 안에서 그대로 재분석 (테스트 세션 재현, 동료와 데이터 공유, 나중에 다시 확인)
-- **AI 분석 연동** — Export한 JSON을 ChatGPT, Claude 등 AI에게 그대로 전달해 취약점 패턴 분석, 요약 보고서 생성, 특정 API 흐름 설명 요청 가능
+- **Full Export** — 요청/응답 헤더, 바디, Detection 결과, Initiator 콜스택, 세션 attribution까지 전체 트랜잭션을 JSON으로 저장.
+- **두 범위 × 두 선택**: `Current tab` 또는 `All tabs`, 각각 `Full requests` 또는 `Selected requests` (행 체크박스로 선택한 것만).
+- **Import** — 저장된 JSON을 불러와 DevTools++ 안에서 그대로 재분석. 세션 단위 탭 attribution도 보존되어 (legacy export는 URL host로 폴백) 탭 strip이 자동 재구성됨.
+- **AI 분석 연동** — Export한 JSON을 ChatGPT, Claude 등 AI에게 그대로 전달해 취약점 패턴 분석, 요약 보고서 생성, 특정 API 흐름 설명 요청 가능.
 
 ### 🔀 Intercept (Proxy Mode)
 
@@ -118,13 +139,16 @@ DevTools++는 Chrome DevTools의 native함과 전문 테스트 도구의 핵심 
 
 - **프록시 자동 설정** — Proxy Mode 활성화 시 `:8899` 프록시 설정이 자동으로 적용됩니다 (FoxyProxy / 시스템 프록시 설정 불필요).
 - **탭 스코프** — DevTools가 연결된 탭의 요청만 인터셉트. 다른 탭 / Service Worker / Chrome 백그라운드 트래픽은 영향 없이 정상 통과.
-- **요청 인터셉트** — Forward / Forward Modified / Drop / Mock Response
-- **응답 인터셉트** — 서버 응답을 브라우저 전달 전 확인 및 수정
-- **Mock Response** — 서버 없이 직접 작성한 가짜 응답을 브라우저에 반환
+- **컬러 syntax 적용 raw HTTP 에디터** — Monitor의 Message 탭과 동일한 시각적 언어: request/status line은 파랑, 헤더명은 red-bold, body는 그대로. 입력 시 colored render 위에서 실시간 편집.
+- **Raw / Pretty body 토글** — JSON body는 그 자리에서 pretty-print, 헤더는 그대로 유지.
+- **요청 / 응답 결정** — 요청 측 Forward · Forward Modified · Drop · Mock Response, 응답 측 Forward · Forward Modified · Drop. Forward Modified는 편집된 raw HTTP를 파싱해 변조된 페이로드로 forward.
+- **Mock Response를 raw HTTP로** — `HTTP/1.1 200 OK` + 헤더 + body 전체를 한 에디터에서 작성.
+- **헤더 클릭으로만 사이드 활성화** — body textarea 클릭은 활성 사이드 전환에 영향 없음. 다음 `F`/`G`/`D`/`R` 단축키가 에디터에 잘못 입력되는 일 방지.
+- **Forward 시 양방향 자동 포커스** — 요청 사이드에서 `F` 후 응답 도착 시 응답 사이드 자동 활성화, 응답 사이드에서 `F` 후 요청이 큐에 있으면 다시 요청 사이드 활성화. 사용자는 `F`만 연타해도 request → response → 다음 request 순환.
 - **Captured-pair viewing** — 종료된 로그 행 클릭 시 양 패널에 해당 요청/응답을 read-only로 재표시. `🔒 Viewing captured` 배너 + `×` 버튼으로 종료. 라이브 인터셉트가 대기 중이면 로그 클릭 차단 (활성 결정과 충돌 방지).
-- URL 와일드카드 / Method / 확장자 기반 자동 통과(bypass) 필터
-- 큐 / 에디터 / 로그 사이의 드래그 gutter — 콘텐츠가 늘어나도 메시지 에디터가 줄어들지 않고 각 영역 안에서 스크롤
-- 키보드 단축키: `F` Forward · `G` Forward Modified · `D` Drop · `R` Mock · `A` Forward All · `Q` Drop All
+- URL 와일드카드 / Method / 확장자 기반 자동 통과(bypass) 필터.
+- 큐 / 에디터 / 로그 사이의 드래그 gutter — 콘텐츠가 늘어나도 메시지 에디터가 줄어들지 않고 각 영역 안에서 스크롤.
+- 키보드 단축키: `F` Forward · `G` Forward Modified · `D` Drop · `R` Mock · `A` Forward All · `Q` Drop All.
 
 ---
 
@@ -247,7 +271,8 @@ Browser ──프록시 설정──▶ proxy-server.js (127.0.0.1:8899)
 |---|---|
 | 대용량 바디 | 성능을 위해 512KB 초과 시 truncate |
 | Service Worker bypass | Service Worker에서 발생하는 요청은 인터셉트 불가 (FoxyProxy + Burp와 동일한 한계) |
-| 소스맵 접근성 | inspected 페이지가 fetch할 수 있는 `.map` 파일이 있을 때만 소스맵 디코딩 동작 |
+| 소스맵 접근성 | `.map` 파일이 fetch 가능할 때만 디코딩 동작 — 프로덕션 사이트에서 map을 배포하지 않거나 CORS로 막혀 있으면 매핑 안 됨 |
+| 요청 목록의 `.map` 파일 | Chrome은 source map을 내부에서 fetch하고 reload 후에도 캐시 — `.map` 파일은 cold load에서만 Monitor 목록에 나타남. 모든 자원 가시화를 원한다면 메인 DevTools의 Network 탭에서 "Disable cache" 활성화 권장 |
 
 ---
 

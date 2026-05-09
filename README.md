@@ -2,7 +2,7 @@
 
 > A lightweight web and API analysis tool built into Chrome DevTools — no separate proxy, no context-switching, just open DevTools and start working.
 
-[![Version](https://img.shields.io/badge/version-0.9.0-blue)](#)
+[![Version](https://img.shields.io/badge/version-0.9.1-blue)](#)
 [![License](https://img.shields.io/badge/license-MIT-green)](#)
 [![Chrome](https://img.shields.io/badge/Chrome-MV3-yellow)](#)
 

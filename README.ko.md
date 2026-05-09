@@ -2,7 +2,7 @@
 
 > Chrome DevTools에 내장된 경량 웹/API 분석 도구 — 별도 프록시 없이, 컨텍스트 전환 없이, DevTools를 열면 바로 시작합니다.
 
-[![Version](https://img.shields.io/badge/version-0.9.0-blue)](#)
+[![Version](https://img.shields.io/badge/version-0.9.1-blue)](#)
 [![License](https://img.shields.io/badge/license-MIT-green)](#)
 [![Chrome](https://img.shields.io/badge/Chrome-MV3-yellow)](#)
 

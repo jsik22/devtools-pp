@@ -2,7 +2,7 @@
 
 > A lightweight web and API analysis tool built into Chrome DevTools — no separate proxy, no context-switching, just open DevTools and start working.
 
-[![Version](https://img.shields.io/badge/version-0.7.9-blue)](#)
+[![Version](https://img.shields.io/badge/version-0.9.0-blue)](#)
 [![License](https://img.shields.io/badge/license-MIT-green)](#)
 [![Chrome](https://img.shields.io/badge/Chrome-MV3-yellow)](#)
 
@@ -23,64 +23,43 @@ Native DevTools  →  DevTools++  →  Burp Suite / Postman
 
 ---
 
-## Screenshots
-
-**Site Map + Page Scan** — passive endpoint tree, plus DOM-extracted links / forms / scripts on the right.
-![Site Map](docs/screenshots/01-sitemap.png)
-
-**Network monitoring** — append-only table tuned for high-volume sites, with Initiator and Detection columns.
-![Network](docs/screenshots/02-network.png)
-
-**Detection** — automatic security-pattern flagging on every captured request and response.
-![Detection](docs/screenshots/03-detection.png)
-
-**Replay & Tamper** — edit and resend any captured request; the Modified badge tracks divergence from the original.
-![Replay](docs/screenshots/04-replay.png)
-
-**Intercept** — request and response dual panel for hold / modify / mock workflows.
-![Intercept](docs/screenshots/05-intercept.png)
-
----
-
 ## Features
 
-### 🗺 Site Map
+### 📡 Monitor
 
-Passively collects network requests and visualizes them as a **domain → path → endpoint** tree. Just use the page — the API structure builds itself.
+The unified workspace for capturing browser traffic, exploring it, and inspecting individual requests. Replaces the separate Network and Site Map tabs from earlier versions.
 
-- **Page Scan**: Extracts links (`<a>`), forms (`<form>`), and scripts (`<script>`) from the current page DOM
-- **Set Scope** (global): Define a capture scope by host/path and instantly filter already-collected data as well
-- Host-level External grouping — each main host has its own External subtree
-- Click any node to see its request list and details on the right panel
-
-### 📡 Network Monitoring
-
-Captures all completed requests without `chrome.debugger`. Works the moment DevTools is open.
-
-- Append-only table tuned for sites that fire 200+ requests per page (rAF batching, body-load queue, 1,000-row display cap with full history retained)
+- **Host tree** (left pane) — every captured host shown as a path tree, gutter-resizable. Click a node to jump to that endpoint's request in the list.
+- **Per-host tabs** (above the request list) — each main host you visit gets its own tab. Tabs filter the list / tree / search / selection in one shot, so multi-site sessions don't mix data. Tabs persist across navigation; revisiting a host reuses its tab.
+- **Set Scope** dropdown on host rows in the tree — Exact (`host/*`) or Wildcard (`*.parent.com/*`) — pins the global Scope without typing the pattern.
+- **Append-only request table** tuned for sites that fire 200+ requests per page (rAF batching, body-load queue, 1,000-row display cap with full history retained).
 - **Columns**: Host / Method / URL / Status / Type / Size / Time / Initiator / Detection
-- **Detail tabs**: Headers / Payload / Response / Preview / Initiator / Detection / Replay
-- **Auto Crawl**: Import a URL list and automatically visit each page, capturing all network traffic
-- **Auto Decode**: Inline JWT, Base64, URL-encoded, nested JSON, and Unix timestamp detection in headers, payload, and response (size-capped)
-- **Initiator**: Call-stack from HAR `_initiator`, sensitive-pattern flagging (auth, token, crypto, payment, ...), and source-map decoding for bundled / minified scripts
-- Import / Export: Detection-only or full requests (JSON)
-- Auto-start option: monitoring begins automatically when DevTools opens
+- **Detail panel** (right) opens on row click with three tabs:
+  - **Message** — Request and Response stacked vertically as on-the-wire raw HTTP (request line / status line + headers + blank line + body). Header names are colorized for scannability. Raw / Pretty toggle per side. **Replay** is a button on the request pane: click `↻ Replay` and the body becomes an editable textarea seeded with the raw request — edit anything, click Send, the response lands in the response pane (with a `(replay)` tag and JSON diff badge against the original). **Preview** is a button on the response pane (HTML iframe / image / JSON tree).
+  - **Initiator** — call-stack from HAR `_initiator`, with sensitive-pattern flagging and source-map decoding.
+  - **Detection** — the security-pattern findings for that request.
+- **Send to Browser** — re-issue any captured request in a new tab so it actually renders, while the navigation lands in the Intercept queue.
+- **Auto Crawl** — import a URL list and automatically visit each page, capturing all network traffic.
+- **Replay-originated requests** show a yellow tint + ↻ badge in the request list so you can tell live captures from replays at a glance.
+- **Import / Export** — Detection-only or full requests; scope to current tab / selected rows / all tabs.
+- **Auto-start option** — monitoring begins automatically when DevTools opens.
+- **Network search** across captured requests (URL, headers, bodies, Detection results) with prev / next navigation.
 
 ### 🔍 Detection
 
 Automatically analyzes captured requests and responses for security-relevant patterns. Every finding is a **test point**, not a confirmed vulnerability — use Replay to verify.
 
-**Response Analysis**
+**Response analysis**
 
 | Badge | Category | Severity | What it detects |
 |---|---|---|---|
 | 🔑 | token | HIGH | JWT or API key exposed in response body |
 | 🔴 | sensitive | HIGH | Password / secret fields in response or request body |
 | 👤 | pii | MEDIUM | Email addresses or phone numbers in response |
-| ⚠️ | leak | MEDIUM | Internal IPs, stack traces, server paths |
+| ⚠️ | leak | MEDIUM | Internal IPs (private ranges only), stack traces, server paths |
 | 📡 | exposure | MEDIUM/HIGH | Server version headers, AWS keys, GitHub PATs |
 
-**Request Analysis**
+**Request analysis**
 
 | Badge | Category | Severity | What it detects |
 |---|---|---|---|
@@ -94,43 +73,42 @@ Each Detection finding includes a contextual guide explaining what to test next.
 
 ### 🔓 Auto Decode Layer
 
-Automatically detects and decodes encoded values anywhere in request/response headers and bodies.
+Automatically detects and decodes encoded values anywhere in request/response headers and bodies — surfaces as a collapsible **🔍 Decoded** section in the Message tab.
 
-- **JWT**: Decodes header and payload inline, warns on `alg: none` and expired tokens
-- **Base64**: Decodes and pretty-prints JSON if applicable
-- **URL-encoded**: Shows decoded form
-- **Nested JSON**: Parses stringified JSON values
-- **Unix timestamps**: Converts to human-readable ISO dates
-
-Displayed as a collapsible **🔍 Decoded** section at the bottom of Headers, Payload, and Response tabs.
+- **JWT** — decodes header and payload inline, warns on `alg: none` and expired tokens
+- **Base64** — decodes and pretty-prints JSON if applicable
+- **URL-encoded** — shows decoded form
+- **Nested JSON** — parses stringified JSON values
+- **Unix timestamps** — converts to human-readable ISO dates
 
 ### 🔁 Replay & Tamper
 
-Capture a request, edit anything, and resend — without leaving DevTools.
+Capture a request, edit anything, and resend — without leaving the Message tab.
 
-- Edit Method / URL / Headers / Query Params / Body
-- JSON / Form / Raw body support
-- Automatic JSON diff against original response
-- Last 50 replay history preserved
-
-### 📦 Import / Export
-
-Save all captured requests and responses as a JSON file and reload them at any time.
-
-- **Full Export**: Saves the complete transaction — request/response headers, body, Detection results, and Initiator call stack — as a single JSON file
-- **Detection Export**: Extracts Detection findings only, for a lightweight report
-- **Import**: Load a previously exported JSON back into DevTools++ for re-analysis — reproduce test sessions, share data with teammates, or revisit findings later
-- **AI-assisted analysis**: Hand the exported JSON directly to an AI assistant (ChatGPT, Claude, etc.) to identify vulnerability patterns, generate summary reports, or explain specific API flows
-- Full session history is preserved on disk even after monitoring ends — reopen and continue analysis anytime
+- One-click `↻ Replay` button on the request pane turns the raw HTTP view into an editable textarea
+- Method, URL, headers, body — all in one editor, in the same format you see on the wire
+- **Original / Modified** state button restores the seed
+- Response lands in the response pane with a `(replay)` tag
+- Automatic JSON diff against the original captured response
 
 ### 🔎 Initiator
 
 Shows what triggered each request — and traces it back to original source code when source maps are available.
 
-- **script** / **parser** / **↑ Mapped** type indicators in the Network table
-- Click an Initiator cell in the Network table to jump directly to the Initiator detail tab
-- **Source map decoding**: Maps minified call stack frames back to original file and line number (e.g., `bundle.js:1:12345` → `Auth.tsx:42:5`)
-- **Sensitive pattern detection**: Highlights call stack frames containing authentication, token, credential, payment, and other security-relevant function names
+- **script** / **parser** / **↑ Mapped** type indicators in the request table
+- Click an Initiator cell to jump directly to the Initiator detail tab
+- **Source map decoding** — maps minified call-stack frames back to original file and line number (e.g., `bundle.js:1:12345` → `Auth.tsx:42:5`)
+- **Sensitive pattern detection** — highlights call-stack frames containing authentication, token, credential, payment, and other security-relevant function names
+
+### 📦 Import / Export
+
+Save all captured requests and responses as a JSON file and reload them at any time.
+
+- **Full Export** — saves the complete transaction (request/response headers, body, Detection results, Initiator call stack) as a single JSON file
+- **Detection Export** — extracts Detection findings only, for a lightweight report
+- **Scope-aware** — Current tab / Selected rows / All tabs
+- **Import** — load a previously exported JSON back into DevTools++ for re-analysis (reproduce test sessions, share data with teammates, revisit findings later)
+- **AI-assisted analysis** — hand the exported JSON directly to an AI assistant (ChatGPT, Claude, etc.) to identify vulnerability patterns, generate summary reports, or explain specific API flows
 
 ### 🔀 Intercept (Proxy Mode)
 
@@ -138,12 +116,14 @@ Intercept requests **before** they reach the server and responses **before** the
 
 > ⚠️ **Proxy Mode requires a one-time native setup.** It's not as complicated as it sounds — a single install is all it takes. After that, it works just like any native DevTools feature. [See installation below.](#proxy-mode-setup)
 
-- **Automatic proxy configuration**: Enabling Proxy Mode automatically activates the `:8899` proxy setting — no need for separate proxy extensions like FoxyProxy or manual system proxy configuration
-- **Tab-scoped**: Only the DevTools-attached tab's requests are intercepted — other tabs, Service Workers, and Chrome's own background traffic pass through untouched
-- **Request intercept**: Forward / Forward Modified / Drop / Mock Response
-- **Response intercept**: Review and modify server responses before the browser receives them
-- **Mock Response**: Return a custom response without hitting the server
+- **Automatic proxy configuration** — enabling Proxy Mode activates the `:8899` proxy setting; no FoxyProxy or manual system proxy needed
+- **Tab-scoped** — only the DevTools-attached tab's requests are intercepted; other tabs, Service Workers, and Chrome's own background traffic pass through untouched
+- **Request intercept** — Forward / Forward Modified / Drop / Mock Response
+- **Response intercept** — review and modify server responses before the browser receives them
+- **Mock Response** — return a custom response without hitting the server
+- **Captured-pair viewing** — click any resolved log row to re-display the request and response in both editors as read-only, with a `🔒 Viewing captured` banner. Click `×` to exit. Pending live intercepts block log re-display so an inspector view never fights an active decision.
 - URL wildcard / Method / extension-based bypass filters
+- Drag-resize gutters between queue, editor, and log so growing content scrolls inside its own pane instead of shrinking the message editors
 - Keyboard shortcuts: `F` Forward · `G` Forward Modified · `D` Drop · `R` Mock · `A` Forward All · `Q` Drop All
 
 ---
@@ -235,7 +215,7 @@ Every feature in DevTools++ is implemented without `chrome.debugger`:
 
 | Feature | Implementation |
 |---|---|
-| Network monitoring | `chrome.devtools.network` API |
+| Network capture | `chrome.devtools.network` API |
 | Intercept | Native Messaging + local MITM proxy |
 | Replay | `fetch()` via `inspectedWindow.eval` |
 | Source map decoding | VLQ base64 decoder + `getResources()` |

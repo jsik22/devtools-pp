@@ -2468,6 +2468,13 @@ tr.selected td {
   cursor: not-allowed;
   background: transparent;
 }
+/* "(N)" count next to "Selected requests" — muted so it reads as
+   metadata rather than part of the action label. */
+.export-selected-count {
+  margin-left: 4px;
+  color: #888;
+  font-weight: 400;
+}
 
 /* ============================================================
    Network Filter dropdown — multi-select Type / Status filtering

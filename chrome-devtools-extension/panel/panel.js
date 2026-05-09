@@ -1328,56 +1328,11 @@ function _exportMetadata() {
   };
 }
 
-// Export Detection findings as JSON. Slim format aimed at rule tuning:
-// only requests with findings, request metadata kept minimal, no
-// response bodies. Includes per-category / per-severity totals so
-// false-positive-heavy rules show up at a glance.
-function exportDetectionResults(scope) {
-  const source = _exportSource(scope);
-  const stats = {
-    totalRequests: source.length,
-    requestsWithFindings: 0,
-    byCategory: {},
-    bySeverity: {},
-  };
-  const items = [];
-  for (const r of source) {
-    const findings = r.scanResults || [];
-    if (findings.length === 0) continue;
-    stats.requestsWithFindings++;
-    for (const f of findings) {
-      stats.byCategory[f.category] = (stats.byCategory[f.category] || 0) + 1;
-      stats.bySeverity[f.severity] = (stats.bySeverity[f.severity] || 0) + 1;
-    }
-    items.push({
-      request: {
-        method: r.method,
-        url: r.url,
-        status: r.status,
-        statusText: r.statusText,
-        mimeType: r.mimeType,
-        type: r.type,
-      },
-      findings: findings.map(f => ({
-        category: f.category,
-        severity: f.severity,
-        location: f.location,
-        evidence: f.evidence,
-      })),
-    });
-  }
-
-  _downloadJson(
-    `devtoolspp-detection-${_exportTimestamp()}.json`,
-    Object.assign({}, _exportMetadata(), { stats, items })
-  );
-}
-
 // Export every captured request — full headers, bodies (where loaded),
-// scan results, and initiator. Heavier than the detection export; use
-// when you need a complete snapshot, e.g. for offline analysis.
-function exportAllRequests(scope) {
-  const source = _exportSource(scope);
+// scan results, and initiator. Source set is determined by scope
+// (current tab / all tabs) and selectedOnly (limit to checked rows).
+function exportAllRequests(scope, selectedOnly) {
+  const source = _exportSource(scope, selectedOnly);
   const items = source.map(r => ({
     request: {
       method: r.method,
@@ -1582,32 +1537,33 @@ _exportBtn.addEventListener('click', (e) => {
 document.querySelectorAll('.export-menu-item').forEach(item => {
   item.addEventListener('click', () => {
     if (item.disabled) return;
-    const mode = item.dataset.mode;
-    const scope = item.dataset.scope; // 'tab' | 'selected' | 'all'
+    const scope = item.dataset.scope;            // 'tab' | 'all'
+    const selectedOnly = item.dataset.selected === 'true';
     _exportMenu.classList.add('hidden');
-    if (mode === 'detection') exportDetectionResults(scope);
-    else if (mode === 'all') exportAllRequests(scope);
+    exportAllRequests(scope, selectedOnly);
   });
 });
 
-// Source-set picker for the three export scopes.
-//   'tab'      — current active host tab only (default)
-//   'selected' — only the requests checked via row checkboxes
-//   'all'      — every captured request across all tabs
+// Source-set picker for the export menu.
+//   scope        : 'tab' (active host only) | 'all' (every capture)
+//   selectedOnly : true  → narrow to the rows the user has checked
 // The ENTIRE networkRequests array IS the storage; filtering happens
 // per call so the data is never duplicated.
-function _exportSource(scope) {
-  if (scope === 'selected') {
-    return networkRequests.filter(r => selectedExportIds.has(r.requestId));
-  }
+function _exportSource(scope, selectedOnly) {
+  let base;
   if (scope === 'all') {
-    return networkRequests;
+    base = networkRequests;
+  } else {
+    // 'tab' — active host only. When no tab is active yet, fall back
+    // to all so the file is useful rather than silently empty.
+    base = activeTabHost
+      ? networkRequests.filter(r => _reqHost(r) === activeTabHost)
+      : networkRequests;
   }
-  // Default 'tab' — when no tab is active fall back to all so an
-  // "Export current tab" click on an empty state still produces a
-  // useful file rather than silently empty.
-  if (!activeTabHost) return networkRequests;
-  return networkRequests.filter(r => _reqHost(r) === activeTabHost);
+  if (selectedOnly) {
+    return base.filter(r => selectedExportIds.has(r.requestId));
+  }
+  return base;
 }
 document.addEventListener('click', (e) => {
   if (_exportMenu.classList.contains('hidden')) return;
@@ -2056,11 +2012,20 @@ function updateSelectionUI() {
       master.indeterminate = true;
     }
   }
-  // Export-menu "Selected" section: enabled only when count > 0.
-  const sel = document.getElementById('export-menu-section-selected');
-  if (sel) sel.textContent = `Selected (${count})`;
-  document.querySelectorAll('.export-menu-item[data-scope="selected"]').forEach(btn => {
-    btn.disabled = count === 0;
+  // Export menu — "Selected requests" items are enabled only when at
+  // least one row is checked; their per-item count reflects the
+  // matching subset (current tab vs all). The Full requests items
+  // always work, no count badge.
+  const tabSelected = activeTabHost
+    ? networkRequests.filter(r => _reqHost(r) === activeTabHost && selectedExportIds.has(r.requestId)).length
+    : count;
+  const tabCountEl = document.getElementById('export-tab-selected-count');
+  const allCountEl = document.getElementById('export-all-selected-count');
+  if (tabCountEl) tabCountEl.textContent = tabSelected ? `(${tabSelected})` : '';
+  if (allCountEl) allCountEl.textContent = count ? `(${count})` : '';
+  document.querySelectorAll('.export-menu-item[data-selected="true"]').forEach(btn => {
+    const scope = btn.dataset.scope;
+    btn.disabled = (scope === 'tab' ? tabSelected : count) === 0;
   });
 }
 

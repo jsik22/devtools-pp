@@ -38,16 +38,12 @@
           <button id="network-export" class="btn" title="Export captured data as JSON">Export ▾</button>
           <div id="network-export-menu" class="export-menu hidden">
             <div class="export-menu-section" id="export-menu-section-tab">Current tab</div>
-            <button class="export-menu-item" data-mode="detection" data-scope="tab">Detection only</button>
-            <button class="export-menu-item" data-mode="all" data-scope="tab">Full requests</button>
-            <div class="export-menu-divider"></div>
-            <div class="export-menu-section" id="export-menu-section-selected">Selected (0)</div>
-            <button class="export-menu-item" data-mode="detection" data-scope="selected" disabled>Detection only</button>
-            <button class="export-menu-item" data-mode="all" data-scope="selected" disabled>Full requests</button>
+            <button class="export-menu-item" data-scope="tab" data-selected="false">Full requests</button>
+            <button class="export-menu-item" data-scope="tab" data-selected="true" disabled>Selected requests <span class="export-selected-count" id="export-tab-selected-count"></span></button>
             <div class="export-menu-divider"></div>
             <div class="export-menu-section" id="export-menu-section-all">All tabs</div>
-            <button class="export-menu-item" data-mode="detection" data-scope="all">Detection only</button>
-            <button class="export-menu-item" data-mode="all" data-scope="all">Full requests</button>
+            <button class="export-menu-item" data-scope="all" data-selected="false">Full requests</button>
+            <button class="export-menu-item" data-scope="all" data-selected="true" disabled>Selected requests <span class="export-selected-count" id="export-all-selected-count"></span></button>
           </div>
         </div>
         <span id="network-selection" class="network-selection hidden">

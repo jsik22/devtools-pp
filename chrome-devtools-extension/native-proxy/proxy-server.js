@@ -141,13 +141,29 @@ class ProxyServer extends EventEmitter {
 
   // Lowercase swap header names overwrite same-named browser-set
   // headers. Anything not in the swap (Cookie, Origin, etc.) passes
-  // through unchanged.
+  // through unchanged. HTTP/2 pseudo-headers (`:authority`, `:method`,
+  // etc.) are dropped — they're invalid in HTTP/1.1 and would throw
+  // ERR_INVALID_HTTP_TOKEN when handed to http.request().
   static _applyHeaderSwap(reqHeaders, swapHeaders) {
     const result = { ...reqHeaders };
     for (const [name, value] of Object.entries(swapHeaders || {})) {
+      if (name.startsWith(':')) continue;
       result[name.toLowerCase()] = value;
     }
     return result;
+  }
+
+  // Strip headers that http.request() would reject. Today this is
+  // HTTP/2 pseudo-headers (anything starting with ':') — they sneak in
+  // via captured request data on h2 origins. Invalid token characters
+  // would otherwise throw synchronously and unwind the message handler.
+  static _stripInvalidH1Headers(headers) {
+    const out = {};
+    for (const [name, value] of Object.entries(headers || {})) {
+      if (name.startsWith(':')) continue;
+      out[name] = value;
+    }
+    return out;
   }
 
   /**
@@ -170,8 +186,10 @@ class ProxyServer extends EventEmitter {
     const isHttps = parsed.protocol === 'https:';
     const transport = isHttps ? https : http;
 
-    // Remove proxy-specific headers
-    const fwdHeaders = { ...headers };
+    // Remove proxy-specific headers + any HTTP/2 pseudo-headers that
+    // crept in from a captured-on-h2 request (those would throw
+    // ERR_INVALID_HTTP_TOKEN inside transport.request below).
+    const fwdHeaders = ProxyServer._stripInvalidH1Headers(headers);
     delete fwdHeaders['proxy-connection'];
     delete fwdHeaders['proxy-authorization'];
 
@@ -184,7 +202,9 @@ class ProxyServer extends EventEmitter {
       rejectUnauthorized: false, // Accept self-signed certs on targets
     };
 
-    const proxyReq = transport.request(options, (proxyRes) => {
+    let proxyReq;
+    try {
+      proxyReq = transport.request(options, (proxyRes) => {
       if (requestId) {
         // Buffer response body
         const chunks = [];
@@ -258,6 +278,19 @@ class ProxyServer extends EventEmitter {
         proxyRes.pipe(clientRes);
       }
     });
+    } catch (err) {
+      // transport.request() validates header tokens synchronously and
+      // throws TypeError on names like ":authority". Without this catch
+      // the throw becomes an unhandled rejection inside the async
+      // message handler and kills the host process — which manifests
+      // to the user as Intercept silently turning off mid-flight.
+      this.emit('error', new Error('Forward setup failed: ' + err.message));
+      try {
+        clientRes.writeHead(502, { 'Content-Type': 'text/plain' });
+        clientRes.end('Proxy Error: ' + err.message);
+      } catch {}
+      return;
+    }
 
     proxyReq.on('error', (err) => {
       try {

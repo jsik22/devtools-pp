@@ -194,5 +194,26 @@ process.stdin.on('end', () => {
 process.stdin.on('error', () => process.exit(1));
 process.stdout.on('error', () => process.exit(1));
 
+// Defense-in-depth: keep the host alive when an async path throws so a
+// single bad request can't kill the proxy and yank Intercept off-line
+// without explanation. The error is reported back so the panel can
+// surface it instead of silently disconnecting.
+process.on('unhandledRejection', (reason) => {
+  try {
+    sendMessage({
+      type: 'error',
+      message: 'unhandledRejection: ' + (reason && reason.message ? reason.message : String(reason)),
+    });
+  } catch {}
+});
+process.on('uncaughtException', (err) => {
+  try {
+    sendMessage({
+      type: 'error',
+      message: 'uncaughtException: ' + (err && err.message ? err.message : String(err)),
+    });
+  } catch {}
+});
+
 // Notify extension that host is ready
 sendMessage({ type: 'host_ready', pid: process.pid });

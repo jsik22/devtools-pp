@@ -694,6 +694,11 @@ function _filterHeadersForSwap(headers) {
   const out = {};
   for (const [name, value] of Object.entries(headers || {})) {
     if (BROWSER_MANAGED_HEADERS_S2B.has(name.toLowerCase())) continue;
+    // HTTP/2 pseudo-headers (:authority / :method / :path / :scheme /
+    // :status) appear in captures whenever Chrome talked to the origin
+    // over h2. They are invalid in HTTP/1.1 token names and would crash
+    // node's http.request() if forwarded — drop them.
+    if (name.startsWith(':')) continue;
     out[name] = value;
   }
   return out;
@@ -2526,7 +2531,11 @@ function renderResponsePane(req) {
     bodyEl.innerHTML = `<div class="msg-empty">${escapeHtml(view.placeholder)}</div>`;
     return;
   }
-  const text = buildRawResponse(view, msgResponseFormat);
+  // Pair the response status line's HTTP version with whatever the
+  // request side detected — same connection, same wire protocol.
+  // Replay results come back through fetch() (h1.1 to local proxy),
+  // so they always render as 1.1 unless we have a captured-h2 origin.
+  const text = buildRawResponse(view, msgResponseFormat, resp ? '1.1' : _detectHttpVersion(req));
   let html = `<pre class="msg-raw">${_renderRawHtml(text)}</pre>`;
   // Diff badge for replay results — same logic as the old Replay tab,
   // appended after the rendered raw response.
@@ -2574,6 +2583,19 @@ function _viewFromReplay(resp) {
   };
 }
 
+// Detect whether the captured request was carried over HTTP/2 by
+// looking for h2 pseudo-headers (`:authority`, `:method`, `:path`,
+// `:scheme`). They only exist on h2 connections, so their presence is
+// authoritative. Returns the version string we want on the rendered
+// request/status line.
+function _detectHttpVersion(req) {
+  const headers = (req && req.requestHeaders) || {};
+  for (const k of Object.keys(headers)) {
+    if (k.startsWith(':')) return '2';
+  }
+  return '1.1';
+}
+
 // Build the raw HTTP request string. Path/query come from the URL so
 // the request line matches what went on the wire. Host header is
 // derived from the URL when not in the captured headers (browser
@@ -2589,12 +2611,18 @@ function buildRawRequest(req, format) {
   } catch { /* fall back */ }
 
   const headers = req.requestHeaders || {};
-  const lines = [`${method} ${path} HTTP/1.1`];
+  const httpVersion = _detectHttpVersion(req);
+  const lines = [`${method} ${path} HTTP/${httpVersion}`];
   // Synthesize Host if absent — readers expect it on a raw HTTP line.
-  if (host && !_findHeaderCI(headers, 'host')) {
+  // For h2 the equivalent is :authority, so don't double-render it.
+  if (host && !_findHeaderCI(headers, 'host') && httpVersion !== '2') {
     lines.push(`Host: ${host}`);
   }
   for (const [k, v] of Object.entries(headers)) {
+    // h2 pseudo-headers are already encoded in the request line — drop
+    // them from the rendered header list to avoid the redundant /
+    // misleading ":method: GET" alongside "GET / HTTP/2".
+    if (k.startsWith(':')) continue;
     lines.push(`${k}: ${v}`);
   }
   const body = req.requestPostData || '';
@@ -2603,13 +2631,16 @@ function buildRawRequest(req, format) {
 
 // Build the raw HTTP response string from a view object (works for
 // both captures and replay results since both share {status, headers,
-// body}).
-function buildRawResponse(view, format) {
+// body}). httpVersion is supplied by the caller — paired with the
+// request side so request/response status lines stay consistent.
+function buildRawResponse(view, format, httpVersion) {
   const status = view.status || 0;
   const statusText = view.statusText || '';
   const headers = view.headers || {};
-  const lines = [`HTTP/1.1 ${status}${statusText ? ' ' + statusText : ''}`];
+  const ver = httpVersion || '1.1';
+  const lines = [`HTTP/${ver} ${status}${statusText ? ' ' + statusText : ''}`];
   for (const [k, v] of Object.entries(headers)) {
+    if (k.startsWith(':')) continue;
     lines.push(`${k}: ${v}`);
   }
   const body = view.body || '';

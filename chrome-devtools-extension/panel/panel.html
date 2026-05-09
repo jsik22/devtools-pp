@@ -25,6 +25,13 @@
       </label>
     </header>
 
+    <div class="main-split">
+      <div class="main-tree-pane" id="main-tree-pane">
+        <div id="sitemap-tree" class="sitemap-tree"></div>
+      </div>
+      <div class="split-gutter split-gutter-h" data-resize="prev"></div>
+      <div class="main-content">
+
     <!-- Network tab -->
     <section id="network" class="tab-content active">
       <div class="toolbar">
@@ -51,6 +58,10 @@
           <button id="network-selection-clear" class="btn btn-xs" title="Clear selection">X</button>
         </span>
         <button id="network-auto-crawl" class="btn">Auto Crawl</button>
+        <div class="tab-mode-toggle" id="network-tab-mode-toggle" title="Show all requests captured during this session (default) or restrict to direct same-host requests only.">
+          <button class="tab-mode-btn active" data-mode="all">All</button>
+          <button class="tab-mode-btn" data-mode="internal">Host only</button>
+        </div>
         <div class="network-filter-dropdown">
           <button id="network-filter-btn" class="btn" title="Filter visible requests by type and status code">Filter ▾</button>
           <div id="network-filter-menu" class="network-filter-menu hidden">
@@ -86,10 +97,6 @@
         <button id="network-import-notice-close" class="btn btn-xs" title="Dismiss">X</button>
       </div>
       <div class="network-split">
-        <div class="network-tree-pane" id="network-tree-pane">
-          <div id="sitemap-tree" class="sitemap-tree"></div>
-        </div>
-        <div class="split-gutter split-gutter-h" data-resize="prev"></div>
         <div class="network-main">
           <div id="network-tabs" class="network-tabs hidden"></div>
           <div class="network-list-detail">
@@ -251,10 +258,16 @@
                   </div>
                 </div>
                 <div id="icpt-tab-req-edit" class="icpt-ed-pane active">
-                  <textarea id="icpt-req-raw" class="icpt-raw-textarea" spellcheck="false" placeholder="GET / HTTP/1.1&#10;Host: example.com&#10;..."></textarea>
+                  <div class="icpt-raw-wrap">
+                    <pre class="icpt-raw-display" id="icpt-req-raw-display" aria-hidden="true"></pre>
+                    <textarea id="icpt-req-raw" class="icpt-raw-input" spellcheck="false" placeholder="GET / HTTP/1.1&#10;Host: example.com&#10;..."></textarea>
+                  </div>
                 </div>
                 <div id="icpt-tab-req-mock" class="icpt-ed-pane">
-                  <textarea id="icpt-mock-raw" class="icpt-raw-textarea" spellcheck="false" placeholder="HTTP/1.1 200 OK&#10;Content-Type: application/json&#10;&#10;{...}"></textarea>
+                  <div class="icpt-raw-wrap">
+                    <pre class="icpt-raw-display" id="icpt-mock-raw-display" aria-hidden="true"></pre>
+                    <textarea id="icpt-mock-raw" class="icpt-raw-input" spellcheck="false" placeholder="HTTP/1.1 200 OK&#10;Content-Type: application/json&#10;&#10;{...}"></textarea>
+                  </div>
                 </div>
                 <div class="icpt-actions">
                   <button id="icpt-req-forward" class="btn btn-primary icpt-act-btn">Forward</button>
@@ -292,7 +305,10 @@
                     <button class="icpt-fmt-btn" data-fmt="pretty">Pretty</button>
                   </div>
                 </div>
-                <textarea id="icpt-resp-raw" class="icpt-raw-textarea" spellcheck="false" placeholder="HTTP/1.1 200 OK&#10;..."></textarea>
+                <div class="icpt-raw-wrap">
+                  <pre class="icpt-raw-display" id="icpt-resp-raw-display" aria-hidden="true"></pre>
+                  <textarea id="icpt-resp-raw" class="icpt-raw-input" spellcheck="false" placeholder="HTTP/1.1 200 OK&#10;..."></textarea>
+                </div>
                 <div class="icpt-actions">
                   <button id="icpt-resp-forward" class="btn btn-primary icpt-act-btn">Forward</button>
                   <button id="icpt-resp-forward-modified" class="btn btn-warning icpt-act-btn">Forward (Modified)</button>
@@ -315,6 +331,9 @@
         </div>
       </div>
     </section>
+
+      </div> <!-- /.main-content -->
+    </div> <!-- /.main-split -->
 
   </div>
 

@@ -51,7 +51,12 @@ function ensureTargetInTree() {
 function _flushSitemapPending() {
   if (!targetHost) return;
   while (_sitemapPending.length > 0) {
-    addToSitemap(_sitemapPending.shift());
+    const r = _sitemapPending.shift();
+    // Pre-targetHost captures missed the _mainHost stamp at capture
+    // time. Now that we know the main host, retro-stamp them so they
+    // align with the tree's session attribution.
+    if (r._mainHost == null) r._mainHost = targetHost;
+    addToSitemap(r);
   }
 }
 
@@ -890,13 +895,24 @@ function _reqHost(req) {
   return req._host;
 }
 
-// The Network list always shows every captured request — host
-// scoping happens through the Set Scope dropdown on tree nodes
-// (which writes to the global Scope), not through the per-host tab
-// strip. Kept as a function so callers in the filter chain stay
-// uniform; just always returns true now.
-function matchesActiveTab(_req) {
-  return true;
+// Per-tab visibility mode — 'all' (default) shows the full session
+// (direct hits + externals captured during that session, mirroring the
+// Site Map's main-host → External attribution), 'internal' narrows to
+// direct same-host hits only. Per-tab state so the user can keep, e.g.,
+// github.com on All while sandboxing a focused look on reddit.com.
+const tabFilterMode = new Map(); // host → 'all' | 'internal'
+function getTabFilterMode(host) {
+  return tabFilterMode.get(host) || 'all';
+}
+
+function matchesActiveTab(req) {
+  if (!activeTabHost) return true;
+  if (_reqHost(req) === activeTabHost) return true;
+  // 'internal' mode skips the session-attribution branch — externals
+  // (CDN .map files, analytics, ads) drop out of view.
+  if (getTabFilterMode(activeTabHost) === 'internal') return false;
+  if (req._mainHost === activeTabHost) return true;
+  return false;
 }
 
 // Make sure a tab exists for the given host. Called from the request
@@ -907,8 +923,10 @@ function ensureTab(host) {
   if (!host) return false;
   if (tabHosts.indexOf(host) >= 0) return false;
   tabHosts.push(host);
-  if (activeTabHost == null) activeTabHost = host;
+  const becameActive = activeTabHost == null;
+  if (becameActive) activeTabHost = host;
   renderNetworkTabs();
+  if (becameActive) refreshTabModeToggleUI();
   return true;
 }
 
@@ -928,6 +946,7 @@ function setActiveTab(host) {
     }
   }
   renderNetworkTabs();
+  refreshTabModeToggleUI();
   renderNetworkTable();
   updateSelectionUI();
   if (searchTerm) {
@@ -937,13 +956,30 @@ function setActiveTab(host) {
   }
 }
 
+// Sync the All / Host-only toggle to the active tab's stored mode.
+// Called on tab switch and on each click.
+function refreshTabModeToggleUI() {
+  const wrap = document.getElementById('network-tab-mode-toggle');
+  if (!wrap) return;
+  const mode = activeTabHost ? getTabFilterMode(activeTabHost) : 'all';
+  wrap.querySelectorAll('.tab-mode-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  });
+  // Disable when there's no tab to scope into — toggle is meaningless.
+  wrap.classList.toggle('disabled', !activeTabHost);
+}
+
 // Close a tab — wipes that host's captured requests from the global
 // store and drops the corresponding tree subtree so both views
 // agree. The user gets a confirm dialog first because data loss is
 // irreversible (no undo / no buffer).
 function closeTab(host) {
   if (!host) return;
-  const count = networkRequests.filter(r => _reqHost(r) === host).length;
+  // Match the matchesActiveTab predicate so the confirm dialog's count
+  // and the actual wipe target are exactly what the user has been
+  // looking at — direct host hits AND the session's externals.
+  const belongsToTab = r => _reqHost(r) === host || r._mainHost === host;
+  const count = networkRequests.filter(belongsToTab).length;
   const msg = count > 0
     ? `Close tab "${host}" and discard its ${count} captured request${count === 1 ? '' : 's'}?`
     : `Close tab "${host}"?`;
@@ -951,7 +987,7 @@ function closeTab(host) {
 
   // Drop matching requests in place (preserves array reference).
   for (let i = networkRequests.length - 1; i >= 0; i--) {
-    if (_reqHost(networkRequests[i]) === host) {
+    if (belongsToTab(networkRequests[i])) {
       const req = networkRequests[i];
       networkRequestMap.delete(req.requestId);
       selectedExportIds.delete(req.requestId);
@@ -972,11 +1008,14 @@ function closeTab(host) {
   if (activeTabHost === host) {
     activeTabHost = tabHosts.length > 0 ? tabHosts[Math.min(idx, tabHosts.length - 1)] : null;
   }
+  // Forget this tab's mode — fresh tabs default to 'all' next time.
+  tabFilterMode.delete(host);
   // The selection might have pointed at a now-gone request.
   if (selectedRequestId && !networkRequestMap.has(selectedRequestId)) {
     closeDetail();
   }
   renderNetworkTabs();
+  refreshTabModeToggleUI();
   renderNetworkTable();
   renderSitemapTree();
   updateSelectionUI();
@@ -995,11 +1034,20 @@ function renderNetworkTabs() {
     return;
   }
   networkTabsEl.classList.remove('hidden');
-  // Per-tab counts walk networkRequests once and bucket by host.
+  // Per-tab counts mirror what each tab actually shows: a request is
+  // in a tab when its host matches (direct) OR its _mainHost matches
+  // (captured during that session). One walk through networkRequests,
+  // one request can count toward up to two tabs (its host's tab if
+  // any, plus its session host's tab) — that's the correct total
+  // because matchesActiveTab admits both.
   const counts = new Map();
+  const tabSet = new Set(tabHosts);
   for (const r of networkRequests) {
     const h = _reqHost(r);
-    counts.set(h, (counts.get(h) || 0) + 1);
+    if (tabSet.has(h)) counts.set(h, (counts.get(h) || 0) + 1);
+    if (r._mainHost && r._mainHost !== h && tabSet.has(r._mainHost)) {
+      counts.set(r._mainHost, (counts.get(r._mainHost) || 0) + 1);
+    }
   }
   let html = '';
   for (const host of tabHosts) {
@@ -1051,6 +1099,26 @@ networkTabsEl.addEventListener('click', (e) => {
 document.getElementById('network-start').addEventListener('click', startNetworkMonitoring);
 document.getElementById('network-stop').addEventListener('click', stopNetworkMonitoring);
 document.getElementById('network-clear').addEventListener('click', clearNetwork);
+
+// All / Host-only toggle. Per-tab — sets the active tab's filter mode
+// and re-renders. The other tabs keep their own modes untouched.
+document.querySelectorAll('#network-tab-mode-toggle .tab-mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (!activeTabHost) return;
+    const mode = btn.dataset.mode;
+    if (getTabFilterMode(activeTabHost) === mode) return;
+    tabFilterMode.set(activeTabHost, mode);
+    refreshTabModeToggleUI();
+    renderNetworkTable();
+    updateSelectionUI();
+    if (searchTerm) {
+      recomputeSearchMatches();
+      refreshAllRowDots();
+      refreshSearchUI();
+    }
+  });
+});
+refreshTabModeToggleUI();
 
 // Detail panel tab switching
 document.querySelectorAll('.detail-tab').forEach(tab => {
@@ -1159,6 +1227,13 @@ function processNetworkRequest(harEntry) {
     responseBodyLoaded: inlineBody != null,
     responseBase64: inlineBodyBase64,
     initiator: harEntry._initiator || null,
+    // Active main host at capture time — drives session-based tab
+    // separation so externals (CDN, .map files, analytics) appear in
+    // the same tab as the host that loaded them. Mirrors the
+    // attribution Site Map already uses (sitemapTree[main].external).
+    // Null when targetHost isn't known yet; _flushSitemapPending
+    // back-fills these once detection completes.
+    _mainHost: targetHost || null,
     _harEntry: harEntry, // HAR entry reference (for body loading)
   };
 
@@ -1354,6 +1429,9 @@ function exportAllRequests(scope, selectedOnly) {
     responseBase64: !!r.responseBase64,
     scanResults: r.scanResults || [],
     initiator: r.initiator || null,
+    // Session attribution — preserve so a re-imported file lands in
+    // the same per-host tab grouping the original capture had.
+    mainHost: r._mainHost || null,
   }));
 
   _downloadJson(
@@ -1399,6 +1477,13 @@ function _parseImportJson(text) {
 // `findings` (Detection format) or `scanResults` (All format).
 function _itemToReq(item) {
   const meta = item.request || item;
+  // Session attribution — prefer the export's stamp, fall back to
+  // the URL's host so legacy exports (no mainHost) still land in the
+  // most-natural tab.
+  let mainHost = item.mainHost || null;
+  if (!mainHost) {
+    try { mainHost = new URL(meta.url || '').host || null; } catch {}
+  }
   return {
     requestId: 'imp_' + (++_importIdCounter),
     method: meta.method || 'GET',
@@ -1420,6 +1505,7 @@ function _itemToReq(item) {
     responseBase64: !!(item.responseBase64 ?? meta.responseBase64),
     initiator: item.initiator || meta.initiator || null,
     scanResults: item.findings || item.scanResults || meta.scanResults || [],
+    _mainHost: mainHost,
     _harEntry: null,
     _imported: true,
   };
@@ -1442,11 +1528,16 @@ function _applyImport(reqs, mode, filename) {
     networkRequestMap.set(r.requestId, r);
     buildSearchIndex(r);
   }
-  // Imported data has no navigation context, so we can't tell which
-  // hosts were "main" vs third-party — auto-creating a tab per host
-  // would flood the bar. Leave the current tab list alone; with no
-  // active tab the import is fully visible, and any existing tab
-  // continues filtering as before.
+  // Rebuild the tab strip from imported _mainHost values so the user
+  // gets the same per-session navigation they had at capture time.
+  // _mainHost is preserved by export; legacy exports without it get
+  // their URL host as the fallback (set in _itemToReq), so a flat
+  // import still produces sensible tabs.
+  const importedMainHosts = new Set();
+  for (const r of reqs) {
+    if (r._mainHost) importedMainHosts.add(r._mainHost);
+  }
+  for (const h of importedMainHosts) ensureTab(h);
   renderNetworkTabs();
   renderNetworkTable();
   updateSelectionUI();
@@ -1554,10 +1645,12 @@ function _exportSource(scope, selectedOnly) {
   if (scope === 'all') {
     base = networkRequests;
   } else {
-    // 'tab' — active host only. When no tab is active yet, fall back
-    // to all so the file is useful rather than silently empty.
+    // 'tab' — exactly what the user sees in the active tab. Mirrors
+    // matchesActiveTab so the export captures the same session view
+    // (direct hits + the session's externals). When no tab is active
+    // yet, fall back to all so the file isn't silently empty.
     base = activeTabHost
-      ? networkRequests.filter(r => _reqHost(r) === activeTabHost)
+      ? networkRequests.filter(r => matchesActiveTab(r))
       : networkRequests;
   }
   if (selectedOnly) {
@@ -1772,32 +1865,34 @@ function buildNetworkRow(r) {
 }
 
 function updateNetworkCount() {
-  const total = networkRequests.length;
-  // The active host tab is its own filter axis: requests outside the
-  // current tab don't render, exactly like Scope hides out-of-scope
-  // captures. When any of (tab, Scope, Type/Status filter) is active
-  // we surface "visible / total (filtered)" so the user knows what's
-  // hidden.
+  // The active tab is the user's "session" boundary — counts are
+  // tab-scoped so "100 / 271 (filtered)" reads as 100 visible out of
+  // the tab's 271, not out of the global 3948 pool. Scope + Type/
+  // Status filters are the secondary axis layered on top of the tab.
   const hasTab = activeTabHost != null;
   const hasScope = !!globalScope.regex;
   const hasFilter = networkFilterIsActive();
-  if (hasTab || hasScope || hasFilter) {
-    let filtered = 0;
-    for (const r of networkRequests) {
-      if (hasTab && !matchesActiveTab(r)) continue;
-      if (hasScope && !inGlobalScope(r.url)) continue;
-      if (hasFilter && !matchesNetworkFilter(r)) continue;
-      filtered++;
-    }
-    networkCount.textContent = filtered === total
-      ? `${total} requests`
-      : `${filtered} / ${total} requests (filtered)`;
+
+  let tabTotal = 0; // total in the active tab (or global when no tab)
+  let visible = 0;  // after Scope + Type/Status applied
+  for (const r of networkRequests) {
+    if (hasTab && !matchesActiveTab(r)) continue;
+    tabTotal++;
+    if (hasScope && !inGlobalScope(r.url)) continue;
+    if (hasFilter && !matchesNetworkFilter(r)) continue;
+    visible++;
+  }
+
+  if (hasScope || hasFilter) {
+    networkCount.textContent = visible === tabTotal
+      ? `${tabTotal} requests`
+      : `${visible} / ${tabTotal} requests (filtered)`;
     return;
   }
-  if (total > MAX_NETWORK_ROWS) {
-    networkCount.textContent = `${total} requests · showing last ${MAX_NETWORK_ROWS}`;
+  if (tabTotal > MAX_NETWORK_ROWS) {
+    networkCount.textContent = `${tabTotal} requests · showing last ${MAX_NETWORK_ROWS}`;
   } else {
-    networkCount.textContent = `${total} requests`;
+    networkCount.textContent = `${tabTotal} requests`;
   }
 }
 
@@ -5390,6 +5485,12 @@ const interceptLog = [];
 let selectedReqId = null;
 let selectedRespId = null;
 let activeSide = 'req'; // 'req' or 'resp' — shortcut target
+
+// Request IDs that the user forwarded from the request side and is
+// now waiting on a response for. When the matching response intercept
+// fires we auto-switch to the response side so the user can act on it
+// without manually clicking the title.
+const _icptExpectingResp = new Set();
 let interceptBypassRegex = null;
 
 const icptToggleBtn = document.getElementById('icpt-toggle');
@@ -5405,16 +5506,26 @@ const respPlaceholder = document.getElementById('icpt-resp-placeholder');
 const interceptTabBtn = document.querySelector('.intercept-tab');
 const icptProxyStatus = document.getElementById('icpt-proxy-status');
 
-// Switch activeSide on side panel click
-document.querySelectorAll('.icpt-side').forEach(el => {
-  el.addEventListener('click', () => {
-    activeSide = el.dataset.side;
-    document.querySelectorAll('.icpt-side').forEach(s => s.classList.remove('active-side'));
-    el.classList.add('active-side');
+// Switch activeSide via the side header only — clicking inside the
+// editor body would otherwise activate the side AND focus the
+// textarea, so a follow-up shortcut key (F / G / D / R / A / Q) gets
+// typed into the body instead of triggering the action. Limiting the
+// trigger to the header keeps activation a deliberate gesture.
+function setActiveIcptSide(side) {
+  if (side !== 'req' && side !== 'resp') return;
+  activeSide = side;
+  document.querySelectorAll('.icpt-side').forEach(s => {
+    s.classList.toggle('active-side', s.dataset.side === side);
+  });
+}
+document.querySelectorAll('.icpt-side-header').forEach(header => {
+  header.addEventListener('click', () => {
+    const side = header.parentElement && header.parentElement.dataset.side;
+    if (side) setActiveIcptSide(side);
   });
 });
 // Initial active side
-document.querySelector('.icpt-req-side').classList.add('active-side');
+setActiveIcptSide('req');
 
 // Background Service Worker port connection (auto-reconnect)
 let bgPort = null;
@@ -5857,7 +5968,19 @@ function handleResponseIntercepted(msg) {
     bodyTruncated: msg.bodyTruncated,
   };
   respQueue.push(newItem);
-  if (!selectedRespId) {
+  // Auto-activate the response side and select this item when the
+  // user just forwarded the matching request — they pressed F (or G)
+  // on the request side and the response is what they want to act on
+  // next, so pulling focus here saves a click. Otherwise (response
+  // for a request someone else forwarded, or a different selection)
+  // honor whatever the user is currently doing.
+  const expected = _icptExpectingResp.has(newItem.requestId);
+  if (expected) {
+    _icptExpectingResp.delete(newItem.requestId);
+    setActiveIcptSide('resp');
+    selectedRespId = newItem.id;
+    showRespEditor(newItem);
+  } else if (!selectedRespId) {
     selectedRespId = newItem.id;
     showRespEditor(newItem);
   }
@@ -5911,10 +6034,17 @@ document.querySelectorAll('.icpt-format-toggle').forEach(group => {
       if (target === 'req') {
         const activePane = reqEditorContent.querySelector('.icpt-ed-pane.active');
         const ta = activePane ? activePane.querySelector('textarea') : null;
-        if (ta) ta.value = _formatIcptRaw(ta.value, fmt);
+        if (ta) {
+          ta.value = _formatIcptRaw(ta.value, fmt);
+          // ta.id is icpt-{req|mock}-raw → derive sync key from it.
+          _syncIcptRawDisplay(ta.id.replace(/^icpt-(.+)-raw$/, '$1'));
+        }
       } else {
         const ta = document.getElementById('icpt-resp-raw');
-        if (ta) ta.value = _formatIcptRaw(ta.value, fmt);
+        if (ta) {
+          ta.value = _formatIcptRaw(ta.value, fmt);
+          _syncIcptRawDisplay('resp');
+        }
       }
     });
   });
@@ -6220,10 +6350,46 @@ function _formatIcptRaw(text, mode) {
   } catch { return text; }
 }
 
+// Push the textarea's current value into the colored <pre> overlay so
+// the user sees the syntax-highlighted render. Reuses _renderRawHtml
+// (the same colorizer Monitor's Message tab uses), keeping the visual
+// language consistent across the two surfaces.
+function _syncIcptRawDisplay(name) {
+  const ta = document.getElementById(`icpt-${name}-raw`);
+  const pre = document.getElementById(`icpt-${name}-raw-display`);
+  if (!ta || !pre) return;
+  // Append a trailing space when the text ends with a newline so the
+  // pre allocates a line for it — keeps the textarea's last-line
+  // height aligned with the pre below it.
+  const v = ta.value;
+  const display = v.endsWith('\n') ? v + ' ' : v;
+  pre.innerHTML = _renderRawHtml(display);
+  // Keep the colored render aligned with the textarea's scroll
+  // position so the visible character at any offset overlaps with
+  // its colored counterpart.
+  pre.scrollTop = ta.scrollTop;
+  pre.scrollLeft = ta.scrollLeft;
+}
+
+// Attached once at script init. Each Intercept raw editor wraps a
+// transparent textarea over a colored <pre>; input + scroll on the
+// textarea drive the pre to mirror it.
+['req', 'resp', 'mock'].forEach(name => {
+  const ta = document.getElementById(`icpt-${name}-raw`);
+  const pre = document.getElementById(`icpt-${name}-raw-display`);
+  if (!ta || !pre) return;
+  ta.addEventListener('input', () => _syncIcptRawDisplay(name));
+  ta.addEventListener('scroll', () => {
+    pre.scrollTop = ta.scrollTop;
+    pre.scrollLeft = ta.scrollLeft;
+  });
+});
+
 function showReqEditor(item) {
   reqPlaceholder.style.display = 'none';
   reqEditorContent.classList.remove('hidden');
   document.getElementById('icpt-req-raw').value = _buildIcptRawRequest(item);
+  _syncIcptRawDisplay('req');
   // Reset format toggle to Raw on each new item.
   reqEditorContent.querySelectorAll('.icpt-format-toggle .icpt-fmt-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.fmt === 'raw');
@@ -6233,6 +6399,7 @@ function showReqEditor(item) {
   if (!mockTa.value) {
     mockTa.value = 'HTTP/1.1 200 OK\nContent-Type: application/json\n\n{}';
   }
+  _syncIcptRawDisplay('mock');
   // Switch to Edit tab
   reqEditorContent.querySelectorAll('.icpt-ed-tab').forEach(t => {
     t.classList.toggle('active', t.dataset.ictab === 'req-edit');
@@ -6246,6 +6413,7 @@ function showRespEditor(item) {
   respPlaceholder.style.display = 'none';
   respEditorContent.classList.remove('hidden');
   document.getElementById('icpt-resp-raw').value = _buildIcptRawResponse(item);
+  _syncIcptRawDisplay('resp');
   respEditorContent.querySelectorAll('.icpt-format-toggle .icpt-fmt-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.fmt === 'raw');
   });
@@ -6258,6 +6426,7 @@ function hideReqEditor() {
   // Wipe Mock so the next selection gets the default seed
   const mockTa = document.getElementById('icpt-mock-raw');
   if (mockTa) mockTa.value = '';
+  _syncIcptRawDisplay('mock');
 }
 
 function hideRespEditor() {
@@ -6311,6 +6480,11 @@ function forwardSelected(modified) {
       sendInterceptDecision(item.id, { action: 'forward' });
       upsertInterceptLog(item.id, { action: 'forwarded', method: item.method, url: item.url });
     }
+    // Mark this request so that when the response intercept fires we
+    // can auto-switch the active side. Both Forward and Forward
+    // Modified produce a wire-level request we expect a response for;
+    // Drop / Mock don't, so they skip this.
+    _icptExpectingResp.add(item.id);
     removeFromReqQueue(item.id);
   } else {
     const item = respQueue.find(q => q.id === selectedRespId);
@@ -6340,6 +6514,14 @@ function forwardSelected(modified) {
       upsertInterceptLog(reqId, { responseAction: 'forwarded', responseStatus: item.statusCode });
     }
     removeFromRespQueue(item.id);
+    // After resolving a response, swing focus back to the request side
+    // when something's waiting there — completes the alternating
+    // request ↔ response loop. If the request queue is empty we leave
+    // the active side alone so the next response (if any was queued)
+    // can stay in focus.
+    if (reqQueue.length > 0) {
+      setActiveIcptSide('req');
+    }
   }
 }
 

@@ -1196,6 +1196,14 @@ function processNetworkRequest(harEntry) {
   // create one for every external resource.
   scheduleAppendNetworkRow(req);
 
+  // Eagerly try source-map mapping so the Initiator column reflects
+  // the final "↑ Mapped" state without waiting for the user to click
+  // into the request. Cheap thanks to sourceMapCache (per-script
+  // dedup) and runIdle scheduling.
+  if (req.initiator && req.initiator.stack && req.initiator.stack.callFrames) {
+    runIdle(() => _eagerEnrichInitiator(req));
+  }
+
   // Eagerly load the body for text-like responses so the scanner can
   // see body-side findings without waiting for the user to click in.
   // Queue caps concurrency; the body scan itself runs in idle time so
@@ -4141,6 +4149,34 @@ function renderInitiator(req) {
   // Async: enrich call-stack frames with source map info. Updates DOM
   // when each script's map resolves. Cache means no repeat fetches.
   if (frames.length > 0) enrichFramesWithSourceMaps(container, frames, req);
+}
+
+// Lite version of the source-map enrichment that only updates the
+// Initiator column on the row — no DOM rewrite of frame elements.
+// Runs proactively at capture time so the column shows "↑ Mapped"
+// without the user having to click into the request first.
+function _eagerEnrichInitiator(req) {
+  if (!req || req._sourcemapMapped) return;
+  const frames = (req.initiator && req.initiator.stack && req.initiator.stack.callFrames) || [];
+  if (frames.length === 0) return;
+  const seen = new Set();
+  for (const f of frames) {
+    if (!f.url || seen.has(f.url)) continue;
+    seen.add(f.url);
+    getSourceMap(f.url, (map) => {
+      if (!map || req._sourcemapMapped) return;
+      // Walk only this script's frames — first match flips the flag.
+      for (const ff of frames) {
+        if (ff.url !== f.url) continue;
+        const mapping = lookupMapping(map.segments, ff.lineNumber || 0, ff.columnNumber || 0);
+        if (mapping && map.sources[mapping.sourceIndex]) {
+          req._sourcemapMapped = true;
+          updateNetworkRowInitiator(req);
+          return;
+        }
+      }
+    });
+  }
 }
 
 // For each unique script URL in the call stack, try to fetch & decode

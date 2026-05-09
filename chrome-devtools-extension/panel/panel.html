@@ -245,32 +245,20 @@
                   <span>🔒 Viewing captured (read-only)</span>
                   <button class="icpt-viewing-close" title="Exit viewing mode">&times;</button>
                 </div>
-                <div class="icpt-editor-topbar">
-                  <select id="icpt-req-edit-method"></select>
-                  <input type="text" id="icpt-req-edit-url" class="filter-input" style="flex:1">
-                </div>
                 <div class="icpt-editor-tabs" data-side="req">
-                  <button class="icpt-ed-tab active" data-ictab="req-headers">Headers</button>
-                  <button class="icpt-ed-tab" data-ictab="req-body">Body</button>
+                  <button class="icpt-ed-tab active" data-ictab="req-edit">Edit</button>
                   <button class="icpt-ed-tab" data-ictab="req-mock">Mock</button>
-                </div>
-                <div id="icpt-tab-req-headers" class="icpt-ed-pane active">
-                  <div class="icpt-kv-toolbar">
-                    <button id="icpt-req-add-header" class="btn btn-xs">+ Add Header</button>
+                  <span class="icpt-ed-tabs-spacer"></span>
+                  <div class="icpt-format-toggle" data-target="req">
+                    <button class="icpt-fmt-btn active" data-fmt="raw">Raw</button>
+                    <button class="icpt-fmt-btn" data-fmt="pretty">Pretty</button>
                   </div>
-                  <div id="icpt-req-headers-list" class="replay-kv-list"></div>
                 </div>
-                <div id="icpt-tab-req-body" class="icpt-ed-pane">
-                  <textarea id="icpt-req-edit-body" class="replay-body-editor" style="min-height:80px;max-height:none;flex:1" spellcheck="false" placeholder="Request body..."></textarea>
+                <div id="icpt-tab-req-edit" class="icpt-ed-pane active">
+                  <textarea id="icpt-req-raw" class="icpt-raw-textarea" spellcheck="false" placeholder="GET / HTTP/1.1&#10;Host: example.com&#10;..."></textarea>
                 </div>
                 <div id="icpt-tab-req-mock" class="icpt-ed-pane">
-                  <div class="icpt-mock-bar">
-                    <label style="color:#666;font-size:12px">Status:</label>
-                    <input type="number" id="icpt-mock-status" class="filter-input" style="width:80px;min-width:0" value="200">
-                    <button id="icpt-mock-add-header" class="btn btn-xs">+ Add Header</button>
-                  </div>
-                  <div id="icpt-mock-headers-list" class="replay-kv-list"></div>
-                  <textarea id="icpt-mock-body" class="replay-body-editor" style="min-height:80px;max-height:none;flex:1" spellcheck="false" placeholder="Mock response body (JSON, HTML, text...)"></textarea>
+                  <textarea id="icpt-mock-raw" class="icpt-raw-textarea" spellcheck="false" placeholder="HTTP/1.1 200 OK&#10;Content-Type: application/json&#10;&#10;{...}"></textarea>
                 </div>
                 <div class="icpt-actions">
                   <button id="icpt-req-forward" class="btn btn-primary icpt-act-btn">Forward</button>
@@ -301,27 +289,14 @@
                   <span>🔒 Viewing captured (read-only)</span>
                   <button class="icpt-viewing-close" title="Exit viewing mode">&times;</button>
                 </div>
-                <div class="icpt-editor-topbar">
-                  <span id="icpt-resp-edit-method" class="icpt-resp-method-tag"></span>
-                  <input type="text" id="icpt-resp-edit-url" class="filter-input" style="flex:1" readonly>
-                </div>
-                <div class="icpt-resp-status-bar">
-                  <label style="color:#666;font-size:12px">Status:</label>
-                  <input type="number" id="icpt-resp-edit-status" class="filter-input" style="width:80px;min-width:0" value="200">
-                </div>
-                <div class="icpt-editor-tabs" data-side="resp">
-                  <button class="icpt-ed-tab active" data-ictab="resp-headers">Headers</button>
-                  <button class="icpt-ed-tab" data-ictab="resp-body">Body</button>
-                </div>
-                <div id="icpt-tab-resp-headers" class="icpt-ed-pane active">
-                  <div class="icpt-kv-toolbar">
-                    <button id="icpt-resp-add-header" class="btn btn-xs">+ Add Header</button>
+                <div class="icpt-format-bar">
+                  <span class="icpt-ed-tabs-spacer"></span>
+                  <div class="icpt-format-toggle" data-target="resp">
+                    <button class="icpt-fmt-btn active" data-fmt="raw">Raw</button>
+                    <button class="icpt-fmt-btn" data-fmt="pretty">Pretty</button>
                   </div>
-                  <div id="icpt-resp-headers-list" class="replay-kv-list"></div>
                 </div>
-                <div id="icpt-tab-resp-body" class="icpt-ed-pane">
-                  <textarea id="icpt-resp-edit-body" class="replay-body-editor" style="min-height:80px;max-height:none;flex:1" spellcheck="false" placeholder="Response body..."></textarea>
-                </div>
+                <textarea id="icpt-resp-raw" class="icpt-raw-textarea" spellcheck="false" placeholder="HTTP/1.1 200 OK&#10;..."></textarea>
                 <div class="icpt-actions">
                   <button id="icpt-resp-forward" class="btn btn-primary icpt-act-btn">Forward</button>
                   <button id="icpt-resp-forward-modified" class="btn btn-warning icpt-act-btn">Forward (Modified)</button>

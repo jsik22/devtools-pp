@@ -559,9 +559,96 @@ tr:hover {
   font-family: -apple-system, sans-serif;
 }
 
-/* Replay edit mode: textarea takes over the request body slot, and
+/* Replay edit mode: KV editor takes over the request body slot, and
    the bar of Send / Original / hint shows below the body. */
-.msg-replay-textarea {
+.replay-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: #fffdf2;
+}
+.replay-editor-topbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #f3f3f3;
+  border-bottom: 1px solid #d4d4d4;
+  flex-shrink: 0;
+}
+.replay-editor-topbar select {
+  background: #0078d4;
+  color: #fff;
+  border: 1px solid #0078d4;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.replay-editor-url {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #c4c4c4;
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  outline: none;
+  min-width: 0;
+}
+.replay-editor-url:focus { border-color: #0078d4; }
+/* HTTP version box at the end of the topbar — editable so security
+   testers can record a tampered version on the request line. fetch()
+   ignores it on the wire (always sends as HTTP/1.1 or whatever the
+   server negotiates), but the field is part of the snapshot for
+   Original/Modified tracking. */
+.replay-editor-version {
+  flex-shrink: 0;
+  width: 80px;
+  padding: 4px 8px;
+  background: #fff;
+  border: 1px solid #c4c4c4;
+  border-radius: 3px;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  color: #1e1e1e;
+  outline: none;
+  text-align: center;
+}
+.replay-editor-version:focus { border-color: #0078d4; }
+.replay-editor-tabs {
+  display: flex;
+  background: #f3f3f3;
+  border-bottom: 1px solid #d4d4d4;
+  flex-shrink: 0;
+}
+.replay-editor-tab {
+  background: transparent;
+  border: none;
+  color: #666;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 12px;
+  border-bottom: 2px solid transparent;
+}
+.replay-editor-tab:hover { color: #333; }
+.replay-editor-tab.active { color: #1e1e1e; border-bottom-color: #0078d4; }
+.replay-editor-pane {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+.replay-editor-pane.active { display: flex; }
+.replay-editor-toolbar {
+  padding: 4px 8px;
+  background: #f8f8f8;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+.replay-body-editor {
   flex: 1;
   width: 100%;
   margin: 0;
@@ -574,15 +661,55 @@ tr:hover {
   font-size: 12px;
   line-height: 1.55;
   color: #1e1e1e;
-  white-space: pre;
-  tab-size: 2;
   box-sizing: border-box;
-  /* Long lines should scroll horizontally inside the textarea, not
-     wrap, so the user keeps line-by-line correspondence with the
-     read-only raw view. */
-  overflow: auto;
-  white-space: pre;
+  min-height: 0;
 }
+.replay-body-editor.hidden { display: none; }
+
+/* Body pane toolbar — hosts the Form/Raw toggle + the form-only
+   "+ Add Field" button. Toggle hides itself when the body isn't
+   form-shaped (no point offering a view that can't represent it). */
+.replay-body-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: #f8f8f8;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+.replay-body-format-toggle {
+  display: inline-flex;
+  border: 1px solid #d4d4d4;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.replay-body-format-toggle.hidden { display: none; }
+.replay-body-fmt-btn {
+  background: #fff;
+  border: none;
+  color: #666;
+  padding: 2px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.replay-body-fmt-btn:hover { color: #1e1e1e; }
+.replay-body-fmt-btn.active {
+  background: #e8f0fe;
+  color: #1a73e8;
+  font-weight: 500;
+}
+.replay-body-fmt-btn + .replay-body-fmt-btn { border-left: 1px solid #d4d4d4; }
+
+/* Form view list — same KV row as headers but stacks fill space and
+   stays scrollable independent of the rest of the body pane. */
+.replay-body-form {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+.replay-body-form.hidden { display: none; }
+#msg-replay-add-field.hidden { display: none; }
 .msg-replay-bar {
   display: flex;
   align-items: center;
@@ -646,9 +773,28 @@ tr:hover {
   color: #8a6d00;
   margin-bottom: 6px;
 }
+/* "Status unchanged" / "Body identical" — same as a normal diff title
+   shape but de-emphasized in green/grey to telegraph "this dimension
+   matched, nothing to act on". */
+.msg-diff-badge .diff-title.diff-unchanged {
+  color: #5f6368;
+  font-weight: 500;
+}
+/* "Original body not available" — yellow-orange so it reads as a
+   notice, not a delta or a clean match. */
+.msg-diff-badge .diff-title.diff-unavailable {
+  color: #b06000;
+  font-weight: 500;
+}
 .msg-diff-identical {
   color: #0b7a3e;
   font-size: 12px;
+  margin-bottom: 6px;
+}
+/* Stack any subsequent section after the first with a small gap so
+   Status / Body sections read as separate dimensions. */
+.msg-diff-badge > * + * {
+  margin-top: 8px;
 }
 
 /* Initiator tab */
@@ -1284,6 +1430,39 @@ tr:hover {
   text-decoration: line-through;
 }
 
+/* Forbidden header rows — fetch() silently drops user edits so we
+   visually mark them locked. Keep the name editable (user can rename
+   to a non-forbidden header) but read-only the value + checkbox. The
+   subtle background telegraphs "browser-managed" without screaming. */
+.replay-kv-row.kv-forbidden {
+  background: #fafafa;
+}
+.replay-kv-row.kv-forbidden .kv-name,
+.replay-kv-row.kv-forbidden .kv-value {
+  color: #888;
+  font-style: italic;
+}
+.replay-kv-row.kv-forbidden .kv-value {
+  background: #f0f0f0;
+  cursor: not-allowed;
+}
+/* Lock glyph in the toggle slot — replaces the disabled checkbox with
+   a clearer "this is locked" cue. Keep clickable area inert. */
+.replay-kv-row.kv-forbidden .kv-toggle {
+  position: relative;
+  pointer-events: none;
+}
+.replay-kv-row.kv-forbidden .kv-toggle::after {
+  content: '🔒';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  background: #fafafa;
+}
+
 .detail-loading {
   padding: 12px;
   color: #999;
@@ -1710,13 +1889,6 @@ tr.selected td {
   border-color: #f3b9b3;
 }
 
-/* Response editor: method tag (no longer paired with a redundant RESPONSE badge) */
-.icpt-resp-method-tag {
-  font-weight: 700;
-  color: #0451a5;
-  font-size: 12px;
-}
-
 /* Split layout */
 .icpt-main-area {
   flex: 1;
@@ -1813,17 +1985,6 @@ tr.selected td {
   flex: 1;
   overflow: auto;
   min-height: 0;
-}
-
-.icpt-mock-bar,
-.icpt-resp-status-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 10px;
-  background: #f8f8f8;
-  border-bottom: 1px solid #e0e0e0;
-  flex-shrink: 0;
 }
 
 .icpt-queue-item {
@@ -1985,14 +2146,6 @@ tr.selected td {
   background: #d4e4fc;
 }
 
-/* Response side in viewing mode — the method / URL / status code
-   inputs are duplicated info (already shown in the request side and
-   the log row's status cell) so hide them. Body and headers stay. */
-#icpt-resp-editor-content.icpt-viewing-captured .icpt-editor-topbar,
-#icpt-resp-editor-content.icpt-viewing-captured .icpt-resp-status-bar {
-  display: none;
-}
-
 /* Visual cue that inputs / textareas / checkboxes are inactive in
    viewing mode. JS also sets readOnly / disabled so the styling
    matches behavior. */
@@ -2024,26 +2177,6 @@ tr.selected td {
 
 .icpt-editor-content.hidden {
   display: none;
-}
-
-.icpt-editor-topbar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  background: #f3f3f3;
-  border-bottom: 1px solid #d4d4d4;
-  flex-shrink: 0;
-}
-
-.icpt-editor-topbar select {
-  background: #0078d4;
-  color: #fff;
-  border: 1px solid #0078d4;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 600;
 }
 
 .icpt-editor-tabs {
@@ -2084,6 +2217,60 @@ tr.selected td {
   border-bottom: 1px solid #d4d4d4;
   flex-shrink: 0;
 }
+
+/* Raw HTTP textarea for the Intercept Edit / Mock / Response panes —
+   single editable surface that holds request/status line + headers +
+   body. Pretty / Raw toggle reformats the body portion in place. */
+.icpt-raw-textarea {
+  flex: 1;
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 8px 10px;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  background: #fff;
+  color: #1e1e1e;
+  white-space: pre;
+  min-height: 0;
+}
+
+/* Pretty/Raw toggle, sits inside the editor-tabs row (request side) or
+   in its own bar (response side). Same look as the Message tab. */
+.icpt-ed-tabs-spacer { flex: 1; }
+.icpt-format-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 10px;
+  background: #f3f3f3;
+  border-bottom: 1px solid #d4d4d4;
+  flex-shrink: 0;
+}
+.icpt-format-toggle {
+  display: inline-flex;
+  border: 1px solid #d4d4d4;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-right: 8px;
+}
+.icpt-fmt-btn {
+  background: #fff;
+  border: none;
+  color: #666;
+  padding: 2px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.icpt-fmt-btn:hover { color: #1e1e1e; }
+.icpt-fmt-btn.active {
+  background: #e8f0fe;
+  color: #1a73e8;
+  font-weight: 500;
+}
+.icpt-fmt-btn + .icpt-fmt-btn { border-left: 1px solid #d4d4d4; }
 
 
 /* Action buttons */

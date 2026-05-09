@@ -799,6 +799,16 @@ function updateSendToBrowserButton() {
     btn.title = 'Select a request first';
     return;
   }
+  // Replay edit mode is mutually exclusive with Send to Browser — the
+  // user is editing a request to fire via fetch, sending to a new tab
+  // would either compete with that or silently send the un-edited
+  // captured request, both of which are surprising. Lock the button
+  // until they exit replay edit.
+  if (msgReplayEditing) {
+    btn.disabled = true;
+    btn.title = 'Exit Replay edit (click ↻ Replay again) to use Send to Browser';
+    return;
+  }
   const check = canSendToBrowser(req);
   btn.disabled = !check.ok;
   btn.title = check.ok
@@ -1148,6 +1158,24 @@ function processNetworkRequest(harEntry) {
     _harEntry: harEntry, // HAR entry reference (for body loading)
   };
 
+  // Replay correlation runs FIRST so the row's displayed headers /
+  // body reflect the user's modifications before scan / sitemap /
+  // search index pull from req. Page-context fetch silently drops
+  // header edits to forbidden names (Cookie, User-Agent, Sec-*, etc.)
+  // and the HAR entry only carries the wire-level result; without
+  // this override the row would silently appear "reverted" even
+  // though Send went through with the user's intent.
+  const replayMatch = consumeReplayFireMatch(req.url, req.method);
+  if (replayMatch) {
+    req._isReplay = true;
+    if (replayMatch.displayHeaders) {
+      req.requestHeaders = replayMatch.displayHeaders;
+    }
+    if (replayMatch.displayBody != null && replayMatch.displayBody !== '') {
+      req.requestPostData = replayMatch.displayBody;
+    }
+  }
+
   // Initial scanner pass — runs against URL/headers/request body and the
   // response status. Body-side findings come on a second pass once the
   // body is loaded below.
@@ -1158,12 +1186,6 @@ function processNetworkRequest(harEntry) {
 
   // Network list only when monitoring is ON
   if (!networkMonitoring) return;
-  // Tag the request if it matches a recent replay Send — purely
-  // local correlation (URL + method match within a short TTL), no
-  // header injection so origin servers see a clean request.
-  if (consumeReplayFireMatch(req.url, req.method)) {
-    req._isReplay = true;
-  }
   networkRequests.push(req);
   networkRequestMap.set(reqId, req);
   reindexRequestForSearch(req);
@@ -2466,7 +2488,6 @@ function showDetail(req) {
 let msgRequestFormat = 'raw';   // 'raw' | 'pretty'
 let msgResponseFormat = 'raw';  // 'raw' | 'pretty'
 let msgReplayEditing = false;
-let msgReplayOriginalRaw = '';  // text the editor was opened with — drives Original/Modified state
 let msgPreviewMode = 'raw';     // 'raw' | 'preview'
 let msgReplayLastResponse = null; // overrides original response display when set
 
@@ -2491,7 +2512,11 @@ function renderMessageTab(req) {
 
 function renderRequestPane(req) {
   const meta = document.getElementById('msg-request-meta');
-  meta.textContent = `${req.method || ''} ${truncateUrl(req.url || '')}`;
+  // Method only — the full URL lives in the request line of the raw
+  // HTTP body below, so duplicating it in the pane header just bloats
+  // the strip and forces truncation. Title still carries the URL on
+  // hover for quick reference.
+  meta.textContent = req.method || '';
   meta.title = req.url || '';
 
   const bodyEl = document.getElementById('msg-request-body');
@@ -2537,9 +2562,11 @@ function renderResponsePane(req) {
   // so they always render as 1.1 unless we have a captured-h2 origin.
   const text = buildRawResponse(view, msgResponseFormat, resp ? '1.1' : _detectHttpVersion(req));
   let html = `<pre class="msg-raw">${_renderRawHtml(text)}</pre>`;
-  // Diff badge for replay results — same logic as the old Replay tab,
-  // appended after the rendered raw response.
-  if (resp && req && req.responseBodyLoaded && req.responseBody !== null) {
+  // Diff badge for replay results. Always rendered when we have a
+  // replay response — _renderReplayDiff handles the case where the
+  // original body isn't available so status / availability info still
+  // surfaces instead of disappearing silently.
+  if (resp && req) {
     html += _renderReplayDiff(req, resp);
   }
   bodyEl.innerHTML = html;
@@ -2778,114 +2805,490 @@ document.getElementById('msg-replay-toggle').addEventListener('click', () => {
   _enterReplayEdit(req);
 });
 
+// Snapshot of the captured request's method/URL/headers/body taken when
+// replay edit mode opens — drives the Original/Modified state badge
+// without relying on string equality of free-form raw text.
+let msgReplayOriginalSnapshot = null;
+
 function _enterReplayEdit(req) {
   msgReplayEditing = true;
-  const bodyEl = document.getElementById('msg-request-body');
-  msgReplayOriginalRaw = buildRawRequest(req, 'raw');
-  bodyEl.innerHTML = '';
-  const ta = document.createElement('textarea');
-  ta.id = 'msg-replay-textarea';
-  ta.className = 'msg-replay-textarea';
-  ta.spellcheck = false;
-  ta.value = msgReplayOriginalRaw;
-  ta.addEventListener('input', _refreshReplayState);
-  bodyEl.appendChild(ta);
+  msgReplayOriginalSnapshot = _captureReplaySnapshot(req);
+  _renderReplayEditor(msgReplayOriginalSnapshot);
   document.getElementById('msg-replay-bar').classList.remove('hidden');
   document.getElementById('msg-replay-toggle').classList.add('active');
   _refreshReplayState();
+  updateSendToBrowserButton();
 }
+
+// Render (or re-render) the editor's DOM from a snapshot. Called on
+// initial entry and when the user clicks the Original/Modified button
+// to restore the seed. Event delegation in setupReplayEditorListeners
+// covers tab clicks / + Add Header / KV row removes / input tracking,
+// so re-rendering doesn't accumulate listeners.
+function _renderReplayEditor(snap) {
+  const bodyEl = document.getElementById('msg-request-body');
+  bodyEl.innerHTML = `
+    <div class="replay-editor">
+      <div class="replay-editor-topbar">
+        <select id="msg-replay-method"></select>
+        <input type="text" id="msg-replay-url" class="replay-editor-url" spellcheck="false">
+        <input type="text" id="msg-replay-version" class="replay-editor-version" spellcheck="false"
+          value="HTTP/1.1"
+          title="HTTP version on the request line. Editable for security testing — note that fetch() actually sends as HTTP/1.1 or whatever the server negotiates, so this is cosmetic on the wire.">
+      </div>
+      <div class="replay-editor-tabs">
+        <button class="replay-editor-tab active" data-rtab="headers">Headers</button>
+        <button class="replay-editor-tab" data-rtab="body">Body</button>
+      </div>
+      <div class="replay-editor-pane active" id="msg-replay-pane-headers">
+        <div class="replay-editor-toolbar">
+          <button id="msg-replay-add-header" class="btn btn-xs">+ Add Header</button>
+        </div>
+        <div id="msg-replay-headers-list" class="replay-kv-list"></div>
+      </div>
+      <div class="replay-editor-pane" id="msg-replay-pane-body">
+        <div class="replay-body-toolbar">
+          <div class="replay-body-format-toggle">
+            <button class="replay-body-fmt-btn" data-bfmt="form">Form</button>
+            <button class="replay-body-fmt-btn" data-bfmt="raw">Raw</button>
+          </div>
+          <button id="msg-replay-add-field" class="btn btn-xs">+ Add Field</button>
+        </div>
+        <div id="msg-replay-body-form" class="replay-kv-list replay-body-form"></div>
+        <textarea id="msg-replay-body-input" class="replay-body-editor" spellcheck="false" placeholder="Request body..."></textarea>
+      </div>
+    </div>
+  `;
+  const methodSel = document.getElementById('msg-replay-method');
+  methodSel.innerHTML = ['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS']
+    .map(m => `<option ${m === snap.method ? 'selected' : ''}>${m}</option>`).join('');
+  document.getElementById('msg-replay-url').value = snap.url;
+  document.getElementById('msg-replay-version').value = snap.version || 'HTTP/1.1';
+  const list = document.getElementById('msg-replay-headers-list');
+  for (const { name, value } of snap.headers) {
+    _addReplayKvRow(list, name, value, true);
+  }
+  document.getElementById('msg-replay-body-input').value = snap.body;
+  // Decide initial body view based on the seeded body shape. Form
+  // view is only useful for x-www-form-urlencoded payloads — JSON or
+  // multipart bodies should stay raw to avoid surprising the user.
+  const formCapable = _replayBodyLooksFormEncoded(snap);
+  _setReplayBodyView(formCapable ? 'form' : 'raw', { populate: true, formCapable });
+}
+
+// True when the body looks like form-urlencoded — either by Content-
+// Type header or a heuristic on the body string. Used to decide whether
+// to default the Body pane to Form view, and whether the Form/Raw
+// toggle is offered at all.
+function _replayBodyLooksFormEncoded(snap) {
+  const ct = (snap.headers || [])
+    .find(h => h.name.toLowerCase() === 'content-type');
+  if (ct && /application\/x-www-form-urlencoded/i.test(ct.value)) return true;
+  // Heuristic for missing Content-Type: body has at least one `=`,
+  // no JSON markers, no leading angle bracket, no obvious raw text.
+  const body = (snap.body || '').trim();
+  if (!body) return false;
+  if (body.startsWith('{') || body.startsWith('[')) return false;
+  if (body.startsWith('<')) return false;
+  if (!body.includes('=')) return false;
+  // Reject if it looks like prose (contains lots of spaces / words).
+  if (/\s{2,}/.test(body)) return false;
+  return true;
+}
+
+// Switch the body pane between Form and Raw views. Keeps the underlying
+// body content in sync — Form ↔ Raw conversions happen at toggle time
+// so edits in one view are visible in the other on switch.
+function _setReplayBodyView(view, opts) {
+  opts = opts || {};
+  const formContainer = document.getElementById('msg-replay-body-form');
+  const ta = document.getElementById('msg-replay-body-input');
+  const addBtn = document.getElementById('msg-replay-add-field');
+  const toggle = document.querySelector('.replay-body-format-toggle');
+  if (!formContainer || !ta || !toggle) return;
+  // Hide the Form button entirely when the body isn't form-shaped — no
+  // point offering a view that can't represent it.
+  if (opts.formCapable === false) {
+    toggle.classList.add('hidden');
+  }
+  if (view === 'form' && opts.formCapable === false) view = 'raw';
+
+  if (opts.populate && view === 'form') {
+    // Initial population from the textarea value
+    formContainer.innerHTML = '';
+    const fields = _parseFormUrlencodedFields(ta.value || '');
+    if (fields.length === 0) {
+      _addReplayBodyField(formContainer, '', '', true);
+    } else {
+      for (const f of fields) _addReplayBodyField(formContainer, f.name, f.value, true);
+    }
+  } else if (!opts.populate) {
+    // Toggle: convert from the previously-active view to the new one.
+    if (view === 'raw') {
+      // Form → Raw: encode current fields into textarea.
+      ta.value = _encodeReplayBodyForm(formContainer);
+    } else {
+      // Raw → Form: parse textarea into KV rows.
+      formContainer.innerHTML = '';
+      const fields = _parseFormUrlencodedFields(ta.value || '');
+      if (fields.length === 0) {
+        _addReplayBodyField(formContainer, '', '', true);
+      } else {
+        for (const f of fields) _addReplayBodyField(formContainer, f.name, f.value, true);
+      }
+    }
+  }
+
+  // Apply visibility
+  if (view === 'form') {
+    formContainer.classList.remove('hidden');
+    if (addBtn) addBtn.classList.remove('hidden');
+    ta.classList.add('hidden');
+  } else {
+    formContainer.classList.add('hidden');
+    if (addBtn) addBtn.classList.add('hidden');
+    ta.classList.remove('hidden');
+  }
+  toggle.querySelectorAll('.replay-body-fmt-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.bfmt === view);
+  });
+  // Track active view on the editor element so reads (Send) know which
+  // pane carries the source of truth.
+  const editor = document.querySelector('.replay-editor');
+  if (editor) editor.dataset.bodyView = view;
+}
+
+function _addReplayBodyField(container, name, value, enabled) {
+  const row = document.createElement('div');
+  row.className = 'replay-kv-row replay-body-field' + (enabled ? '' : ' disabled');
+  row.innerHTML = `
+    <input type="checkbox" class="kv-toggle"${enabled ? ' checked' : ''}>
+    <input type="text" class="kv-name" value="${escapeAttr(name)}" placeholder="Name">
+    <input type="text" class="kv-value" value="${escapeAttr(value)}" placeholder="Value">
+    <button class="kv-remove" title="Remove">&times;</button>
+  `;
+  container.appendChild(row);
+}
+
+// Encode the form-view rows back into application/x-www-form-urlencoded
+// for the Send payload (and for the Raw-toggle round-trip). Uses `+`
+// for spaces — application/x-www-form-urlencoded convention; encode-
+// URIComponent emits %20 which would round-trip differently from
+// captured request bodies.
+function _encodeReplayBodyForm(container) {
+  const parts = [];
+  container.querySelectorAll('.replay-kv-row').forEach(row => {
+    const enabled = row.querySelector('.kv-toggle').checked;
+    if (!enabled) return;
+    const name = row.querySelector('.kv-name').value;
+    const value = row.querySelector('.kv-value').value;
+    if (!name) return;
+    parts.push(_formUrlEncode(name) + '=' + _formUrlEncode(value));
+  });
+  return parts.join('&');
+}
+
+function _formUrlEncode(s) {
+  return encodeURIComponent(String(s)).replace(/%20/g, '+');
+}
+
+// Semantic equality for form-encoded bodies — covers the case where
+// the user's untouched form fields re-encode with a slightly different
+// byte form (e.g. + vs %20, missing trailing = on empty fields). If
+// either body fails to parse cleanly we just say "not equal" and let
+// the string compare drive Modified state.
+function _replayBodiesFormEqual(a, b) {
+  if (a == null || b == null) return false;
+  const fa = _parseFormUrlencodedFields(a);
+  const fb = _parseFormUrlencodedFields(b);
+  if (fa.length === 0 && fb.length === 0) return false;
+  if (fa.length !== fb.length) return false;
+  for (let i = 0; i < fa.length; i++) {
+    if (fa[i].name !== fb[i].name) return false;
+    if (fa[i].value !== fb[i].value) return false;
+  }
+  return true;
+}
+
+// Attached once at script init — handles all replay editor interactions
+// via delegation so re-rendering the editor (for Original restore) does
+// not require re-binding listeners or risk accumulation.
+function _setupReplayEditorListeners() {
+  const bodyEl = document.getElementById('msg-request-body');
+  if (!bodyEl) return;
+  bodyEl.addEventListener('click', (e) => {
+    if (!msgReplayEditing) return;
+    // Tab switching
+    const tab = e.target.closest('.replay-editor-tab');
+    if (tab) {
+      bodyEl.querySelectorAll('.replay-editor-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      bodyEl.querySelectorAll('.replay-editor-pane').forEach(p => p.classList.remove('active'));
+      const pane = document.getElementById('msg-replay-pane-' + tab.dataset.rtab);
+      if (pane) pane.classList.add('active');
+      return;
+    }
+    // Body Form/Raw format toggle
+    const fmtBtn = e.target.closest('.replay-body-fmt-btn');
+    if (fmtBtn) {
+      _setReplayBodyView(fmtBtn.dataset.bfmt);
+      _refreshReplayState();
+      return;
+    }
+    // + Add Header
+    if (e.target.id === 'msg-replay-add-header') {
+      const list = document.getElementById('msg-replay-headers-list');
+      _addReplayKvRow(list, '', '', true);
+      _refreshReplayState();
+      return;
+    }
+    // + Add Field (body form view)
+    if (e.target.id === 'msg-replay-add-field') {
+      const list = document.getElementById('msg-replay-body-form');
+      _addReplayBodyField(list, '', '', true);
+      _refreshReplayState();
+      return;
+    }
+    // KV remove
+    const removeBtn = e.target.closest('.kv-remove');
+    if (removeBtn) {
+      const row = removeBtn.closest('.replay-kv-row');
+      if (row) { row.remove(); _refreshReplayState(); }
+      return;
+    }
+  });
+  // Edit-tracking — any input/change inside the editor recomputes
+  // Modified state. KV checkbox toggle bubbles change events here too.
+  // Also re-evaluates the forbidden-header lock when the user retypes
+  // a row's name (e.g. they add a fresh row and type "Cookie" → row
+  // value should lock).
+  bodyEl.addEventListener('input', (e) => {
+    if (!msgReplayEditing) return;
+    if (e.target.classList && e.target.classList.contains('kv-name')) {
+      const row = e.target.closest('.replay-kv-row');
+      if (row) _applyForbiddenLock(row);
+    }
+    _refreshReplayState();
+  });
+  bodyEl.addEventListener('change', (e) => {
+    if (!msgReplayEditing) return;
+    const toggle = e.target.closest('.kv-toggle');
+    if (toggle) {
+      const row = toggle.closest('.replay-kv-row');
+      if (row) row.classList.toggle('disabled', !toggle.checked);
+    }
+    _refreshReplayState();
+  });
+}
+_setupReplayEditorListeners();
 
 function _exitReplayEdit() {
   msgReplayEditing = false;
+  msgReplayOriginalSnapshot = null;
   document.getElementById('msg-replay-bar').classList.add('hidden');
   document.getElementById('msg-replay-toggle').classList.remove('active');
   const req = networkRequestMap.get(selectedRequestId);
   if (req) renderRequestPane(req);
+  updateSendToBrowserButton();
+}
+
+// Capture the request's editable state in the same shape the editor
+// reads/writes, so Modified detection is a structural compare instead
+// of a stringy diff.
+function _captureReplaySnapshot(req) {
+  const headers = [];
+  const captured = req.requestHeaders || {};
+  for (const [k, v] of Object.entries(captured)) {
+    if (k.startsWith(':')) continue;
+    headers.push({ name: k, value: Array.isArray(v) ? v.join(', ') : String(v) });
+  }
+  return {
+    method: req.method || 'GET',
+    url: req.url || '',
+    // The replay editor is HTTP/1.1-only on the wire (fetch's behavior),
+    // but the input is editable for security-testing scenarios where
+    // the user wants to record an intended-but-unsendable mutation.
+    version: 'HTTP/1.1',
+    headers,
+    body: req.requestPostData || '',
+  };
+}
+
+function _readReplayEditor() {
+  const list = document.getElementById('msg-replay-headers-list');
+  if (!list) return null;
+  const headers = [];
+  list.querySelectorAll('.replay-kv-row').forEach(row => {
+    const enabled = row.querySelector('.kv-toggle').checked;
+    if (!enabled) return;
+    const name = row.querySelector('.kv-name').value.trim();
+    const value = row.querySelector('.kv-value').value;
+    if (name) headers.push({ name, value });
+  });
+  // Body is read from whichever view is currently active. Form view
+  // re-encodes its rows on every read so the user always sees the
+  // same payload regardless of which surface they edited in.
+  const editor = document.querySelector('.replay-editor');
+  const view = (editor && editor.dataset.bodyView) || 'raw';
+  let body;
+  if (view === 'form') {
+    body = _encodeReplayBodyForm(document.getElementById('msg-replay-body-form'));
+  } else {
+    body = document.getElementById('msg-replay-body-input').value;
+  }
+  return {
+    method: document.getElementById('msg-replay-method').value,
+    url: document.getElementById('msg-replay-url').value,
+    version: document.getElementById('msg-replay-version').value,
+    headers,
+    body,
+  };
+}
+
+// Headers fetch() silently drops in page-context — browser fills in
+// its own value regardless of what's typed. Listed lowercase for the
+// per-row check; we also recognize prefix families (Sec-, Proxy-,
+// Access-Control-) below.
+const _FORBIDDEN_REPLAY_HEADERS = new Set([
+  'accept-charset', 'accept-encoding',
+  'connection', 'content-length',
+  'cookie', 'cookie2',
+  'date', 'dnt',
+  'expect', 'host',
+  'keep-alive', 'origin',
+  'referer', 'te', 'trailer',
+  'transfer-encoding', 'upgrade',
+  'user-agent', 'via',
+  'permissions-policy',
+]);
+
+function _isForbiddenReplayHeader(name) {
+  if (!name) return false;
+  const lower = String(name).trim().toLowerCase();
+  if (!lower) return false;
+  if (_FORBIDDEN_REPLAY_HEADERS.has(lower)) return true;
+  if (lower.startsWith('sec-')) return true;
+  if (lower.startsWith('proxy-')) return true;
+  if (lower.startsWith('access-control-')) return true;
+  return false;
+}
+
+// Apply / clear the forbidden lock styling on a KV row based on its
+// current name. Called both at row build time and from the input
+// delegation handler when the user retypes the name.
+function _applyForbiddenLock(row) {
+  const nameEl = row.querySelector('.kv-name');
+  const valueEl = row.querySelector('.kv-value');
+  const toggle = row.querySelector('.kv-toggle');
+  if (!nameEl || !valueEl) return;
+  const forbidden = _isForbiddenReplayHeader(nameEl.value);
+  row.classList.toggle('kv-forbidden', forbidden);
+  valueEl.readOnly = forbidden;
+  if (toggle) toggle.disabled = forbidden;
+  const tip = forbidden
+    ? 'Browser-managed header — fetch() silently drops edits to this name and sends the browser default. Use Intercept Forward Modified for wire-level tampering.'
+    : '';
+  valueEl.title = tip;
+  nameEl.title = tip;
+}
+
+// KV rows are pure DOM — toggle/remove/forbidden-lock are handled by
+// event delegation in _setupReplayEditorListeners.
+function _addReplayKvRow(list, name, value, enabled) {
+  const row = document.createElement('div');
+  row.className = 'replay-kv-row' + (enabled ? '' : ' disabled');
+  row.innerHTML = `
+    <input type="checkbox" class="kv-toggle"${enabled ? ' checked' : ''}>
+    <input type="text" class="kv-name" value="${escapeAttr(name)}" placeholder="Name">
+    <input type="text" class="kv-value" value="${escapeAttr(value)}" placeholder="Value">
+    <button class="kv-remove" title="Remove">&times;</button>
+  `;
+  list.appendChild(row);
+  _applyForbiddenLock(row);
 }
 
 function _refreshReplayState() {
-  const ta = document.getElementById('msg-replay-textarea');
   const stateBtn = document.getElementById('msg-replay-state');
-  if (!ta || !stateBtn) return;
-  const isModified = ta.value !== msgReplayOriginalRaw;
+  if (!stateBtn || !msgReplayOriginalSnapshot) return;
+  const cur = _readReplayEditor();
+  if (!cur) return;
+  const isModified = !_replaySnapshotEqual(cur, msgReplayOriginalSnapshot);
   stateBtn.textContent = isModified ? 'Modified' : 'Original';
   stateBtn.classList.toggle('modified', isModified);
 }
 
-// Original/Modified button — restores the textarea to the request
-// the editor was opened with.
+function _replaySnapshotEqual(a, b) {
+  if (a.method !== b.method) return false;
+  if (a.url !== b.url) return false;
+  if (a.version !== b.version) return false;
+  if (a.headers.length !== b.headers.length) return false;
+  for (let i = 0; i < a.headers.length; i++) {
+    if (a.headers[i].name !== b.headers[i].name) return false;
+    if (a.headers[i].value !== b.headers[i].value) return false;
+  }
+  // Body: byte-equal first, then semantic form-encoded compare so
+  // round-trip-through-the-Form-view doesn't false-positive Modified.
+  if (a.body === b.body) return true;
+  if (_replayBodiesFormEqual(a.body, b.body)) return true;
+  return false;
+}
+
+// Original/Modified button — restores all editor fields to the snapshot.
 document.getElementById('msg-replay-state').addEventListener('click', () => {
-  const ta = document.getElementById('msg-replay-textarea');
-  if (!ta) return;
-  ta.value = msgReplayOriginalRaw;
+  if (!msgReplayOriginalSnapshot) return;
+  _renderReplayEditor(msgReplayOriginalSnapshot);
   _refreshReplayState();
 });
 
-// Send button — parse the textarea's raw HTTP, fire the fetch via
-// inspectedWindow.eval (page context, so cookies attach naturally),
-// poll for the result, then update the response pane.
+// Send button — read the editor state, build the fetch payload, fire
+// it via inspectedWindow.eval (page context, so cookies attach
+// naturally), poll for the result, then update the response pane.
 document.getElementById('msg-replay-send').addEventListener('click', () => {
-  const ta = document.getElementById('msg-replay-textarea');
-  if (!ta) return;
+  const cur = _readReplayEditor();
+  if (!cur) return;
   const req = networkRequestMap.get(selectedRequestId);
   if (!req) return;
-  const parsed = parseRawHttpRequest(ta.value, req.url);
-  if (!parsed) {
-    showToast('Could not parse the raw request — check the request line and headers');
-    return;
+  // Resolve the URL against the captured origin so users can edit just
+  // the path/query if they want.
+  let resolvedUrl;
+  try { resolvedUrl = new URL(cur.url, req.url).href; } catch { resolvedUrl = cur.url; }
+  // Full set the user typed — fed to the row override so the captured
+  // entry shows exactly what was edited, even for headers fetch will
+  // silently drop on the wire.
+  const displayHeaders = {};
+  for (const { name, value } of cur.headers) displayHeaders[name] = value;
+  // Wire-allowed subset — what fetch() will actually attempt to send.
+  const fetchHeaders = {};
+  for (const { name, value } of cur.headers) {
+    // fetch() refuses these — the browser sets them itself.
+    if (/^(host|content-length)$/i.test(name)) continue;
+    fetchHeaders[name] = value;
   }
-  _sendReplayFetch(req, parsed);
+  _sendReplayFetch(req, {
+    method: cur.method,
+    url: resolvedUrl,
+    headers: fetchHeaders,
+    body: cur.body || null,
+    displayHeaders,
+    displayBody: cur.body || '',
+  });
 });
 
-// Parse a raw HTTP request text. Returns { method, url, headers, body }
-// or null when the structure is unrecognizable. The original captured
-// URL is reused as the base for the request line's path so editing
-// just the headers/body doesn't require fixing absolute-URL fields.
-function parseRawHttpRequest(text, originalUrl) {
-  if (!text) return null;
-  // Split request line + headers from body at the first blank line.
-  const headerEnd = text.indexOf('\n\n');
-  const headerPart = headerEnd >= 0 ? text.slice(0, headerEnd) : text;
-  const body = headerEnd >= 0 ? text.slice(headerEnd + 2) : '';
-  const lines = headerPart.split('\n');
-  const requestLine = lines[0] || '';
-  const m = requestLine.match(/^(\S+)\s+(\S+)\s+HTTP\/[\d.]+/);
-  if (!m) return null;
-  const method = m[1];
-  const path = m[2];
-  // Resolve path against the original captured URL so absolute /path
-  // input becomes a full URL the fetch API can use.
-  let url;
-  try {
-    url = new URL(path, originalUrl).href;
-  } catch {
-    url = path;
-  }
-  const headers = {};
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    const colon = line.indexOf(':');
-    if (colon < 0) continue;
-    const k = line.slice(0, colon).trim();
-    const v = line.slice(colon + 1).trim();
-    if (k) headers[k] = v;
-  }
-  // fetch() refuses these — they're set by the browser regardless.
-  delete headers['Host'];
-  delete headers['host'];
-  delete headers['Content-Length'];
-  delete headers['content-length'];
-  return { method, url, headers, body: body || null };
-}
-
 // Replay-fire queue — short-TTL list of recent (url, method) tuples
-// so the network capture pipeline can tag the matching incoming
-// request as "_isReplay" without bouncing through a header that
-// would leak to the origin server.
+// plus the user's intended request shape, so the network capture
+// pipeline can tag matching incoming requests as "_isReplay" AND
+// override the row's headers / body display with what the user
+// actually typed. Page-context fetch silently drops forbidden header
+// modifications (Cookie / User-Agent / Origin / Sec-* / Referer /
+// DNT etc.) and replaces them with browser defaults — so HAR alone
+// reports the wire view, which doesn't match the user's intent. The
+// stashed `displayHeaders` / `displayBody` give the row a faithful
+// view of what was sent (or attempted) without contaminating the
+// origin server with a tag header.
 const _replayFireQueue = [];
 const _REPLAY_FIRE_TTL_MS = 10000;
 
-function _markReplayFired(url, method) {
+function _markReplayFired(url, method, display) {
   const now = Date.now();
   // Drop expired entries opportunistically — keeps the queue tiny.
   for (let i = _replayFireQueue.length - 1; i >= 0; i--) {
@@ -2893,13 +3296,17 @@ function _markReplayFired(url, method) {
       _replayFireQueue.splice(i, 1);
     }
   }
-  _replayFireQueue.push({ url, method, t: now });
+  _replayFireQueue.push({
+    url, method, t: now,
+    displayHeaders: (display && display.headers) || null,
+    displayBody: (display && 'body' in display) ? display.body : null,
+  });
 }
 
-// Called from processNetworkRequest. Returns true and removes the
-// matching entry if this captured request was triggered by a recent
-// replay Send. URL match is exact (we set it ourselves to the same
-// string the page-side fetch was given).
+// Called from processNetworkRequest. Returns the matched fire-queue
+// entry (with displayHeaders/displayBody) and removes it, or null when
+// there's no match. URL match is exact (we set it ourselves to the
+// same string the page-side fetch was given).
 function consumeReplayFireMatch(url, method) {
   const now = Date.now();
   for (let i = 0; i < _replayFireQueue.length; i++) {
@@ -2907,10 +3314,10 @@ function consumeReplayFireMatch(url, method) {
     if (now - e.t > _REPLAY_FIRE_TTL_MS) continue;
     if (e.url === url && e.method === method) {
       _replayFireQueue.splice(i, 1);
-      return true;
+      return e;
     }
   }
-  return false;
+  return null;
 }
 
 // Fire the parsed replay request via the inspected page's context.
@@ -2920,8 +3327,13 @@ function _sendReplayFetch(originalReq, payload) {
   sendBtn.textContent = 'Sending...';
   sendBtn.disabled = true;
   // Tag this fire so the eventual onRequestFinished can mark the
-  // captured row as a replay.
-  _markReplayFired(payload.url, payload.method);
+  // captured row as a replay AND override its displayed headers/body
+  // with what the user actually typed (page-context fetch drops a
+  // bunch of header modifications silently).
+  _markReplayFired(payload.url, payload.method, {
+    headers: payload.displayHeaders || payload.headers,
+    body: 'displayBody' in payload ? payload.displayBody : payload.body,
+  });
 
   const callbackId = '__replay_' + Date.now() + '_' + Math.random().toString(36).slice(2);
   const expr = `(function() {
@@ -2999,26 +3411,75 @@ document.getElementById('msg-preview-toggle').addEventListener('click', () => {
 });
 
 // Diff result HTML for a replay response vs the captured original.
+// Always renders both Status and Body sections so the user can see at
+// a glance which dimensions changed and which didn't — silent missing
+// sections were causing confusion (a status change being hidden because
+// the body matched, JSON formatting differences showing nothing at all,
+// non-JSON differences showing nothing, and so on).
 function _renderReplayDiff(originalReq, replayResp) {
-  const lines = [];
-  if (originalReq.status !== replayResp.status) {
-    lines.push(`<div class="diff-title">Status changed: <span class="${_statusClass(originalReq.status)}">${originalReq.status}</span> → <span class="${_statusClass(replayResp.status)}">${replayResp.status}</span></div>`);
-  }
-  if (originalReq.responseBody === replayResp.body) {
-    return `<div class="msg-diff-badge"><div class="msg-diff-identical">Response body identical to original.</div></div>`;
-  }
-  // JSON diff if both parse
-  try {
-    const origObj = JSON.parse(originalReq.responseBody);
-    const newObj = JSON.parse(replayResp.body);
-    const diffHtml = generateJsonDiff(origObj, newObj);
-    if (diffHtml) {
-      return `<div class="msg-diff-badge">${lines.join('')}<div class="diff-title">Body changes:</div>${diffHtml}</div>`;
+  const sections = [];
+
+  // ---- Status section ----
+  const oStatus = originalReq.status;
+  const nStatus = replayResp.status;
+  if (oStatus != null && nStatus != null) {
+    if (oStatus !== nStatus) {
+      sections.push(
+        `<div class="diff-title">Status changed: ` +
+        `<span class="${_statusClass(oStatus)}">${oStatus}</span> → ` +
+        `<span class="${_statusClass(nStatus)}">${nStatus}</span></div>`
+      );
+    } else {
+      sections.push(
+        `<div class="diff-title diff-unchanged">Status unchanged ` +
+        `(<span class="${_statusClass(oStatus)}">${oStatus}</span>)</div>`
+      );
     }
-  } catch { /* not JSON */ }
-  return lines.length > 0
-    ? `<div class="msg-diff-badge">${lines.join('')}</div>`
-    : '';
+  }
+
+  // ---- Body section ----
+  const bodyAvailable = originalReq.responseBodyLoaded && originalReq.responseBody != null;
+  if (!bodyAvailable) {
+    sections.push(
+      `<div class="diff-title diff-unavailable">` +
+      `Original response body not available — cannot diff body</div>`
+    );
+  } else {
+    const oBody = originalReq.responseBody;
+    const nBody = replayResp.body || '';
+    if (oBody === nBody) {
+      sections.push(`<div class="msg-diff-identical">Response body identical to original</div>`);
+    } else {
+      // Try JSON diff. If both parse and the structures match, the
+      // text-level mismatch was just whitespace / key-order — surface
+      // that explicitly instead of falling through to silence.
+      let handled = false;
+      try {
+        const origObj = JSON.parse(oBody);
+        const newObj = JSON.parse(nBody);
+        const diffHtml = generateJsonDiff(origObj, newObj);
+        if (diffHtml) {
+          sections.push(`<div class="diff-title">Body changes:</div>${diffHtml}`);
+        } else {
+          sections.push(
+            `<div class="msg-diff-identical">` +
+            `Response body identical (JSON structure unchanged; text formatting differs)</div>`
+          );
+        }
+        handled = true;
+      } catch { /* not JSON — handled below */ }
+      if (!handled) {
+        // Non-JSON body that differs — show a size-delta line so the
+        // user at least knows it changed and by how much.
+        sections.push(
+          `<div class="diff-title">Body differs ` +
+          `(${oBody.length} → ${nBody.length} bytes)</div>`
+        );
+      }
+    }
+  }
+
+  return `<div class="msg-diff-badge">${sections.join('')}</div>`;
 }
 
 
@@ -5417,14 +5878,38 @@ document.getElementById('icpt-req-forward').addEventListener('click', () => { ac
 document.getElementById('icpt-req-forward-modified').addEventListener('click', () => { activeSide = 'req'; forwardSelected(true); });
 document.getElementById('icpt-req-drop').addEventListener('click', () => { activeSide = 'req'; dropSelected(); });
 document.getElementById('icpt-req-mock').addEventListener('click', () => { activeSide = 'req'; mockResponseSelected(); });
-document.getElementById('icpt-req-add-header').addEventListener('click', () => addIcptKvRow('icpt-req-headers-list', '', ''));
-document.getElementById('icpt-mock-add-header').addEventListener('click', () => addIcptKvRow('icpt-mock-headers-list', '', ''));
 
 // Response side buttons
 document.getElementById('icpt-resp-forward').addEventListener('click', () => { activeSide = 'resp'; forwardSelected(false); });
 document.getElementById('icpt-resp-forward-modified').addEventListener('click', () => { activeSide = 'resp'; forwardSelected(true); });
 document.getElementById('icpt-resp-drop').addEventListener('click', () => { activeSide = 'resp'; dropSelected(); });
-document.getElementById('icpt-resp-add-header').addEventListener('click', () => addIcptKvRow('icpt-resp-headers-list', '', ''));
+
+// Format toggle (Raw / Pretty) — reformats the body portion of the
+// raw textarea in place. Headers stay unchanged. Switching after the
+// user has edited the body is OK; if the body isn't valid JSON the
+// toggle is a no-op rather than a destructive parse error.
+document.querySelectorAll('.icpt-format-toggle').forEach(group => {
+  const target = group.dataset.target; // 'req' | 'resp'
+  group.querySelectorAll('.icpt-fmt-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      group.querySelectorAll('.icpt-fmt-btn').forEach(b => {
+        b.classList.toggle('active', b === btn);
+      });
+      const fmt = btn.dataset.fmt;
+      // Apply to whichever editable raw textarea is on this side.
+      // Request side has Edit + Mock — toggle whichever pane is
+      // active (the user only sees one at a time).
+      if (target === 'req') {
+        const activePane = reqEditorContent.querySelector('.icpt-ed-pane.active');
+        const ta = activePane ? activePane.querySelector('textarea') : null;
+        if (ta) ta.value = _formatIcptRaw(ta.value, fmt);
+      } else {
+        const ta = document.getElementById('icpt-resp-raw');
+        if (ta) ta.value = _formatIcptRaw(ta.value, fmt);
+      }
+    });
+  });
+});
 
 // Common buttons
 document.getElementById('icpt-forward-all').addEventListener('click', forwardAll);
@@ -5628,76 +6113,148 @@ function renderRespQueue() {
 }
 
 // ---- Editor Display ----
+// Build a raw HTTP request string from a queue item. Uses HTTP/1.1 since
+// browser→proxy is always h1.1 regardless of origin's wire protocol.
+function _buildIcptRawRequest(item) {
+  const method = item.method || 'GET';
+  let path = '/';
+  let host = '';
+  try {
+    const u = new URL(item.url);
+    path = (u.pathname || '/') + (u.search || '');
+    host = u.host;
+  } catch {}
+  const headers = item.headers || {};
+  const lines = [`${method} ${path} HTTP/1.1`];
+  if (host && !_findHeaderCI(headers, 'host')) lines.push(`Host: ${host}`);
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.startsWith(':')) continue;
+    lines.push(`${k}: ${Array.isArray(v) ? v.join(', ') : v}`);
+  }
+  return lines.join('\n') + '\n\n' + (item.postData || item.body || '');
+}
+
+function _buildIcptRawResponse(item) {
+  const status = item.statusCode || 200;
+  const headers = item.headers || {};
+  const lines = [`HTTP/1.1 ${status}`];
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.startsWith(':')) continue;
+    lines.push(`${k}: ${Array.isArray(v) ? v.join(', ') : v}`);
+  }
+  return lines.join('\n') + '\n\n' + (item.body || '');
+}
+
+// Parse raw HTTP request text → { method, url, headers, body }. URL is
+// resolved against `fallbackUrl` so users only need to edit the path.
+function _parseIcptRawRequest(text, fallbackUrl) {
+  if (!text) return null;
+  const blank = text.indexOf('\n\n');
+  const headerPart = blank >= 0 ? text.slice(0, blank) : text;
+  const body = blank >= 0 ? text.slice(blank + 2) : '';
+  const lines = headerPart.split('\n');
+  const m = (lines[0] || '').match(/^(\S+)\s+(\S+)\s+HTTP\/[\d.]+/);
+  if (!m) return null;
+  const method = m[1];
+  const path = m[2];
+  let url;
+  try { url = new URL(path, fallbackUrl).href; } catch { url = path; }
+  const headers = {};
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    const colon = line.indexOf(':');
+    if (colon < 0) continue;
+    const k = line.slice(0, colon).trim();
+    const v = line.slice(colon + 1).trim();
+    if (k && !k.startsWith(':')) headers[k] = v;
+  }
+  return { method, url, headers, body };
+}
+
+// Parse raw HTTP response text → { statusCode, headers, body }.
+function _parseIcptRawResponse(text) {
+  if (!text) return null;
+  const blank = text.indexOf('\n\n');
+  const headerPart = blank >= 0 ? text.slice(0, blank) : text;
+  const body = blank >= 0 ? text.slice(blank + 2) : '';
+  const lines = headerPart.split('\n');
+  const m = (lines[0] || '').match(/^HTTP\/[\d.]+\s+(\d+)/);
+  const statusCode = m ? parseInt(m[1], 10) : 200;
+  const headers = {};
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    const colon = line.indexOf(':');
+    if (colon < 0) continue;
+    const k = line.slice(0, colon).trim();
+    const v = line.slice(colon + 1).trim();
+    if (k && !k.startsWith(':')) headers[k] = v;
+  }
+  return { statusCode, headers, body };
+}
+
+// Apply pretty / raw formatting to the body portion of an HTTP message,
+// leaving headers untouched. JSON is the only target — anything else
+// passes through.
+function _formatIcptRaw(text, mode) {
+  if (!text) return text;
+  const blank = text.indexOf('\n\n');
+  if (blank < 0) return text;
+  const headerPart = text.slice(0, blank);
+  const body = text.slice(blank + 2);
+  if (!body.trim()) return text;
+  try {
+    const parsed = JSON.parse(body);
+    const formatted = mode === 'pretty'
+      ? JSON.stringify(parsed, null, 2)
+      : JSON.stringify(parsed);
+    return headerPart + '\n\n' + formatted;
+  } catch { return text; }
+}
+
 function showReqEditor(item) {
   reqPlaceholder.style.display = 'none';
   reqEditorContent.classList.remove('hidden');
-  const methodSel = document.getElementById('icpt-req-edit-method');
-  methodSel.innerHTML = ['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS']
-    .map(m => `<option ${m === item.method ? 'selected' : ''}>${m}</option>`).join('');
-  document.getElementById('icpt-req-edit-url').value = item.url;
-  const headersList = document.getElementById('icpt-req-headers-list');
-  headersList.innerHTML = '';
-  Object.entries(item.headers).forEach(([k, v]) => addIcptKvRow('icpt-req-headers-list', k, Array.isArray(v) ? v.join(', ') : v));
-  document.getElementById('icpt-req-edit-body').value = item.postData || '';
-  // Initialize Mock tab
-  document.getElementById('icpt-mock-status').value = 200;
-  document.getElementById('icpt-mock-headers-list').innerHTML = '';
-  addIcptKvRow('icpt-mock-headers-list', 'Content-Type', 'application/json');
-  document.getElementById('icpt-mock-body').value = '';
+  document.getElementById('icpt-req-raw').value = _buildIcptRawRequest(item);
+  // Reset format toggle to Raw on each new item.
+  reqEditorContent.querySelectorAll('.icpt-format-toggle .icpt-fmt-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.fmt === 'raw');
+  });
+  // Default Mock textarea — user-editable starting point.
+  const mockTa = document.getElementById('icpt-mock-raw');
+  if (!mockTa.value) {
+    mockTa.value = 'HTTP/1.1 200 OK\nContent-Type: application/json\n\n{}';
+  }
+  // Switch to Edit tab
+  reqEditorContent.querySelectorAll('.icpt-ed-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.ictab === 'req-edit');
+  });
+  reqEditorContent.querySelectorAll('.icpt-ed-pane').forEach(p => {
+    p.classList.toggle('active', p.id === 'icpt-tab-req-edit');
+  });
 }
 
 function showRespEditor(item) {
   respPlaceholder.style.display = 'none';
   respEditorContent.classList.remove('hidden');
-  document.getElementById('icpt-resp-edit-method').textContent = item.method || '';
-  document.getElementById('icpt-resp-edit-url').value = item.url;
-  document.getElementById('icpt-resp-edit-status').value = item.statusCode || 200;
-  const headersList = document.getElementById('icpt-resp-headers-list');
-  headersList.innerHTML = '';
-  if (item.headers && typeof item.headers === 'object') {
-    Object.entries(item.headers).forEach(([k, v]) => addIcptKvRow('icpt-resp-headers-list', k, Array.isArray(v) ? v.join(', ') : v));
-  }
-  document.getElementById('icpt-resp-edit-body').value = item.body || '';
+  document.getElementById('icpt-resp-raw').value = _buildIcptRawResponse(item);
+  respEditorContent.querySelectorAll('.icpt-format-toggle .icpt-fmt-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.fmt === 'raw');
+  });
 }
 
 function hideReqEditor() {
   selectedReqId = null;
   reqEditorContent.classList.add('hidden');
   reqPlaceholder.style.display = '';
+  // Wipe Mock so the next selection gets the default seed
+  const mockTa = document.getElementById('icpt-mock-raw');
+  if (mockTa) mockTa.value = '';
 }
 
 function hideRespEditor() {
   selectedRespId = null;
   respEditorContent.classList.add('hidden');
   respPlaceholder.style.display = '';
-}
-
-// ---- KV Helper (shared) ----
-function addIcptKvRow(listId, name, value) {
-  const list = document.getElementById(listId);
-  const row = document.createElement('div');
-  row.className = 'replay-kv-row';
-  row.innerHTML = `
-    <input type="checkbox" class="kv-toggle" checked>
-    <input type="text" class="kv-name" value="${escapeAttr(name)}" placeholder="Name">
-    <input type="text" class="kv-value" value="${escapeAttr(value)}" placeholder="Value">
-    <button class="kv-remove" title="Remove">&times;</button>
-  `;
-  const toggle = row.querySelector('.kv-toggle');
-  toggle.addEventListener('change', () => row.classList.toggle('disabled', !toggle.checked));
-  row.querySelector('.kv-remove').addEventListener('click', () => row.remove());
-  list.appendChild(row);
-}
-
-function getIcptKvEntries(listId) {
-  const entries = [];
-  document.querySelectorAll(`#${listId} .replay-kv-row`).forEach(row => {
-    if (!row.querySelector('.kv-toggle').checked) return;
-    const name = row.querySelector('.kv-name').value.trim();
-    const value = row.querySelector('.kv-value').value;
-    if (name) entries.push({ name, value });
-  });
-  return entries;
 }
 
 // ---- Queue Operations ----
@@ -5727,13 +6284,20 @@ function forwardSelected(modified) {
     const item = reqQueue.find(q => q.id === selectedReqId);
     if (!item) return;
     if (modified) {
-      const newMethod = document.getElementById('icpt-req-edit-method').value;
-      const newUrl = document.getElementById('icpt-req-edit-url').value;
-      const headers = {};
-      getIcptKvEntries('icpt-req-headers-list').forEach(h => { headers[h.name] = h.value; });
-      const body = document.getElementById('icpt-req-edit-body').value;
-      sendInterceptDecision(item.id, { action: 'forward_modified', method: newMethod, url: newUrl, headers, body });
-      upsertInterceptLog(item.id, { action: 'modified', method: newMethod, url: newUrl });
+      const raw = document.getElementById('icpt-req-raw').value;
+      const parsed = _parseIcptRawRequest(raw, item.url);
+      if (!parsed) {
+        showToast('Could not parse the raw request — check the request line and headers');
+        return;
+      }
+      sendInterceptDecision(item.id, {
+        action: 'forward_modified',
+        method: parsed.method,
+        url: parsed.url,
+        headers: parsed.headers,
+        body: parsed.body,
+      });
+      upsertInterceptLog(item.id, { action: 'modified', method: parsed.method, url: parsed.url });
     } else {
       sendInterceptDecision(item.id, { action: 'forward' });
       upsertInterceptLog(item.id, { action: 'forwarded', method: item.method, url: item.url });
@@ -5744,14 +6308,23 @@ function forwardSelected(modified) {
     if (!item) return;
     const reqId = item.requestId;
     if (modified) {
-      const respStatus = parseInt(document.getElementById('icpt-resp-edit-status').value) || 200;
-      const respHeaders = {};
-      getIcptKvEntries('icpt-resp-headers-list').forEach(h => { respHeaders[h.name] = h.value; });
-      const respBody = document.getElementById('icpt-resp-edit-body').value;
-      sendInterceptDecision(item.id, { action: 'forward_modified', responseStatus: respStatus, headers: respHeaders, body: respBody });
-      // Save the modified response so the log click can re-display it.
-      capturedResponses.set(reqId, { statusCode: respStatus, headers: respHeaders, body: respBody, bodyLength: (respBody || '').length });
-      upsertInterceptLog(reqId, { responseAction: 'modified', responseStatus: respStatus });
+      const raw = document.getElementById('icpt-resp-raw').value;
+      const parsed = _parseIcptRawResponse(raw);
+      if (!parsed) {
+        showToast('Could not parse the raw response — check the status line and headers');
+        return;
+      }
+      sendInterceptDecision(item.id, {
+        action: 'forward_modified',
+        responseStatus: parsed.statusCode,
+        headers: parsed.headers,
+        body: parsed.body,
+      });
+      capturedResponses.set(reqId, {
+        statusCode: parsed.statusCode, headers: parsed.headers,
+        body: parsed.body, bodyLength: (parsed.body || '').length,
+      });
+      upsertInterceptLog(reqId, { responseAction: 'modified', responseStatus: parsed.statusCode });
     } else {
       sendInterceptDecision(item.id, { action: 'forward' });
       capturedResponses.set(reqId, { statusCode: item.statusCode, headers: item.headers, body: item.body, bodyTruncated: item.bodyTruncated });
@@ -5781,28 +6354,32 @@ function dropSelected() {
 function mockResponseSelected() {
   const item = reqQueue.find(q => q.id === selectedReqId);
   if (!item) return;
-  const status = parseInt(document.getElementById('icpt-mock-status').value) || 200;
-  const headers = getIcptKvEntries('icpt-mock-headers-list');
-  const body = document.getElementById('icpt-mock-body').value;
-
-  if (!headers.some(h => h.name.toLowerCase() === 'content-type')) {
-    try { JSON.parse(body); headers.push({ name: 'Content-Type', value: 'application/json' }); }
-    catch { headers.push({ name: 'Content-Type', value: 'text/plain' }); }
+  const raw = document.getElementById('icpt-mock-raw').value;
+  const parsed = _parseIcptRawResponse(raw);
+  if (!parsed) {
+    showToast('Could not parse the mock response — check the status line and headers');
+    return;
   }
-
+  // Default Content-Type if user omitted one — JSON if body parses,
+  // text/plain otherwise.
+  const hasCT = Object.keys(parsed.headers).some(k => k.toLowerCase() === 'content-type');
+  if (!hasCT) {
+    try { JSON.parse(parsed.body); parsed.headers['Content-Type'] = 'application/json'; }
+    catch { parsed.headers['Content-Type'] = 'text/plain'; }
+  }
+  // Convert headers map to the array shape proxy expects for mock.
+  const headersArr = Object.entries(parsed.headers).map(([name, value]) => ({ name, value }));
   sendInterceptDecision(item.id, {
     action: 'mock',
-    responseStatus: status,
-    responseHeaders: headers,
-    responseBody: body
+    responseStatus: parsed.statusCode,
+    responseHeaders: headersArr,
+    responseBody: parsed.body,
   });
-  // Mock returns synthetic response — store it so log click shows
-  // the mock's headers/body, not whatever the server would have said.
-  const mockHeaders = {};
-  headers.forEach(h => { mockHeaders[h.name] = h.value; });
-  capturedResponses.set(item.id, { statusCode: status, headers: mockHeaders, body });
+  capturedResponses.set(item.id, {
+    statusCode: parsed.statusCode, headers: parsed.headers, body: parsed.body,
+  });
   upsertInterceptLog(item.id, {
-    action: 'mocked', method: item.method, url: item.url, responseStatus: status,
+    action: 'mocked', method: item.method, url: item.url, responseStatus: parsed.statusCode,
   });
   removeFromReqQueue(item.id);
 }
@@ -6006,31 +6583,16 @@ function _exitViewingExplicit() {
   hideRespEditor();
 }
 
-// Walk the inputs/textareas/selects/checkboxes inside the Intercept
-// editors and toggle their inert state. readOnly handles inputs +
-// textareas (still selectable), disabled handles checkboxes + selects
-// (no other way to lock them). The X / + Add Header buttons stay
-// active so the user can still close the view; tab buttons stay
-// active so they can switch Headers / Body / Mock panes.
+// Walk the textareas inside the Intercept editors and toggle their
+// inert state. readOnly keeps the textarea selectable (so the user
+// can copy text out) but blocks edits. Format toggle buttons stay
+// active so they can still switch between raw / pretty views even
+// in read-only mode. Action buttons (Forward / Drop / etc.) are
+// hidden via CSS already.
 function _setIcptEditorsReadonly(on) {
   [reqEditorContent, respEditorContent].forEach(ed => {
     if (!ed) return;
-    ed.querySelectorAll('input, textarea, select').forEach(el => {
-      const tag = el.tagName;
-      const type = (el.type || '').toLowerCase();
-      if (type === 'checkbox' || tag === 'SELECT') {
-        el.disabled = on;
-      } else {
-        el.readOnly = on;
-      }
-    });
-    // + Add Header buttons would let the user inject rows even in
-    // viewing mode — block them by class match (they live in the
-    // kv-toolbar). Action buttons (Forward / Drop / etc.) are
-    // hidden via CSS already.
-    ed.querySelectorAll('.icpt-kv-toolbar .btn-xs').forEach(b => {
-      b.disabled = on;
-    });
+    ed.querySelectorAll('textarea').forEach(el => { el.readOnly = on; });
   });
 }
 

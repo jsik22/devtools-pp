@@ -890,9 +890,13 @@ function _reqHost(req) {
   return req._host;
 }
 
-function matchesActiveTab(req) {
-  if (!activeTabHost) return true;
-  return _reqHost(req) === activeTabHost;
+// The Network list always shows every captured request — host
+// scoping happens through the Set Scope dropdown on tree nodes
+// (which writes to the global Scope), not through the per-host tab
+// strip. Kept as a function so callers in the filter chain stay
+// uniform; just always returns true now.
+function matchesActiveTab(_req) {
+  return true;
 }
 
 // Make sure a tab exists for the given host. Called from the request
@@ -2132,7 +2136,10 @@ function selectNetworkRequest(reqId, opts) {
 
 // ↑/↓ keyboard navigation through the request list while the Network
 // tab is active. Suppresses the browser's default scroll so the keys
-// move the selection instead.
+// move the selection instead. Operates on the visible-row set so
+// keys stay inside what the user can actually see — Tab / Scope /
+// Type-Status filters all participate, and the "All hosts" toggle
+// flips the navigable pool accordingly.
 document.addEventListener('keydown', (e) => {
   const networkSection = document.getElementById('network');
   if (!networkSection || !networkSection.classList.contains('active')) return;
@@ -2140,21 +2147,22 @@ document.addEventListener('keydown', (e) => {
   // Don't hijack the keys while the user is typing in a form field.
   const t = e.target;
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
-  if (networkRequests.length === 0) return;
+  const visible = getVisibleRequests();
+  if (visible.length === 0) return;
   e.preventDefault();
   const currentIdx = selectedRequestId
-    ? networkRequests.findIndex(r => r.requestId === selectedRequestId)
+    ? visible.findIndex(r => r.requestId === selectedRequestId)
     : -1;
   let newIdx;
   if (currentIdx < 0) {
-    newIdx = e.key === 'ArrowDown' ? 0 : networkRequests.length - 1;
+    newIdx = e.key === 'ArrowDown' ? 0 : visible.length - 1;
   } else if (e.key === 'ArrowUp') {
     newIdx = Math.max(0, currentIdx - 1);
   } else {
-    newIdx = Math.min(networkRequests.length - 1, currentIdx + 1);
+    newIdx = Math.min(visible.length - 1, currentIdx + 1);
   }
   if (newIdx === currentIdx) return;
-  selectNetworkRequest(networkRequests[newIdx].requestId, { scroll: true });
+  selectNetworkRequest(visible[newIdx].requestId, { scroll: true });
 });
 
 // ============================================================

@@ -297,6 +297,15 @@ tr:hover {
   font-weight: 600;
   margin-right: 4px;
 }
+/* Login-detected URL prefix — small lock emoji at the leading edge of
+   the URL cell. Sized one notch below the cell font so it reads as a
+   marker rather than competing with the URL text itself. */
+.row-auth-badge {
+  display: inline-block;
+  font-size: 10px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
 
 .status-ok { color: #0b7a3e; }
 .status-redirect { color: #8a6d00; }
@@ -1205,6 +1214,7 @@ tr:hover {
   cursor: default;
 }
 .scan-badge-token     { background: #fce8e6; color: #c5221f; border-color: #f4b4b4; }
+.scan-badge-auth      { background: #e8f0fe; color: #1a73e8; border-color: #c5d9fb; }
 .scan-badge-sensitive { background: #fce8e6; color: #c5221f; border-color: #f4b4b4; }
 .scan-badge-privilege { background: #fef7e0; color: #b06000; border-color: #f4dca0; }
 .scan-badge-pii       { background: #f3e8fd; color: #6a1b9a; border-color: #d6b8eb; }
@@ -2845,4 +2855,126 @@ mark.network-search-mark.current {
 }
 .dtpp-toast.visible {
   opacity: 1;
+}
+
+/* ============================================================
+   Auth tab — login-request inspection panel
+   ============================================================ */
+.auth-card {
+  margin: 12px 14px;
+  padding: 12px 14px;
+  border: 1px solid #d4d4d4;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.auth-card-title {
+  font-weight: 600;
+  color: #1e1e1e;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.auth-state {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.auth-state-on  { color: #1a73e8; }
+.auth-state-off { color: #888; }
+.auth-signal-list {
+  margin: 6px 0 10px 18px;
+  color: #555;
+  font-size: 11px;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+.auth-signal-list li { margin-bottom: 2px; }
+/* Long token / cookie strings inside signal items shouldn't push the
+   card wider than its container — wrap aggressively at any character. */
+.auth-card { word-wrap: break-word; overflow-wrap: anywhere; }
+
+.auth-empty { color: #888; font-style: italic; }
+.auth-warn  { color: #b06000; }
+.auth-warn-small { color: #888; font-size: 11px; margin-top: 8px; }
+.auth-ok    { color: #1a7e34; }
+
+.auth-jwt-block {
+  background: #f8f8f8;
+  padding: 6px 8px;
+  border-radius: 3px;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+  margin: 6px 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.auth-kv {
+  margin: 2px 0;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+}
+.auth-kv b { color: #0451a5; }
+.auth-issue-list {
+  margin: 8px 0 0 18px;
+  color: #b06000;
+}
+.auth-issue-list li { margin-bottom: 2px; }
+
+.auth-cookie-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-top: 4px;
+  font-size: 11px;
+}
+.auth-cookie-table th,
+.auth-cookie-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid #eee;
+  text-align: left;
+}
+.auth-cookie-table th {
+  background: #f8f8f8;
+  font-weight: 600;
+  color: #555;
+}
+.auth-ok-tag  { color: #1a7e34; font-weight: 600; }
+.auth-bad-tag { color: #c5221f; font-weight: 600; }
+.auth-warn-tag { color: #b06000; font-weight: 500; margin-left: 6px; }
+
+.auth-test-row {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0;
+}
+.auth-test-result {
+  margin-top: 8px;
+}
+.auth-test-pending {
+  color: #888;
+  font-style: italic;
+}
+.auth-test-ok {
+  background: #f8fbff;
+  border: 1px solid #c5d9fb;
+  border-radius: 3px;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.auth-test-ok > div { margin: 2px 0; }
+.auth-body-preview {
+  margin-top: 6px !important;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+  background: #f8f8f8;
+  padding: 4px 6px;
+  border-radius: 2px;
+  word-break: break-all;
+}
+.auth-test-fail {
+  background: #fdecea;
+  border: 1px solid #f3b9b3;
+  border-radius: 3px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: #c5221f;
 }

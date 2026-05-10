@@ -1827,6 +1827,24 @@ function updateNetworkRowInitiator(req) {
   if (cell) cell.innerHTML = renderInitiatorBadge(req);
 }
 
+// Repaint just the URL cell after the user marks/unmarks a request as
+// a login from the Auth tab. Saves a full table re-render.
+function updateNetworkRowAuth(req) {
+  const row = networkTable.querySelector(
+    `tr[data-request-id="${CSS.escape(req.requestId)}"]`
+  );
+  if (!row) return;
+  const urlCell = row.querySelector('.url-cell');
+  if (!urlCell) return;
+  const authBadge = _isReqAuth(req)
+    ? '<span class="row-auth-badge" title="Detected as login request — see Auth tab">🔐</span> '
+    : '';
+  const replayBadge = req._isReplay
+    ? '<span class="row-replay-badge" title="Sent via Replay">↻</span> '
+    : '';
+  urlCell.innerHTML = authBadge + replayBadge + escapeHtml(truncateUrl(req.url));
+}
+
 // Build a single <tr> for a request without touching the DOM. Returns
 // the element so callers can append/insert as they choose.
 function buildNetworkRow(r) {
@@ -1850,11 +1868,17 @@ function buildNetworkRow(r) {
   const replayBadge = r._isReplay
     ? '<span class="row-replay-badge" title="Sent via Replay">↻</span> '
     : '';
+  // Login-detected (or manually marked) requests get a small 🔐 prefix
+  // so the user can spot auth flows in the list without opening the
+  // Auth tab on every row.
+  const authBadge = _isReqAuth(r)
+    ? '<span class="row-auth-badge" title="Detected as login request — see Auth tab">🔐</span> '
+    : '';
   tr.innerHTML =
     `<td class="select-cell"><input type="checkbox" class="row-select" ${checkedAttr}></td>` +
     `<td class="host-cell ${hostKindClass}" title="${escapeHtml(r.url)}">${escapeHtml(host)}</td>` +
     `<td><strong>${escapeHtml(r.method)}</strong></td>` +
-    `<td title="${escapeHtml(r.url)}">${replayBadge}${escapeHtml(truncateUrl(r.url))}</td>` +
+    `<td class="url-cell" title="${escapeHtml(r.url)}">${authBadge}${replayBadge}${escapeHtml(truncateUrl(r.url))}</td>` +
     `<td class="${statusClass}">${r.status}</td>` +
     `<td>${escapeHtml(r.type)}</td>` +
     `<td>${r.size}</td>` +
@@ -2545,6 +2569,7 @@ function showDetail(req) {
   renderMessageTab(req);
   renderInitiator(req);
   renderDetection(req);
+  renderAuth(req);
   applyDetailHighlights(req);
 }
 
@@ -5402,6 +5427,538 @@ short error message.
 Inspect the body directly to see whether sensitive
 information or data leaks alongside the failure.`,
 };
+
+// ============================================================
+// Auth — login-request detection + safety inspection (MVP)
+// ============================================================
+// Heuristic detection: a request looks like a login when at least 2 of
+// {URL pattern, password-shaped field in body, auth-flavored response}
+// match. Per-req `_authMarked` overrides the auto-detect (user can
+// mark anything as a login or unmark a false positive).
+
+// Path-only keyword set for "this looks like a login request". Each
+// alternative is anchored on a leading slash and constrained by a
+// trailing word boundary (or specific extension/suffix) to avoid
+// matching unrelated tokens like /loginEvent or /authority. New
+// frameworks: extend this list, no other code change needed.
+const _AUTH_LOGIN_URL_RE = new RegExp([
+  // login / signin / signon — with optional `_word` suffix to cover
+  // Symfony's `/login_check`, `/login_submit` etc.
+  '\\/(?:login|signin|signon)(?:_\\w+)?\\b',
+  // Hyphen / underscore separators
+  '\\/sign[-_](?:in|on)\\b',
+  // Plain auth + authenticate
+  '\\/auth\\b',
+  '\\/authenticate\\b',
+  // Session(s) — REST style
+  '\\/sessions?\\b',
+  // OAuth2 / OIDC token + authorize endpoints
+  '\\/oauth\\/(?:token|authorize)\\b',
+  '\\/connect\\/(?:token|authorize)\\b',
+  // SSO / SAML
+  '\\/sso(?:\\/|\\b)',
+  '\\/saml\\b',
+  // WordPress
+  '\\/wp-login\\.php',
+  // Explicit token issue paths
+  '\\/token\\/issue\\b',
+].join('|'), 'i');
+
+// Multiple shapes of password-field declarations across body formats.
+// First match wins. Covers form-urlencoded, JSON, XML attributes (e.g.
+// `<Col id="userPw">…`), XML elements, HTML form `name=`. Catches the
+// common typed variants too (passwd / pwd / userPw / user_password).
+const _AUTH_PASSWORD_FIELD_NAME = '(password|passwd|pwd|user_?password|user_?pw|userpw)';
+const _AUTH_PASSWORD_PATTERNS = [
+  // form-urlencoded: password=value
+  new RegExp(`(?:^|[&\\n])${_AUTH_PASSWORD_FIELD_NAME}\\s*=`, 'i'),
+  // JSON: "password": "value"
+  new RegExp(`["']${_AUTH_PASSWORD_FIELD_NAME}["']\\s*:`, 'i'),
+  // XML attribute: id="password" / name="userPw"
+  new RegExp(`\\b(?:id|name)\\s*=\\s*["']${_AUTH_PASSWORD_FIELD_NAME}["']`, 'i'),
+  // XML element: <password> or <userPw>
+  new RegExp(`<${_AUTH_PASSWORD_FIELD_NAME}[\\s>]`, 'i'),
+];
+
+// Static asset extensions — paths ending in these are never login
+// requests, even when the filename contains "login" (e.g.
+// /static/login.css). Server-side execution extensions like .do /
+// .aspx / .php are explicitly NOT in this list.
+const _AUTH_STATIC_ASSET_RE = /\.(?:css|js|map|json|xml|html?|png|jpe?g|gif|svg|webp|woff2?|ttf|otf|eot|ico|mp[34]|webm|wav|ogg|pdf|zip|gz|br)$/i;
+
+function _detectAuthSignals(req) {
+  const signals = { url: false, body: false, response: false, signalsHit: [] };
+  // 1) URL pattern (skip static-asset extensions)
+  try {
+    const u = new URL(req.url);
+    if (!_AUTH_STATIC_ASSET_RE.test(u.pathname) && _AUTH_LOGIN_URL_RE.test(u.pathname)) {
+      signals.url = true;
+      signals.signalsHit.push(`URL path matches login pattern (${u.pathname})`);
+    }
+  } catch {}
+  // 2) Body has password-like field (form / JSON / XML)
+  const body = req.requestPostData || '';
+  if (body) {
+    for (const re of _AUTH_PASSWORD_PATTERNS) {
+      if (re.test(body)) {
+        signals.body = true;
+        signals.signalsHit.push('Request body contains a password-shaped field');
+        break;
+      }
+    }
+  }
+  // 3) Response sets auth-looking artifacts
+  const respHeaders = req.responseHeaders || {};
+  for (const [k, v] of Object.entries(respHeaders)) {
+    if (k.toLowerCase() === 'set-cookie') {
+      const lower = String(v).toLowerCase();
+      if (/sess|auth|token|jwt|sid|jsessionid|asp\.net_sessionid/.test(lower)) {
+        signals.response = true;
+        signals.signalsHit.push(`Response sets auth-looking cookie (${String(v).split(';')[0]})`);
+        break;
+      }
+    }
+  }
+  if (!signals.response) {
+    const respBody = req.responseBody || '';
+    // JWT pattern
+    if (/eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}/.test(respBody)) {
+      signals.response = true;
+      signals.signalsHit.push('Response body contains a JWT');
+    } else if (/"(access_?token|id_?token|refresh_?token|session_?id|auth_?token)"\s*:/i.test(respBody)) {
+      signals.response = true;
+      signals.signalsHit.push('Response body contains an auth-token field');
+    }
+  }
+  const score = (signals.url ? 1 : 0) + (signals.body ? 1 : 0) + (signals.response ? 1 : 0);
+  // Either signal alone is high-confidence:
+  //   * URL `/login` is rarely a coincidence
+  //   * a password field in the request body always means an auth attempt
+  // Failed logins won't show response artifacts, so we don't require
+  // them — they just bump the score.
+  const isLogin = signals.url || signals.body;
+  return { isLogin, signals, score };
+}
+
+function _isReqAuth(req) {
+  if (req._authMarked === true) return true;
+  if (req._authMarked === false) return false;
+  return _detectAuthSignals(req).isLogin;
+}
+
+// Parse Set-Cookie header into { name, value, attrs:{Secure, HttpOnly, SameSite} }
+function _parseSetCookies(req) {
+  const headers = req.responseHeaders || {};
+  const out = [];
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() !== 'set-cookie') continue;
+    // multi-cookie: split by newline (Chrome HAR may collapse to one, we
+    // also accept a single value containing only one cookie)
+    const lines = Array.isArray(v) ? v : String(v).split('\n');
+    for (const line of lines) {
+      if (!line) continue;
+      const parts = line.split(';').map(p => p.trim());
+      const [first, ...attrs] = parts;
+      const eq = first.indexOf('=');
+      const name = eq < 0 ? first : first.slice(0, eq);
+      const value = eq < 0 ? '' : first.slice(eq + 1);
+      const flags = { Secure: false, HttpOnly: false, SameSite: null };
+      for (const a of attrs) {
+        const lower = a.toLowerCase();
+        if (lower === 'secure') flags.Secure = true;
+        else if (lower === 'httponly') flags.HttpOnly = true;
+        else if (lower.startsWith('samesite=')) flags.SameSite = a.split('=')[1];
+      }
+      out.push({ name, value, flags });
+    }
+  }
+  return out;
+}
+
+// Look for a CSRF-ish token in the request: header or body field name
+// commonly used by frameworks. Returns the location string when found.
+function _findCsrfToken(req) {
+  const headers = req.requestHeaders || {};
+  for (const k of Object.keys(headers)) {
+    const lower = k.toLowerCase();
+    if (lower === 'x-csrf-token' || lower === 'x-xsrf-token' ||
+        lower === 'x-csrftoken' || lower === 'csrf-token') {
+      return { where: 'header', name: k, value: headers[k] };
+    }
+  }
+  const body = req.requestPostData || '';
+  // form / json field
+  const m = body.match(/(?:^|[&"'])([a-zA-Z_-]*csrf[a-zA-Z_-]*|authenticity_token)["']?[=:]\s*["']?([^&"'\s,}]*)/i);
+  if (m) {
+    return { where: 'body', name: m[1], value: m[2] };
+  }
+  return null;
+}
+
+// Decode the JWT payload (best-effort) for display in the Auth tab.
+// Scans the response body AND every response header value (so JWTs
+// delivered via Set-Cookie or custom auth headers like X-Auth-Token
+// also surface here, matching what the auth detector counts as a
+// signal). Returns null when no JWT-shaped string is found anywhere.
+// JWT shape: header + payload are JSON objects, both base64url-encoded
+// to start with `eyJ`. Signature can be empty for `alg: none`. Length
+// minimums kept loose because realistic tokens vary widely (small
+// headers like `{"alg":"HS256"}` decode to only 20 chars); the
+// downstream JSON decoder filters out random eyJ-prefixed text by
+// rejecting unparseable header/payload.
+const _AUTH_JWT_RE = /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/;
+
+function _extractJwtFromResponse(req) {
+  const sources = [];
+  if (req.responseBody) sources.push({ where: 'response body', text: req.responseBody });
+  const headers = req.responseHeaders || {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (!v) continue;
+    const lower = k.toLowerCase();
+    // Set-Cookie often arrives joined as one string with newlines —
+    // split so each cookie is scanned individually for clearer
+    // source labelling.
+    const lines = lower === 'set-cookie' && typeof v === 'string'
+      ? v.split('\n').filter(Boolean)
+      : [Array.isArray(v) ? v.join(', ') : String(v)];
+    for (const line of lines) {
+      // For Set-Cookie, label with the cookie name when we can.
+      let label = `response header: ${k}`;
+      if (lower === 'set-cookie') {
+        const eq = line.indexOf('=');
+        if (eq > 0) label = `Set-Cookie: ${line.slice(0, eq)}`;
+      }
+      sources.push({ where: label, text: line });
+    }
+  }
+  const decode = (b64) => {
+    try {
+      const s = b64.replace(/-/g, '+').replace(/_/g, '/');
+      const pad = s.length % 4 === 0 ? s : s + '='.repeat(4 - s.length % 4);
+      return JSON.parse(atob(pad));
+    } catch { return null; }
+  };
+  for (const src of sources) {
+    const m = src.text.match(_AUTH_JWT_RE);
+    if (!m) continue;
+    const token = m[0];
+    const parts = token.split('.');
+    if (parts.length !== 3) continue;
+    const header = decode(parts[0]);
+    const payload = decode(parts[1]);
+    // Need at least one parseable segment to consider it a real JWT —
+    // a random `eyJ`-prefixed string in plain text shouldn't slip in.
+    if (!header && !payload) continue;
+    const issues = [];
+    if (header && header.alg === 'none') issues.push('alg: none — token is unsigned');
+    if (payload && payload.exp && payload.exp * 1000 < Date.now()) issues.push('Token is expired');
+    return { token, header, payload, issues, source: src.where };
+  }
+  return null;
+}
+
+// Per-request store of auth test results (empty-pw / wrong-pw replays).
+// Keyed by requestId; persists for the session so re-opening the tab
+// doesn't lose results the user just generated.
+const _authTestResults = new Map();
+
+function renderAuth(req) {
+  const container = document.getElementById('detail-auth-body');
+  const tabBtn = document.querySelector('.detail-tab[data-detail="auth"]');
+  if (!container) return;
+
+  const detect = _detectAuthSignals(req);
+  const isLogin = _isReqAuth(req);
+  const isMarked = req._authMarked === true;
+  const isUnmarked = req._authMarked === false;
+
+  if (tabBtn) {
+    tabBtn.classList.toggle('has-findings', isLogin);
+    if (isLogin) tabBtn.setAttribute('data-count', '🔐');
+    else tabBtn.removeAttribute('data-count');
+  }
+
+  let html = '';
+
+  // ---- Header card: detection state + manual mark toggle ----
+  html += `<div class="auth-card">`;
+  if (isLogin) {
+    html += `<div class="auth-state auth-state-on">🔐 Login request${isMarked ? ' (marked)' : ` (auto, score ${detect.score}/3)`}</div>`;
+  } else {
+    html += `<div class="auth-state auth-state-off">Not a login request${isUnmarked ? ' (unmarked)' : ` (auto, score ${detect.score}/3)`}</div>`;
+  }
+  if (detect.signals.signalsHit.length > 0) {
+    html += `<ul class="auth-signal-list">`;
+    for (const s of detect.signals.signalsHit) html += `<li>${escapeHtml(s)}</li>`;
+    html += `</ul>`;
+  }
+  html += `<button id="auth-mark-toggle" class="btn btn-xs">${isLogin ? 'Unmark as login' : 'Mark as login'}</button>`;
+  html += `</div>`;
+
+  if (isLogin) {
+    // ---- JWT analysis ----
+    const jwt = _extractJwtFromResponse(req);
+    html += `<div class="auth-card"><div class="auth-card-title">JWT</div>`;
+    if (!jwt) {
+      html += `<div class="auth-empty">No JWT found in the response body or headers.</div>`;
+    } else {
+      html += `<div class="auth-kv"><b>source</b>: ${escapeHtml(jwt.source)}</div>`;
+      html += `<pre class="auth-jwt-block">${escapeHtml(jwt.token.slice(0, 60))}…</pre>`;
+      if (jwt.header) html += `<div class="auth-kv"><b>header.alg</b>: ${escapeHtml(String(jwt.header.alg || 'unknown'))}</div>`;
+      if (jwt.payload) {
+        if (jwt.payload.exp) {
+          const expDate = new Date(jwt.payload.exp * 1000).toISOString();
+          html += `<div class="auth-kv"><b>payload.exp</b>: ${escapeHtml(expDate)}</div>`;
+        }
+        if (jwt.payload.iss) html += `<div class="auth-kv"><b>payload.iss</b>: ${escapeHtml(String(jwt.payload.iss))}</div>`;
+        if (jwt.payload.sub) html += `<div class="auth-kv"><b>payload.sub</b>: ${escapeHtml(String(jwt.payload.sub))}</div>`;
+      }
+      if (jwt.issues.length > 0) {
+        html += `<ul class="auth-issue-list">`;
+        for (const i of jwt.issues) html += `<li>⚠️ ${escapeHtml(i)}</li>`;
+        html += `</ul>`;
+      } else {
+        html += `<div class="auth-ok">No obvious JWT issues found.</div>`;
+      }
+    }
+    html += `</div>`;
+
+    // ---- Cookie flags ----
+    const cookies = _parseSetCookies(req);
+    html += `<div class="auth-card"><div class="auth-card-title">Set-Cookie flags</div>`;
+    if (cookies.length === 0) {
+      html += `<div class="auth-empty">Response did not set any cookies.</div>`;
+    } else {
+      html += `<table class="auth-cookie-table"><thead><tr><th>Name</th><th>Secure</th><th>HttpOnly</th><th>SameSite</th></tr></thead><tbody>`;
+      for (const c of cookies) {
+        const sec = c.flags.Secure ? '<span class="auth-ok-tag">✓</span>' : '<span class="auth-bad-tag">✗</span>';
+        const httpOnly = c.flags.HttpOnly ? '<span class="auth-ok-tag">✓</span>' : '<span class="auth-bad-tag">✗</span>';
+        // SameSite cell: when set, render the value as escaped text;
+        // when missing, render the styled "none" tag. Previously the
+        // fallback HTML went through escapeHtml and surfaced as literal
+        // markup in the table.
+        const ss = c.flags.SameSite
+          ? escapeHtml(c.flags.SameSite)
+          : '<span class="auth-bad-tag">none</span>';
+        html += `<tr><td>${escapeHtml(c.name)}</td><td>${sec}</td><td>${httpOnly}</td><td>${ss}</td></tr>`;
+      }
+      html += `</tbody></table>`;
+    }
+    html += `</div>`;
+
+    // ---- CSRF token ----
+    const csrf = _findCsrfToken(req);
+    html += `<div class="auth-card"><div class="auth-card-title">CSRF token</div>`;
+    if (csrf) {
+      html += `<div class="auth-ok">Found in <b>${escapeHtml(csrf.where)}</b> — <code>${escapeHtml(csrf.name)}</code> = <code>${escapeHtml(String(csrf.value).slice(0, 24))}…</code></div>`;
+    } else {
+      html += `<div class="auth-warn">No CSRF token detected. State-changing endpoints without CSRF protection should be reviewed for SameSite cookie reliance and origin checks.</div>`;
+    }
+    html += `</div>`;
+
+    // ---- Test buttons + results ----
+    html += `<div class="auth-card"><div class="auth-card-title">Tests</div>`;
+    html += `<div class="auth-test-row">
+      <button id="auth-test-empty-pw" class="btn btn-xs">Test: empty password</button>
+      <button id="auth-test-wrong-pw" class="btn btn-xs">Test: wrong password</button>
+    </div>`;
+    html += `<div id="auth-test-result" class="auth-test-result"></div>`;
+    html += `<div class="auth-warn-small">Tests fire one replay each. Run only against systems you're authorized to test — repeated wrong passwords may trigger account lockout on strict systems.</div>`;
+    html += `</div>`;
+
+    // Restore previous test result if any
+    const prev = _authTestResults.get(req.requestId);
+    if (prev) {
+      // Render after setting innerHTML
+    }
+  }
+
+  container.innerHTML = html;
+
+  // Wire button handlers
+  const markBtn = document.getElementById('auth-mark-toggle');
+  if (markBtn) {
+    markBtn.addEventListener('click', () => {
+      // Toggle: marked → unmarked, unmarked → marked, undefined → opposite of auto
+      if (req._authMarked === true) req._authMarked = false;
+      else if (req._authMarked === false) req._authMarked = true;
+      else req._authMarked = !detect.isLogin;
+      renderAuth(req);
+      // Refresh the row's URL cell so the 🔐 badge appears/disappears
+      // immediately without waiting for a full table re-render.
+      updateNetworkRowAuth(req);
+    });
+  }
+
+  if (isLogin) {
+    const emptyBtn = document.getElementById('auth-test-empty-pw');
+    if (emptyBtn) emptyBtn.addEventListener('click', () => _runAuthTest(req, 'empty'));
+    const wrongBtn = document.getElementById('auth-test-wrong-pw');
+    if (wrongBtn) wrongBtn.addEventListener('click', () => _runAuthTest(req, 'wrong'));
+    const resultEl = document.getElementById('auth-test-result');
+    if (resultEl) {
+      const prev = _authTestResults.get(req.requestId);
+      if (prev) resultEl.innerHTML = _renderAuthTestResult(prev);
+    }
+  }
+}
+
+// Mutate the password field in the request body — handles JSON,
+// form-urlencoded, and XML (incl. XML attributes like id="userPw").
+// Falls back to no-op when the body shape isn't recognized.
+function _mutatePasswordField(body, mode) {
+  if (!body) return body;
+  const replacement = mode === 'empty' ? '' : '__dtpp_wrong_' + Math.random().toString(36).slice(2, 10);
+  const isPwName = (name) => /^(password|passwd|pwd|user_?password|user_?pw|userpw)$/i.test(name);
+
+  // JSON
+  try {
+    const obj = JSON.parse(body);
+    let touched = false;
+    const recurse = (o) => {
+      if (!o || typeof o !== 'object') return;
+      for (const k of Object.keys(o)) {
+        if (isPwName(k)) {
+          o[k] = replacement;
+          touched = true;
+        } else if (typeof o[k] === 'object') {
+          recurse(o[k]);
+        }
+      }
+    };
+    recurse(obj);
+    if (touched) return JSON.stringify(obj);
+  } catch {}
+
+  // XML (Nexacro <Col id="userPw">…</Col>, generic <password>…</password>,
+  // or <Col name="password">…</Col>). Element-by-attribute and naked
+  // element forms covered.
+  if (/<\?xml|<\s*\w+[^>]*xmlns/i.test(body)) {
+    let out = body;
+    let touched = false;
+    // <Tag id|name="userPw">value</Tag> → replace value
+    out = out.replace(
+      /(<\w+[^>]*\b(?:id|name)\s*=\s*["'])([^"']+)(["'][^>]*>)([^<]*)(<\/\w+>)/gi,
+      (full, openStart, attrName, openEnd, inner, close) => {
+        if (isPwName(attrName)) {
+          touched = true;
+          return openStart + attrName + openEnd + replacement + close;
+        }
+        return full;
+      }
+    );
+    // <password>value</password>
+    out = out.replace(
+      /<(password|passwd|pwd|user_?password|user_?pw|userpw)>([^<]*)<\/\1>/gi,
+      (full, name) => { touched = true; return `<${name}>${replacement}</${name}>`; }
+    );
+    if (touched) return out;
+  }
+
+  // Form-urlencoded
+  if (body.includes('=')) {
+    const fields = body.split('&').map(p => {
+      const eq = p.indexOf('=');
+      if (eq < 0) return p;
+      let name;
+      try { name = decodeURIComponent(p.slice(0, eq).replace(/\+/g, ' ')); } catch { name = p.slice(0, eq); }
+      if (isPwName(name)) {
+        return p.slice(0, eq + 1) + encodeURIComponent(replacement);
+      }
+      return p;
+    });
+    return fields.join('&');
+  }
+
+  return body;
+}
+
+function _runAuthTest(originalReq, mode) {
+  const resultEl = document.getElementById('auth-test-result');
+  if (resultEl) resultEl.innerHTML = `<div class="auth-test-pending">Running ${escapeHtml(mode === 'empty' ? 'empty password' : 'wrong password')} test...</div>`;
+  const headers = {};
+  const captured = originalReq.requestHeaders || {};
+  for (const [k, v] of Object.entries(captured)) {
+    if (k.startsWith(':')) continue;
+    if (/^(host|content-length)$/i.test(k)) continue;
+    headers[k] = Array.isArray(v) ? v.join(', ') : v;
+  }
+  const mutatedBody = _mutatePasswordField(originalReq.requestPostData || '', mode);
+  const payload = {
+    method: originalReq.method,
+    url: originalReq.url,
+    headers,
+    body: mutatedBody || null,
+  };
+  // Reuse the page-context fetch path used by Replay. The result goes
+  // through the message-tab response slot, which is fine here too —
+  // we capture it ourselves via the polling expression.
+  const callbackId = '__authtest_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+  const expr = `(function() {
+    window['${callbackId}'] = null;
+    var t0 = performance.now();
+    fetch(${JSON.stringify(payload.url)}, {
+      method: ${JSON.stringify(payload.method)},
+      headers: ${JSON.stringify(payload.headers)},
+      body: ${payload.body != null ? JSON.stringify(payload.body) : 'null'},
+      credentials: 'include',
+      redirect: 'follow'
+    }).then(function(resp) {
+      var elapsed = Math.round(performance.now() - t0);
+      return resp.text().then(function(text) {
+        window['${callbackId}'] = JSON.stringify({
+          ok: true, status: resp.status, statusText: resp.statusText, body: text, time: elapsed
+        });
+      });
+    }).catch(function(e) {
+      window['${callbackId}'] = JSON.stringify({ ok: false, error: e.message });
+    });
+  })()`;
+  chrome.devtools.inspectedWindow.eval(expr, () => {
+    let attempts = 0;
+    const poll = setInterval(() => {
+      attempts++;
+      if (attempts > 200) {
+        clearInterval(poll);
+        if (resultEl) resultEl.innerHTML = `<div class="auth-test-fail">Timed out (20s)</div>`;
+        return;
+      }
+      chrome.devtools.inspectedWindow.eval(`window['${callbackId}']`, (raw) => {
+        if (raw == null) return;
+        clearInterval(poll);
+        chrome.devtools.inspectedWindow.eval(`delete window['${callbackId}']`);
+        let parsed;
+        try { parsed = JSON.parse(raw); } catch { return; }
+        const result = {
+          mode,
+          ok: parsed.ok,
+          status: parsed.status,
+          statusText: parsed.statusText,
+          time: parsed.time,
+          bodyLen: (parsed.body || '').length,
+          bodyPreview: (parsed.body || '').slice(0, 200),
+          originalStatus: originalReq.status,
+          error: parsed.error,
+        };
+        _authTestResults.set(originalReq.requestId, result);
+        if (resultEl) resultEl.innerHTML = _renderAuthTestResult(result);
+      });
+    }, 100);
+  });
+}
+
+function _renderAuthTestResult(r) {
+  if (!r.ok) {
+    return `<div class="auth-test-fail">Test (${escapeHtml(r.mode)}) failed: ${escapeHtml(r.error || 'unknown')}</div>`;
+  }
+  const sameStatus = r.status === r.originalStatus;
+  return `<div class="auth-test-ok">
+    <div><b>Test:</b> ${escapeHtml(r.mode === 'empty' ? 'empty password' : 'wrong password')}</div>
+    <div><b>Original status:</b> ${escapeHtml(String(r.originalStatus))} → <b>Test status:</b> ${escapeHtml(String(r.status))} ${escapeHtml(r.statusText || '')} ${sameStatus ? '<span class="auth-warn-tag">⚠ same as success</span>' : '<span class="auth-ok-tag">✓ different</span>'}</div>
+    <div><b>Time:</b> ${escapeHtml(String(r.time))}ms · <b>Body:</b> ${escapeHtml(String(r.bodyLen))} bytes</div>
+    <div class="auth-body-preview"><b>Body preview:</b> ${escapeHtml(r.bodyPreview)}${r.bodyLen > 200 ? '…' : ''}</div>
+  </div>`;
+}
 
 function renderDetection(req) {
   const container = document.getElementById('detail-detection-body');

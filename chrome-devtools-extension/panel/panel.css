@@ -544,6 +544,40 @@ tr:hover {
   font-weight: 500;
 }
 
+/* Decode toggle — independent of Raw/Pretty. When active, the pane
+   renderer rewrites encoded substrings (JWT / Base64 / URL-enc /
+   Unix timestamps) inline as <span class="decode-replaced"> with the
+   original kept in the title attribute. */
+.msg-decode-btn.hidden { display: none; }
+.msg-decode-btn.active,
+.msg-wrap-btn.active {
+  background: #E8F0FE;
+  color: #1A73E8;
+  font-weight: 500;
+}
+.decode-replaced {
+  background: #fff7d4;
+  border-bottom: 1px dotted #c0a020;
+  cursor: help;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* Standardize action-button vertical metrics across the detail panel
+   so Replay / Preview / Decode / Wrap / Send to Browser all share the
+   same height. Horizontal width still varies with text length. */
+#msg-replay-toggle,
+#msg-preview-toggle,
+.msg-decode-btn,
+.msg-wrap-btn,
+#detail-send-to-browser {
+  padding: 3px 10px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  height: 24px;
+  box-sizing: border-box;
+}
+
 /* Body area — monospace raw HTTP message. Outer wrapper is a flex
    column so its inner <pre> (read mode) or <textarea> (replay edit
    mode) can both fill the available height via flex:1 instead of
@@ -568,6 +602,14 @@ tr:hover {
   white-space: pre;
   tab-size: 2;
   overflow: auto;
+}
+/* Wrap toggle — keep the indent (pre-wrap) but allow long unbroken
+   tokens (cookies, JWTs, query strings) to break anywhere so the
+   horizontal scrollbar disappears. */
+.msg-raw.wrap {
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 /* Header line + status / request line styling — color cue without
    pulling out a full token tokenizer. */

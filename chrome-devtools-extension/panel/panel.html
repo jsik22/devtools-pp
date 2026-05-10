@@ -150,6 +150,8 @@
                     <button class="msg-format-btn active" data-fmt="raw">Raw</button>
                     <button class="msg-format-btn" data-fmt="pretty">Pretty</button>
                   </div>
+                  <button class="msg-wrap-btn btn btn-xs" data-pane="request" title="Wrap long lines (toggle word wrap)">Wrap</button>
+                  <button class="msg-decode-btn btn btn-xs hidden" data-pane="request" title="Replace encoded substrings (JWT / Base64 / URL-encoded) with their decoded form. Hover a decoded span to see the original.">Decode</button>
                   <button id="msg-replay-toggle" class="btn btn-xs" title="Edit and replay this request">↻ Replay</button>
                 </div>
                 <div class="msg-pane-body" id="msg-request-body"></div>
@@ -169,6 +171,8 @@
                     <button class="msg-format-btn active" data-fmt="raw">Raw</button>
                     <button class="msg-format-btn" data-fmt="pretty">Pretty</button>
                   </div>
+                  <button class="msg-wrap-btn btn btn-xs" data-pane="response" title="Wrap long lines (toggle word wrap)">Wrap</button>
+                  <button class="msg-decode-btn btn btn-xs hidden" data-pane="response" title="Replace encoded substrings (JWT / Base64 / URL-encoded) with their decoded form. Hover a decoded span to see the original.">Decode</button>
                   <button id="msg-preview-toggle" class="btn btn-xs" title="Render preview (HTML / JSON tree / image)">👁 Preview</button>
                 </div>
                 <div class="msg-pane-body" id="msg-response-body"></div>

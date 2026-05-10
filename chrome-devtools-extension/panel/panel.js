@@ -1169,6 +1169,11 @@ function processNetworkRequest(harEntry) {
   // (not added to Site Map or Network lists). Empty scope = all in scope.
   if (!inGlobalScope(harEntry.request.url)) return;
 
+  // Auth tab probe — the test buttons fire `fetch()` variants that
+  // come back through onRequestFinished. Drop them entirely so the
+  // Monitor timeline only shows real user / page traffic.
+  if (consumeAuthTestFireMatch(harEntry.request.url, harEntry.request.method)) return;
+
   // Dedup against HAR replay so the same entry doesn't land twice
   // (e.g. live listener fires for a request that's also still in
   // the HAR snapshot taken at auto-start).
@@ -2588,6 +2593,16 @@ function showDetail(req) {
 // surviving a row change).
 let msgRequestFormat = 'raw';   // 'raw' | 'pretty'
 let msgResponseFormat = 'raw';  // 'raw' | 'pretty'
+// Auto Decode toggle per pane — independent of Raw/Pretty. When on,
+// encoded substrings (JWT / Base64 / URL-encoded / Unix timestamp /
+// nested JSON) inside the raw HTTP text are replaced with their
+// decoded form, marked with a dotted underline + soft yellow tint
+// so the user can see at-a-glance where decoded content sits. Hover
+// shows the original encoded value.
+let msgRequestDecode = false;
+let msgResponseDecode = false;
+let msgRequestWrap = false;
+let msgResponseWrap = false;
 let msgReplayEditing = false;
 let msgPreviewMode = 'raw';     // 'raw' | 'preview'
 let msgReplayLastResponse = null; // overrides original response display when set
@@ -2596,6 +2611,10 @@ function renderMessageTab(req) {
   // Reset per-request UI state on row change.
   msgRequestFormat = 'raw';
   msgResponseFormat = 'raw';
+  msgRequestDecode = false;
+  msgResponseDecode = false;
+  msgRequestWrap = false;
+  msgResponseWrap = false;
   msgReplayEditing = false;
   msgPreviewMode = 'raw';
   msgReplayLastResponse = null;
@@ -2603,6 +2622,8 @@ function renderMessageTab(req) {
   document.querySelectorAll('.msg-format-toggle .msg-format-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.fmt === 'raw');
   });
+  document.querySelectorAll('.msg-decode-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.msg-wrap-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('msg-replay-bar').classList.add('hidden');
   document.getElementById('msg-replay-toggle').classList.remove('active');
   document.getElementById('msg-preview-toggle').classList.remove('active');
@@ -2623,10 +2644,15 @@ function renderRequestPane(req) {
   const bodyEl = document.getElementById('msg-request-body');
   if (msgReplayEditing) {
     // Editor stays in place — text already populated by enter handler.
+    _toggleDecodeBtn('request', false);
     return;
   }
   const text = buildRawRequest(req, msgRequestFormat);
-  bodyEl.innerHTML = `<pre class="msg-raw">${_renderRawHtml(text)}</pre>`;
+  const wrapCls = msgRequestWrap ? ' wrap' : '';
+  bodyEl.innerHTML = `<pre class="msg-raw${wrapCls}">${_renderRawHtml(text)}</pre>`;
+  const hasDecodable = _paneHasDecodable(text);
+  _toggleDecodeBtn('request', hasDecodable);
+  if (hasDecodable && msgRequestDecode) _applyDecodeMarks(bodyEl);
 }
 
 function renderResponsePane(req) {
@@ -2647,6 +2673,7 @@ function renderResponsePane(req) {
   const bodyEl = document.getElementById('msg-response-body');
   if (msgPreviewMode === 'preview') {
     _renderResponsePreview(bodyEl, req, resp);
+    _toggleDecodeBtn('response', false);
     return;
   }
 
@@ -2655,6 +2682,7 @@ function renderResponsePane(req) {
   const view = resp ? _viewFromReplay(resp) : _viewFromCapture(req);
   if (view.placeholder) {
     bodyEl.innerHTML = `<div class="msg-empty">${escapeHtml(view.placeholder)}</div>`;
+    _toggleDecodeBtn('response', false);
     return;
   }
   // Pair the response status line's HTTP version with whatever the
@@ -2662,7 +2690,8 @@ function renderResponsePane(req) {
   // Replay results come back through fetch() (h1.1 to local proxy),
   // so they always render as 1.1 unless we have a captured-h2 origin.
   const text = buildRawResponse(view, msgResponseFormat, resp ? '1.1' : _detectHttpVersion(req));
-  let html = `<pre class="msg-raw">${_renderRawHtml(text)}</pre>`;
+  const wrapCls = msgResponseWrap ? ' wrap' : '';
+  let html = `<pre class="msg-raw${wrapCls}">${_renderRawHtml(text)}</pre>`;
   // Diff badge for replay results. Always rendered when we have a
   // replay response — _renderReplayDiff handles the case where the
   // original body isn't available so status / availability info still
@@ -2671,6 +2700,9 @@ function renderResponsePane(req) {
     html += _renderReplayDiff(req, resp);
   }
   bodyEl.innerHTML = html;
+  const hasDecodable = _paneHasDecodable(text);
+  _toggleDecodeBtn('response', hasDecodable);
+  if (hasDecodable && msgResponseDecode) _applyDecodeMarks(bodyEl);
 }
 
 function _statusClass(s) {
@@ -2807,6 +2839,125 @@ function _renderRawHtml(text) {
   return out.join('\n') + '\n\n' + (body ? escapeHtml(body) : '');
 }
 
+// ---- Auto Decode (inline replacement) ----
+// Find all encoded substrings inside a plain-text snippet and return
+// their positions plus the parsed finding. Priority order: JWT > URL-
+// encoded > Base64. Overlapping matches are filtered — earliest non-
+// overlapping wins (priority order matters because we scan in that
+// order and dedupe by start position).
+function _scanEncodedPositions(text) {
+  if (!text || typeof text !== 'string') return [];
+  const results = [];
+  let m;
+
+  // 1. JWT — three-segment, both header and payload start with eyJ
+  const jwtRe = /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g;
+  while ((m = jwtRe.exec(text)) !== null) {
+    const f = detectJWT(m[0]);
+    if (f) results.push({ start: m.index, end: m.index + m[0].length, finding: f });
+  }
+  // 2. URL-encoded — 2+ %XX runs (with surrounding url-safe chars)
+  const urlRe = /[A-Za-z0-9~._!*'()\-+]*(?:%[0-9A-Fa-f]{2}[A-Za-z0-9~._!*'()\-+]*){2,}/g;
+  while ((m = urlRe.exec(text)) !== null) {
+    const f = detectUrlEncoded(m[0]);
+    if (f) results.push({ start: m.index, end: m.index + m[0].length, finding: f });
+  }
+  // 3. Base64 — broad shape, validated via detectBase64 (printability +
+  //    length + padding alignment).
+  const b64Re = /[A-Za-z0-9+/]{16,}={0,2}/g;
+  while ((m = b64Re.exec(text)) !== null) {
+    const f = detectBase64(m[0]);
+    if (f) results.push({ start: m.index, end: m.index + m[0].length, finding: f });
+  }
+
+  // Resolve overlaps (earlier scan order wins via stable sort + skip).
+  results.sort((a, b) => a.start - b.start);
+  const filtered = [];
+  let lastEnd = -1;
+  for (const r of results) {
+    if (r.start >= lastEnd) {
+      filtered.push(r);
+      lastEnd = r.end;
+    }
+  }
+  return filtered;
+}
+
+// Compact, single-line display string for an inline replacement.
+// Multi-line decoded values would break the raw HTTP indentation, so
+// JSON values use compact serialization. The original is preserved on
+// the `title` attribute of the wrapping span.
+function _decodedDisplay(finding) {
+  switch (finding.type) {
+    case 'jwt': {
+      const h = JSON.stringify(finding.header || {});
+      const p = JSON.stringify(finding.payload || {});
+      return `JWT: ${h} • ${p}`;
+    }
+    case 'urlenc': return finding.decoded;
+    case 'base64': return finding.decoded;
+    case 'nested-json': return JSON.stringify(finding.parsed);
+    case 'timestamp': return finding.date;
+    default: return '?';
+  }
+}
+
+// Walk the text nodes inside `rootEl` and replace any encoded
+// substring with a styled span carrying the decoded form. Original
+// encoded text moves to the span's title attribute so the user can
+// hover to verify what was decoded.
+function _applyDecodeMarks(rootEl) {
+  if (!rootEl) return;
+  const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const text = node.textContent;
+    const positions = _scanEncodedPositions(text);
+    if (positions.length === 0) continue;
+    const frag = document.createDocumentFragment();
+    let cursor = 0;
+    for (const p of positions) {
+      if (p.start > cursor) {
+        frag.appendChild(document.createTextNode(text.slice(cursor, p.start)));
+      }
+      const span = document.createElement('span');
+      span.className = 'decode-replaced';
+      span.dataset.decodeType = p.finding.type;
+      span.title = `${p.finding.label} — original: ${text.slice(p.start, p.end)}`;
+      span.textContent = _decodedDisplay(p.finding);
+      frag.appendChild(span);
+      cursor = p.end;
+    }
+    if (cursor < text.length) {
+      frag.appendChild(document.createTextNode(text.slice(cursor)));
+    }
+    node.parentNode.replaceChild(frag, node);
+  }
+}
+
+// True when the raw pane text contains at least one encoded substring
+// the Decode toggle can rewrite. Used to gate Decode button visibility
+// so the button appears only when there's something to decode.
+function _paneHasDecodable(text) {
+  if (!text) return false;
+  return _scanEncodedPositions(text).length > 0;
+}
+
+// Show / hide the Decode button for a given pane and reset its active
+// state + companion flag when hiding so toggling it back on doesn't
+// inherit a stale "active" state from a previous request.
+function _toggleDecodeBtn(pane, show) {
+  const btn = document.querySelector(`.msg-decode-btn[data-pane="${pane}"]`);
+  if (!btn) return;
+  btn.classList.toggle('hidden', !show);
+  if (!show) {
+    btn.classList.remove('active');
+    if (pane === 'request') msgRequestDecode = false;
+    else msgResponseDecode = false;
+  }
+}
+
 function _findHeaderCI(headers, name) {
   const lower = name.toLowerCase();
   for (const k of Object.keys(headers)) {
@@ -2890,6 +3041,56 @@ document.querySelectorAll('.msg-format-toggle').forEach(group => {
         if (req) renderResponsePane(req);
       }
     });
+  });
+});
+
+// Decode toggle — independent from Raw/Pretty. When active the pane's
+// raw text gets its encoded substrings replaced inline (handled by
+// _applyDecodeMarks called from the pane renderers). On enable, scroll
+// the first decoded span into view so the user sees the result.
+document.querySelectorAll('.msg-decode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const side = btn.dataset.pane;
+    const next = !btn.classList.contains('active');
+    btn.classList.toggle('active', next);
+    if (side === 'request') {
+      msgRequestDecode = next;
+      if (!msgReplayEditing) {
+        const req = networkRequestMap.get(selectedRequestId);
+        if (req) renderRequestPane(req);
+      }
+    } else {
+      msgResponseDecode = next;
+      const req = networkRequestMap.get(selectedRequestId);
+      if (req) renderResponsePane(req);
+    }
+    if (next) {
+      const paneId = side === 'request' ? 'msg-request-body' : 'msg-response-body';
+      const first = document.getElementById(paneId).querySelector('.decode-replaced');
+      if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  });
+});
+
+// Wrap toggle — flips white-space: pre ↔ pre-wrap on the pane's
+// <pre>. Lives on per-pane state and survives format / decode toggles
+// within the same request selection.
+document.querySelectorAll('.msg-wrap-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const side = btn.dataset.pane;
+    const next = !btn.classList.contains('active');
+    btn.classList.toggle('active', next);
+    if (side === 'request') {
+      msgRequestWrap = next;
+      if (!msgReplayEditing) {
+        const req = networkRequestMap.get(selectedRequestId);
+        if (req) renderRequestPane(req);
+      }
+    } else {
+      msgResponseWrap = next;
+      const req = networkRequestMap.get(selectedRequestId);
+      if (req) renderResponsePane(req);
+    }
   });
 });
 
@@ -3419,6 +3620,38 @@ function consumeReplayFireMatch(url, method) {
     }
   }
   return null;
+}
+
+// Auth test fire queue — the Auth tab's "Test: empty/wrong password"
+// buttons fire variant fetches via inspectedWindow.eval just like
+// Replay does, but those are *internal probes* and shouldn't appear
+// in the user's Monitor timeline. processNetworkRequest checks this
+// queue before adding the request to networkRequests; on match the
+// capture is dropped entirely (no row, no scan, no sitemap entry).
+const _authTestFireQueue = [];
+const _AUTH_TEST_FIRE_TTL_MS = 10000;
+
+function _markAuthTestFired(url, method) {
+  const now = Date.now();
+  for (let i = _authTestFireQueue.length - 1; i >= 0; i--) {
+    if (now - _authTestFireQueue[i].t > _AUTH_TEST_FIRE_TTL_MS) {
+      _authTestFireQueue.splice(i, 1);
+    }
+  }
+  _authTestFireQueue.push({ url, method, t: now });
+}
+
+function consumeAuthTestFireMatch(url, method) {
+  const now = Date.now();
+  for (let i = 0; i < _authTestFireQueue.length; i++) {
+    const e = _authTestFireQueue[i];
+    if (now - e.t > _AUTH_TEST_FIRE_TTL_MS) continue;
+    if (e.url === url && e.method === method) {
+      _authTestFireQueue.splice(i, 1);
+      return true;
+    }
+  }
+  return false;
 }
 
 // Fire the parsed replay request via the inspected page's context.
@@ -5890,6 +6123,10 @@ function _runAuthTest(originalReq, mode) {
     headers,
     body: mutatedBody || null,
   };
+  // Tag this fire so processNetworkRequest can drop the matching
+  // capture from the Monitor list — auth tests are internal probes,
+  // not user traffic, and shouldn't pollute the timeline.
+  _markAuthTestFired(payload.url, payload.method);
   // Reuse the page-context fetch path used by Replay. The result goes
   // through the message-tab response slot, which is fine here too —
   // we capture it ourselves via the polling expression.
@@ -5938,6 +6175,12 @@ function _runAuthTest(originalReq, mode) {
           bodyLen: (parsed.body || '').length,
           bodyPreview: (parsed.body || '').slice(0, 200),
           originalStatus: originalReq.status,
+          // Snapshot the captured original body so the result render can
+          // diff body content against the test response. Many APIs reply
+          // with HTTP 200 even on auth failure (RESTful "200 + error in
+          // body"), so status-only compare miss-flags those as success.
+          originalBody: originalReq.responseBodyLoaded ? (originalReq.responseBody || '') : null,
+          testBody: parsed.body || '',
           error: parsed.error,
         };
         _authTestResults.set(originalReq.requestId, result);
@@ -5951,10 +6194,26 @@ function _renderAuthTestResult(r) {
   if (!r.ok) {
     return `<div class="auth-test-fail">Test (${escapeHtml(r.mode)}) failed: ${escapeHtml(r.error || 'unknown')}</div>`;
   }
+  // Verdict: server distinguished the bad attempt from the original
+  // success when EITHER the status differs OR the body differs.
+  // Pure status-only compare misses APIs that reply HTTP 200 with a
+  // RESTful error envelope in the body (e.g. {"resType":"RES_ERROR"}).
   const sameStatus = r.status === r.originalStatus;
+  let verdict;
+  if (!sameStatus) {
+    verdict = '<span class="auth-ok-tag">✓ different (status changed)</span>';
+  } else if (r.originalBody == null) {
+    // Status matches and we never loaded the original body — can't
+    // make a body-level call. Report ambiguity rather than guessing.
+    verdict = '<span class="auth-warn-tag">⚠ status same · original body unavailable for compare</span>';
+  } else if (r.testBody === r.originalBody) {
+    verdict = '<span class="auth-warn-tag">⚠ identical response — server didn\'t distinguish</span>';
+  } else {
+    verdict = '<span class="auth-ok-tag">✓ different (body changed)</span>';
+  }
   return `<div class="auth-test-ok">
     <div><b>Test:</b> ${escapeHtml(r.mode === 'empty' ? 'empty password' : 'wrong password')}</div>
-    <div><b>Original status:</b> ${escapeHtml(String(r.originalStatus))} → <b>Test status:</b> ${escapeHtml(String(r.status))} ${escapeHtml(r.statusText || '')} ${sameStatus ? '<span class="auth-warn-tag">⚠ same as success</span>' : '<span class="auth-ok-tag">✓ different</span>'}</div>
+    <div><b>Original status:</b> ${escapeHtml(String(r.originalStatus))} → <b>Test status:</b> ${escapeHtml(String(r.status))} ${escapeHtml(r.statusText || '')} ${verdict}</div>
     <div><b>Time:</b> ${escapeHtml(String(r.time))}ms · <b>Body:</b> ${escapeHtml(String(r.bodyLen))} bytes</div>
     <div class="auth-body-preview"><b>Body preview:</b> ${escapeHtml(r.bodyPreview)}${r.bodyLen > 200 ? '…' : ''}</div>
   </div>`;

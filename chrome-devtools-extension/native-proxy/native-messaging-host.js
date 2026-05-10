@@ -1,18 +1,17 @@
 #!/usr/bin/env node
-// Note: this shebang is only used when the file is executed directly.
-// Chrome's Native Messaging launcher actually invokes this through the
-// per-machine wrapper script `native-messaging-host.sh` (created by
-// install.sh), which hard-codes the absolute path to the user's node
-// binary. Chrome's NM environment ships a restricted PATH that often
-// can't resolve `node` via env, so the wrapper indirection is what
-// makes the host runnable across nvm/fnm/asdf/system installs.
+// 참고: 이 shebang은 파일이 직접 실행될 때만 사용됨. Chrome의 Native
+// Messaging launcher는 실제로는 사용자 머신의 node 바이너리 절대경로를
+// 박은 per-machine wrapper script(`native-messaging-host.sh`,
+// install.sh가 생성)를 통해 이걸 호출. Chrome NM 환경의 제한된 PATH는
+// env로 `node`를 resolve 못하는 경우가 많아서 wrapper 간접 호출이
+// nvm/fnm/asdf/시스템 설치 전반에서 host를 runnable하게 만드는 핵심.
 'use strict';
 
 const ProxyServer = require('./proxy-server');
 
 // ============================================================
-// Chrome Native Messaging Protocol
-// Messages: 4-byte little-endian length prefix + UTF-8 JSON
+// Chrome Native Messaging 프로토콜
+// 메시지: 4-byte little-endian 길이 prefix + UTF-8 JSON
 // ============================================================
 
 let inputBuffer = Buffer.alloc(0);
@@ -30,7 +29,7 @@ function parseMessages(callback) {
   while (inputBuffer.length >= 4) {
     const msgLen = inputBuffer.readUInt32LE(0);
     if (msgLen > 1024 * 1024) {
-      // Message too large (Chrome limit is 1MB)
+      // 메시지가 너무 큼 (Chrome 한도는 1MB)
       inputBuffer = Buffer.alloc(0);
       return;
     }
@@ -46,7 +45,7 @@ function parseMessages(callback) {
 }
 
 // ============================================================
-// Proxy Instance
+// Proxy 인스턴스
 // ============================================================
 
 let proxy = null;
@@ -62,7 +61,7 @@ async function startProxy(config = {}) {
     interceptResponse: config.interceptResponse || false,
   });
 
-  // Apply initial URL/Method filters
+  // 초기 URL/Method 필터 적용
   if (config.urlFilter) {
     proxy.updateConfig({ urlFilter: config.urlFilter });
   }
@@ -116,7 +115,7 @@ async function stopProxy() {
 }
 
 // ============================================================
-// Message Handler
+// 메시지 핸들러
 // ============================================================
 
 async function handleMessage(msg) {
@@ -173,7 +172,7 @@ async function handleMessage(msg) {
 }
 
 // ============================================================
-// Stdin/Stdout Setup
+// Stdin/Stdout 설정
 // ============================================================
 
 process.stdin.on('data', (chunk) => {
@@ -182,7 +181,7 @@ process.stdin.on('data', (chunk) => {
 });
 
 process.stdin.on('end', () => {
-  // Extension disconnected
+  // 확장이 disconnect
   if (proxy) {
     proxy.forwardAllPending();
     proxy.stop().then(() => process.exit(0));
@@ -194,10 +193,10 @@ process.stdin.on('end', () => {
 process.stdin.on('error', () => process.exit(1));
 process.stdout.on('error', () => process.exit(1));
 
-// Defense-in-depth: keep the host alive when an async path throws so a
-// single bad request can't kill the proxy and yank Intercept off-line
-// without explanation. The error is reported back so the panel can
-// surface it instead of silently disconnecting.
+// Defense-in-depth: async 경로가 throw해도 host를 살려둠 → 단일
+// bad request가 proxy를 죽여서 Intercept를 explanation 없이 off-line
+// 으로 만들지 않도록. 에러는 다시 보고되어 패널이 silently disconnect
+// 대신 노출 가능.
 process.on('unhandledRejection', (reason) => {
   try {
     sendMessage({
@@ -215,5 +214,5 @@ process.on('uncaughtException', (err) => {
   } catch {}
 });
 
-// Notify extension that host is ready
+// 확장에 host ready 알림
 sendMessage({ type: 'host_ready', pid: process.pid });

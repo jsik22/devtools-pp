@@ -6,12 +6,12 @@ const path = require('path');
 const os = require('os');
 const net = require('net');
 
-// Generate an X.509-compliant positive serial number (16 random bytes,
-// high bit cleared so the integer is unambiguously positive).
+// X.509-compliant 양수 serial number 생성 (16 random bytes, high bit
+// 클리어 → 정수가 명확히 양수).
 function randomSerial() {
   const bytes = forge.random.getBytesSync(16);
-  // Clear the high bit of the first byte to keep the integer positive
-  // when interpreted as a signed ASN.1 INTEGER.
+  // 첫 byte의 high bit 클리어 → signed ASN.1 INTEGER로 해석할 때
+  // 정수가 양수로 유지되도록.
   const firstByte = bytes.charCodeAt(0) & 0x7f;
   return forge.util.bytesToHex(String.fromCharCode(firstByte) + bytes.slice(1));
 }
@@ -20,15 +20,15 @@ const CA_DIR = path.join(os.homedir(), '.devtools-pp');
 const CA_CERT_PATH = path.join(CA_DIR, 'ca.pem');
 const CA_KEY_PATH = path.join(CA_DIR, 'ca-key.pem');
 
-// In-memory cache for host certificates (LRU-like, max 500)
+// host 인증서 인메모리 캐시 (LRU 유사, 최대 500)
 const hostCertCache = new Map();
 const MAX_CACHE_SIZE = 500;
 
 let cachedCA = null;
 
 /**
- * Ensure CA certificate exists. Creates one if not found.
- * Returns { cert, key } as PEM strings and { certPath, keyPath } paths.
+ * CA 인증서 존재 보장. 없으면 생성.
+ * { cert, key }를 PEM 문자열로, { certPath, keyPath }를 경로로 반환.
  */
 function ensureCA() {
   if (cachedCA) return cachedCA;
@@ -47,8 +47,8 @@ function ensureCA() {
     return cachedCA;
   }
 
-  // Generate new CA. mode 0o700 keeps other local users from listing
-  // the directory; the private key file itself is also written 0o600.
+  // 새 CA 생성. mode 0o700으로 다른 로컬 사용자가 디렉토리 목록을 못
+  // 보게 함; private key 파일 자체도 0o600으로 기록.
   if (!fs.existsSync(CA_DIR)) {
     fs.mkdirSync(CA_DIR, { recursive: true, mode: 0o700 });
   }
@@ -99,9 +99,8 @@ function ensureCA() {
 }
 
 /**
- * Generate a TLS certificate for a specific hostname, signed by the CA.
- * Results are cached in memory.
- * Returns { cert: PEM, key: PEM }
+ * 특정 hostname용 TLS 인증서 생성, CA로 서명. 결과는 인메모리 캐시.
+ * { cert: PEM, key: PEM } 반환.
  */
 function generateHostCert(hostname) {
   if (hostCertCache.has(hostname)) {
@@ -121,9 +120,9 @@ function generateHostCert(hostname) {
   cert.setSubject([{ name: 'commonName', value: hostname }]);
   cert.setIssuer(ca.cert.subject.attributes);
 
-  // net.isIP returns 4, 6, or 0; non-zero means IP address. Replaces
-  // the loose regex that accepted out-of-range octets and treated any
-  // ":"-bearing hostname as IPv6.
+  // net.isIP은 4, 6, 또는 0 반환; non-zero면 IP 주소. out-of-range
+  // octet을 수용하고 ":"가 들어간 모든 hostname을 IPv6로 처리하던
+  // 느슨한 regex를 대체.
   const ipFamily = net.isIP(hostname);
   const altNames = ipFamily
     ? [{ type: 7, ip: hostname }]
@@ -143,7 +142,7 @@ function generateHostCert(hostname) {
     key: forge.pki.privateKeyToPem(keys.privateKey),
   };
 
-  // LRU eviction
+  // LRU 축출
   if (hostCertCache.size >= MAX_CACHE_SIZE) {
     const firstKey = hostCertCache.keys().next().value;
     hostCertCache.delete(firstKey);
@@ -154,7 +153,7 @@ function generateHostCert(hostname) {
 }
 
 /**
- * Get CA cert PEM for trust instructions
+ * trust 안내용 CA cert PEM 가져오기
  */
 function getCACertPath() {
   ensureCA();

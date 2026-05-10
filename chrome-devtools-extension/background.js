@@ -1,6 +1,6 @@
 // ============================================================
-// Background Service Worker - Relay Hub
-// Native Messaging <-> Panel communication + Proxy settings
+// Background Service Worker - 릴레이 허브
+// Native Messaging <-> Panel 통신 + Proxy 설정
 // ============================================================
 
 const NATIVE_HOST_NAME = 'com.devtools_pp.proxy';
@@ -9,7 +9,7 @@ let nativePort = null;
 const panelPorts = new Map(); // tabId -> port
 
 // ============================================================
-// 1. Panel connection management
+// 1. Panel 연결 관리
 // ============================================================
 chrome.runtime.onConnect.addListener((port) => {
   if (!port.name.startsWith('panel-')) return;
@@ -23,11 +23,11 @@ chrome.runtime.onConnect.addListener((port) => {
 
   port.onDisconnect.addListener(() => {
     panelPorts.delete(tabId);
-    // Always drop this tab's DNR tag rule — leaving it in place while the
-    // panel is gone would leak the X-DevToolsPP-Tab header to origin servers
-    // if the browser kept using the still-active proxy settings.
+    // 이 탭의 DNR tag 룰을 항상 드롭 — 패널이 사라진 상태로 남겨두면
+    // 브라우저가 여전히 활성 proxy 설정을 사용 중일 때
+    // X-DevToolsPP-Tab 헤더가 origin 서버로 leak될 수 있음.
     removeTabTagRule(tabId);
-    // Stop proxy when all panels are closed
+    // 모든 패널이 닫히면 proxy 중지
     if (panelPorts.size === 0 && nativePort) {
       sendToNative({ type: 'intercept_off' });
       resetProxySettings();
@@ -36,7 +36,7 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 // ============================================================
-// 2. Native Messaging connection
+// 2. Native Messaging 연결
 // ============================================================
 function connectNative() {
   if (nativePort) return true;
@@ -49,22 +49,22 @@ function connectNative() {
   }
 
   nativePort.onMessage.addListener((msg) => {
-    // Apply browser proxy settings when proxy_started is received
+    // proxy_started 수신 시 브라우저 proxy 설정 적용
     if (msg.type === 'proxy_started') {
       setProxySettings(msg.port || 8899);
     }
-    // Resolve any in-flight register_header_swap calls — used by
-    // openNewTabForIntercept to time the launcher navigation correctly.
+    // in-flight register_header_swap 호출 resolve — openNewTabForIntercept
+    // 가 launcher navigation 타이밍을 맞추는 데 사용.
     if (msg.type === 'header_swap_registered') {
       _flushSwapRegisteredAcks();
     }
-    // The proxy fired the swap into a request — drop the new tab's
-    // DNR tag rule so subsequent navigations in that tab are not
-    // intercepted (one-shot Send-to-Browser semantics).
+    // 프록시가 swap을 요청에 발화 — 새 탭의 DNR tag 룰을 드롭해서
+    // 그 탭의 후속 navigation은 인터셉트되지 않도록 (일회성 Send-to-
+    // Browser 시맨틱).
     if (msg.type === 'header_swap_consumed' && msg.tabId != null) {
       removeNewTabTagRule(parseInt(msg.tabId, 10));
     }
-    // Forward messages from proxy to all panels
+    // 프록시 → 모든 패널로 메시지 forward
     broadcastToPanels(msg);
   });
 
@@ -99,17 +99,17 @@ function broadcastToPanels(msg) {
 }
 
 // ============================================================
-// 3. Panel message handling
+// 3. Panel 메시지 처리
 // ============================================================
 function handlePanelMessage(tabId, msg) {
   switch (msg.type) {
     case 'intercept_on':
       connectNative();
-      // Tag requests from this inspected tab before the proxy starts routing,
-      // so the proxy never sees an untagged (racing) request from it.
+      // 프록시가 routing을 시작하기 전에 이 inspected 탭의 요청을 태그
+      // → 프록시가 그 탭에서 태그 없는(racing) 요청을 보지 않도록.
       addTabTagRule(tabId);
       sendToNative({ type: 'intercept_on', config: msg.config || {} });
-      // setProxySettings is called when proxy_started message is received (onMessage listener)
+      // setProxySettings는 proxy_started 메시지 수신 시 호출됨 (onMessage 리스너)
       break;
 
     case 'intercept_off':
@@ -131,8 +131,8 @@ function handlePanelMessage(tabId, msg) {
       break;
 
     case 'open_new_tab_for_intercept':
-      // Async — panel doesn't need a reply, but if anything fails we
-      // broadcast a `send_to_browser_error` so the panel can surface it.
+      // Async — 패널이 응답 필요 없음. 실패 시 `send_to_browser_error`
+      // 를 브로드캐스트해서 패널이 노출 가능하도록.
       openNewTabForIntercept(msg.payload || {}).catch((err) => {
         broadcastToPanels({
           type: 'send_to_browser_error',
@@ -153,7 +153,7 @@ function handlePanelMessage(tabId, msg) {
 }
 
 // ============================================================
-// 4. Chrome Proxy Settings management
+// 4. Chrome Proxy Settings 관리
 // ============================================================
 function setProxySettings(port) {
   chrome.proxy.settings.set({
@@ -170,7 +170,7 @@ function setProxySettings(port) {
           '127.0.0.1',
           'localhost',
           'chrome-extension://*',
-          // Chrome internal sync/update domains
+          // Chrome 내부 sync/update 도메인
           'clients*.google.com',
           'update.googleapis.com',
           '*.gvt1.com',
@@ -194,26 +194,24 @@ function setProxySettings(port) {
 
 function resetProxySettings() {
   chrome.proxy.settings.clear({ scope: 'regular' }, () => {
-    // ignore errors on clear
+    // clear 시 에러 무시
   });
 }
 
-// On service worker startup, clear any stale proxy settings left over
-// from a previous session. chrome.proxy.settings (scope: 'regular') is
-// persistent across browser restarts, so if Chrome was killed while
-// Intercept was active the user comes back to ERR_PROXY_CONNECTION_FAILED
-// because the native proxy isn't running. The first thing we do here is
-// drop the setting; if the user re-enables Intercept, panel.js issues
-// intercept_on which restarts the proxy and reapplies settings.
+// service worker 시작 시 이전 세션의 stale proxy 설정 clear.
+// chrome.proxy.settings(scope: 'regular')는 브라우저 재시작 사이에
+// persistent하므로 Intercept 활성 중 Chrome이 죽으면 사용자는 native
+// proxy가 안 돌고 있어서 ERR_PROXY_CONNECTION_FAILED를 만남. 여기서
+// 가장 먼저 설정 드롭; 사용자가 Intercept를 재활성화하면 panel.js가
+// intercept_on을 발행해 proxy를 재시작하고 설정을 재적용.
 resetProxySettings();
 
-// Clear UI state that the action popup mirrors. The panel writes these
-// on apply/start/stop but can't clean up on Chrome shutdown (DevTools
-// closes without firing panel teardown), so without this the popup
-// reports a scope/monitoring state that no panel is actually enforcing.
-// onStartup fires only on profile start, not every SW wake — that's
-// what we want, since wake-during-active-session would wipe the panel's
-// own persisted state.
+// action popup이 미러링하는 UI 상태 clear. 패널은 apply/start/stop
+// 시 이걸 쓰지만 Chrome 종료 시 정리 못함(DevTools가 panel teardown
+// 없이 닫힘) → 이게 없으면 popup이 어떤 panel도 실제로 enforce하지
+// 않는 scope/monitoring 상태를 보고함. onStartup은 profile 시작에서만
+// 발화, 모든 SW wake에서가 아님 → 우리가 원하는 것. wake-during-active-
+// session은 패널의 자체 persistent 상태를 wipe하면 안 되니까.
 chrome.runtime.onStartup.addListener(() => {
   if (chrome.storage && chrome.storage.local) {
     chrome.storage.local.remove(['globalScopeInput', 'networkMonitoring']);
@@ -221,12 +219,11 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 // ============================================================
-// 5. Tab-scoped request tagging via declarativeNetRequest
-// Only requests from the inspected tab carry an X-DevToolsPP-Tab header,
-// so the local proxy can gate interception on tab ownership. Requests from
-// other tabs, service workers, or extensions never carry the header and
-// are bypassed by the proxy. The proxy strips the header before forwarding
-// to the origin server.
+// 5. declarativeNetRequest를 통한 탭 스코프 요청 태깅
+// inspected 탭의 요청만 X-DevToolsPP-Tab 헤더를 가지므로, 로컬 프록시가
+// tab 소유권 기반으로 interception을 게이팅 가능. 다른 탭, service
+// worker, 확장의 요청은 헤더를 갖지 않아 프록시가 bypass. 프록시는
+// origin 서버로 forwarding 전 헤더 제거.
 // ============================================================
 const DNR_RULE_BASE = 10000;
 const TAG_HEADER_NAME = 'X-DevToolsPP-Tab';
@@ -274,13 +271,12 @@ async function removeTabTagRule(tabId) {
 }
 
 // ============================================================
-// Send-to-Browser: open captured request in a new tab through Intercept
+// Send-to-Browser: 캡처된 요청을 새 탭에서 Intercept를 통해 오픈
 // ============================================================
-// New tabs opened from the panel get a separate DNR rule scoped to
-// `main_frame` only — subresource fetches (CSS/JS/images) on the
-// rendered page should not flood the Intercept queue. The rule is
-// removed automatically when the proxy consumes the registered header
-// swap, or when the tab closes.
+// 패널에서 열린 새 탭은 `main_frame`만으로 scope된 별도 DNR 룰을
+// 받음 — 렌더된 페이지의 subresource fetch(CSS/JS/이미지)가 Intercept
+// 큐를 flood하면 안 됨. 룰은 프록시가 등록된 header swap을 consume
+// 하거나 탭이 닫힐 때 자동 제거.
 const DNR_RULE_BASE_NEW_TAB = 20000;
 
 async function addNewTabTagRule(tabId) {
@@ -299,8 +295,8 @@ async function addNewTabTagRule(tabId) {
         },
         condition: {
           tabIds: [tabId],
-          // main_frame only — render-on-the-page subresources stay
-          // untagged and bypass the intercept queue.
+          // main_frame만 — 페이지 렌더링 subresource는 untagged로
+          // 유지되어 intercept 큐를 bypass.
           resourceTypes: ['main_frame'],
         },
       }],
@@ -322,9 +318,9 @@ async function removeNewTabTagRule(tabId) {
   } catch {}
 }
 
-// Promise queue resolved by `header_swap_registered` messages from
-// native. Used so openNewTabForIntercept doesn't surrender control to
-// the launcher before the proxy actually has the swap in memory.
+// native에서 오는 `header_swap_registered` 메시지로 resolve되는 Promise
+// 큐. openNewTabForIntercept가 프록시가 swap을 실제로 메모리에 갖기
+// 전에 launcher로 제어권 넘기지 않도록 사용.
 let _swapRegisteredAcks = [];
 function _flushSwapRegisteredAcks() {
   const list = _swapRegisteredAcks;
@@ -350,11 +346,11 @@ function waitForSwapRegistered(timeoutMs) {
   });
 }
 
-// Pending payloads keyed by new tab id. The launcher.html page (loaded
-// in the new tab) asks for its payload via chrome.runtime.sendMessage
-// once it boots; we hand it back and the page navigates / submits.
+// 새 탭 id 키의 pending payload. launcher.html 페이지(새 탭에 로드)가
+// 부팅하면 chrome.runtime.sendMessage로 페이로드를 요청; 우리가 돌려주면
+// 페이지가 navigate/submit.
 const pendingLaunches = new Map();
-const pendingLaunchWaiters = new Map(); // tabId -> sendResponse fn parked while setup completes
+const pendingLaunchWaiters = new Map(); // tabId -> setup 완료까지 대기 중인 sendResponse fn
 
 async function openNewTabForIntercept(payload) {
   if (!payload || !payload.url || !payload.method) {
@@ -364,19 +360,19 @@ async function openNewTabForIntercept(payload) {
     throw new Error('Native host not connected — enable Intercept first');
   }
 
-  // Step 1: open a tab with the launcher page. We don't navigate to
-  // the captured URL directly because the DNR rule isn't in place yet
-  // and we'd race the navigation past an untagged proxy entry.
+  // Step 1: launcher 페이지로 탭 오픈. 캡처된 URL로 직접 navigate
+  // 안 함 — DNR 룰이 아직 없는 상태고 navigation을 untagged proxy
+  // entry 너머로 race할 수 있음.
   const launcherUrl = chrome.runtime.getURL('panel/launcher.html');
   const tab = await chrome.tabs.create({ url: launcherUrl, active: true });
   const newTabId = tab.id;
 
   try {
-    // Step 2: tag this tab's main_frame requests
+    // Step 2: 이 탭의 main_frame 요청 태그
     await addNewTabTagRule(newTabId);
 
-    // Step 3: register the header swap with the proxy (Authorization,
-    // X-*, etc. captured from the original request)
+    // Step 3: 원본 요청에서 캡처된 header swap(Authorization, X-* 등)
+    // 을 프록시에 등록
     const ack = waitForSwapRegistered(3000);
     sendToNative({
       type: 'register_header_swap',
@@ -388,9 +384,9 @@ async function openNewTabForIntercept(payload) {
     });
     await ack;
 
-    // Step 4: store payload so launcher_ready can fetch it. If the
-    // launcher already asked while we were waiting for the ack, fulfill
-    // the parked sendResponse now.
+    // Step 4: payload 저장 → launcher_ready가 fetch 가능. ack 대기
+    // 중에 launcher가 이미 물었다면 parked된 sendResponse를 지금
+    // fulfill.
     const parked = pendingLaunchWaiters.get(newTabId);
     if (parked) {
       pendingLaunchWaiters.delete(newTabId);
@@ -409,8 +405,8 @@ async function openNewTabForIntercept(payload) {
   }
 }
 
-// Launcher page asks for its payload as soon as it loads. We respond
-// directly so the page can fire the navigation/form submit.
+// launcher 페이지가 로드되자마자 페이로드 요청. 우리가 직접 응답해서
+// 페이지가 navigation/form submit을 발화 가능하도록.
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!sender || sender.id !== chrome.runtime.id) return;
   if (!msg || msg.type !== 'launcher_ready') return;
@@ -424,14 +420,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     pendingLaunches.delete(tabId);
     sendResponse({ ok: true, payload });
   } else {
-    // Setup not done yet — park sendResponse and let
-    // openNewTabForIntercept fulfill it once the ack lands.
+    // Setup 아직 미완 — sendResponse를 park하고 ack 도착 시
+    // openNewTabForIntercept가 fulfill하도록.
     pendingLaunchWaiters.set(tabId, sendResponse);
-    return true; // keep the message channel open for async response
+    return true; // async 응답을 위해 메시지 채널 열린 상태 유지
   }
 });
 
-// Tab closed — drop any rules and pending state for that tab.
+// 탭 닫힘 — 그 탭의 룰과 pending 상태 모두 드롭.
 chrome.tabs.onRemoved.addListener((tabId) => {
   removeNewTabTagRule(tabId);
   pendingLaunches.delete(tabId);
@@ -443,17 +439,16 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 // ============================================================
-// 6. Setup page: check_native handler
+// 6. Setup 페이지: check_native 핸들러
 // ============================================================
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  // Only accept messages from this extension's own contexts. Ignore
-  // anything from external extensions, content scripts on web pages,
-  // or other origins to avoid hostile pages probing the Native
-  // Messaging host through us.
+  // 이 확장의 자체 컨텍스트에서 오는 메시지만 수락. 외부 확장,
+  // 웹 페이지의 content script, 다른 origin은 무시 → 적대적 페이지가
+  // 우리를 통해 Native Messaging 호스트를 probe하는 것을 방지.
   if (!sender || sender.id !== chrome.runtime.id) return;
   if (!msg || msg.type !== 'check_native') return;
 
-  // Try connecting to the native host to verify it's installed
+  // native host 연결 시도 → 설치 여부 확인
   let testPort = null;
   try {
     testPort = chrome.runtime.connectNative(NATIVE_HOST_NAME);
@@ -470,9 +465,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   testPort.onMessage.addListener((response) => {
     clearTimeout(timeout);
     if (response.type === 'host_ready') {
-      // Host is working — shut it down and report success
+      // 호스트 동작 — 종료하고 성공 보고
       try { testPort.disconnect(); } catch {}
-      // If no panel was using the native port, keep nativePort null
+      // 어떤 panel도 native port를 쓰고 있지 않았으면 nativePort는 null 유지
       sendResponse({ connected: true });
     }
   });
@@ -487,18 +482,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // ============================================================
-// 6b. Replay fetch via background (CORS bypass)
+// 6b. Background를 통한 Replay fetch (CORS bypass)
 //
-// The Replay tab normally sends its requests from the inspected page
-// context (so the page's cookies, sessionStorage tokens, etc. all
-// apply). Cross-origin requests from a page hit the regular CORS
-// gates, so a request from www.example.com to static.example.com
-// fails when the asset host doesn't return Access-Control-Allow-Origin.
+// Replay 탭은 보통 inspected 페이지 컨텍스트에서 요청을 보냄(페이지의
+// 쿠키, sessionStorage 토큰 등이 적용되도록). 페이지에서의 cross-origin
+// 요청은 일반 CORS 게이트에 걸리므로, www.example.com에서
+// static.example.com으로의 요청은 자산 호스트가 Access-Control-Allow-
+// Origin을 반환하지 않으면 실패.
 //
-// As a fallback the panel can re-issue the same request from the
-// service worker, which has <all_urls> host_permissions and is not
-// subject to page-level CORS. Cookies still ride along via
-// credentials:'include' for SameSite=Lax/None hosts.
+// fallback으로 panel은 같은 요청을 service worker에서 재발행 가능.
+// service worker는 <all_urls> host_permissions가 있고 page-level
+// CORS 적용을 받지 않음. 쿠키는 credentials:'include'로 SameSite=Lax/
+// None 호스트에 여전히 따라감.
 // ============================================================
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!sender || sender.id !== chrome.runtime.id) return;
@@ -545,7 +540,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // ============================================================
-// 7. Proxy error listener
+// 7. Proxy 에러 리스너
 // ============================================================
 chrome.proxy.onProxyError.addListener((details) => {
   broadcastToPanels({

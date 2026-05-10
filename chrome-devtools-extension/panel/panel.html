@@ -35,7 +35,7 @@
           </div>
         </div>
 
-    <!-- Network tab -->
+    <!-- Network 탭 -->
     <section id="network" class="tab-content active">
       <div class="toolbar">
         <button id="network-reload" class="btn" title="Hard reload the inspected tab (bypasses cache so cached CSS/JS/images get re-captured)">Reload</button>
@@ -138,7 +138,7 @@
             <button id="detail-close" class="btn detail-close-btn">X</button>
           </div>
 
-          <!-- Message tab: vertical Request / Response split with raw HTTP -->
+          <!-- Message 탭: raw HTTP의 수직 Request/Response split -->
           <div id="detail-message" class="detail-content active">
             <div class="msg-split">
               <div class="msg-pane msg-request" id="msg-request-pane">
@@ -195,9 +195,9 @@
       </div>
     </section>
 
-    <!-- Intercept tab -->
+    <!-- Intercept 탭 -->
     <section id="intercept" class="tab-content">
-      <!-- Top: Control bar (single row; secondary controls collapse into Rules popover) -->
+      <!-- Top: 컨트롤 바 (single row; 보조 컨트롤은 Rules popover로 collapse) -->
       <div class="toolbar icpt-toolbar">
         <button id="icpt-toggle" class="btn btn-intercept-off">Intercept OFF</button>
         <span id="icpt-proxy-status" class="icpt-status-pill">Idle</span>
@@ -221,7 +221,7 @@
           title="Shortcuts: F=Forward · G=Forward Modified · D=Drop · R=Mock Response · A=Forward All · Q=Drop All">?</button>
       </div>
 
-      <!-- Auto-forward extensions + custom bypass regex (collapsed by default) -->
+      <!-- Auto-forward 확장자 + 커스텀 bypass regex (기본 collapsed) -->
       <div class="toolbar icpt-rules-bar hidden">
         <span class="icpt-rules-label">Auto-forward:</span>
         <div class="icpt-ext-filters">
@@ -239,10 +239,10 @@
         <button id="icpt-bypass-apply" class="btn btn-xs">Apply</button>
       </div>
 
-      <!-- Main: Request/Response left/right split -->
+      <!-- Main: Request/Response 좌우 split -->
       <div class="icpt-main-area">
         <div class="icpt-dual-split">
-          <!-- Left: Request -->
+          <!-- Left: Request 사이드 -->
           <div class="icpt-side icpt-req-side" data-side="req">
             <div class="icpt-side-header">
               <span>Request</span>
@@ -292,7 +292,7 @@
 
           <div class="split-gutter split-gutter-h"></div>
 
-          <!-- Right: Response -->
+          <!-- Right: Response 사이드 -->
           <div class="icpt-side icpt-resp-side" data-side="resp">
             <div class="icpt-side-header">
               <span>Response</span>
@@ -332,7 +332,7 @@
 
         <div class="split-gutter split-gutter-v"></div>
 
-        <!-- Bottom: Shared log -->
+        <!-- Bottom: 공유 로그 -->
         <div class="icpt-log-strip">
           <div class="icpt-log-header">
             <span>Log</span>
@@ -348,7 +348,7 @@
 
   </div>
 
-  <!-- Auto Crawl modal -->
+  <!-- Auto Crawl 모달 -->
   <div id="crawl-modal" class="crawl-modal hidden">
     <div class="crawl-modal-content">
       <div class="crawl-modal-header">
@@ -381,7 +381,7 @@
     </div>
   </div>
 
-  <!-- Import confirmation (Overwrite / Append / Cancel) -->
+  <!-- Import 확인 (Overwrite / Append / Cancel) -->
   <div id="import-confirm-modal" class="crawl-modal hidden">
     <div class="crawl-modal-content" style="width:380px">
       <div class="crawl-modal-header">
@@ -398,7 +398,7 @@
     </div>
   </div>
 
-  <!-- Toast (transient bottom-center notification) -->
+  <!-- Toast (하단 중앙의 일시 알림) -->
   <div id="dtpp-toast" class="dtpp-toast"></div>
 
   <script src="panel.js"></script>

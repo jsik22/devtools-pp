@@ -1,10 +1,10 @@
 // ============================================================
-// DevTools Inspector Panel - Main Script
+// DevTools Inspector Panel - 메인 스크립트
 // ============================================================
 
 const tabId = chrome.devtools.inspectedWindow.tabId;
 
-// --- Tab switching ---
+// --- 탭 전환 ---
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -15,7 +15,7 @@ document.querySelectorAll('.tab').forEach(tab => {
 });
 
 // ============================================================
-// 0. Site Map — Passive collection + tree view
+// 0. Site Map — 패시브 수집 + 트리 뷰
 // ============================================================
 
 // sitemapTree[mainHost] = {
@@ -24,19 +24,18 @@ document.querySelectorAll('.tab').forEach(tab => {
 //   external: { extHost: { children, requests } },
 //   _lastVisitedUrl, _lastVisitedAt
 // }
-// Top-level keys are always "main hosts" — origins the user actually
-// landed on during this session. Cross-origin requests get attributed
-// to whichever main host was active at capture time, nested under
-// that main host's `external` map.
+// 최상위 키는 항상 "main hosts" — 이번 세션에서 사용자가 실제로
+// 방문한 origin. cross-origin 요청은 캡처 시점에 활성화된 main host에
+// 귀속되어 해당 main host의 `external` map 아래로 들어간다.
 const sitemapTree = {};
 let targetHost = null;
-// Currently-selected tree node — drives the right-pane source viewer
-// and the row's `.selected` highlight. Cleared by the close button.
+// 현재 선택된 트리 노드 — 우측 패널 소스 뷰어와 행의 `.selected`
+// 하이라이트를 결정. close 버튼으로 해제.
 let sitemapSelectedNode = null; // { host, path }
-const expandedNodes = new Set(); // tracks expanded tree node keys (e.g. "host:/path")
+const expandedNodes = new Set(); // 펼쳐진 트리 노드 키 추적 (예: "host:/path")
 
-// Requests captured before the first targetHost is known wait here
-// and are flushed once we know which main host owns them.
+// 첫 targetHost 확정 전에 캡처된 요청은 여기 대기하다가
+// 어느 main host에 귀속되는지 확정되면 flush.
 const _sitemapPending = [];
 
 function ensureTargetInTree() {
@@ -52,19 +51,18 @@ function _flushSitemapPending() {
   if (!targetHost) return;
   while (_sitemapPending.length > 0) {
     const r = _sitemapPending.shift();
-    // Pre-targetHost captures missed the _mainHost stamp at capture
-    // time. Now that we know the main host, retro-stamp them so they
-    // align with the tree's session attribution.
+    // targetHost 확정 이전에 캡처된 요청은 _mainHost 스탬프가 없음.
+    // 이제 main host를 알게 됐으니 retro-stamp 해서 트리의 세션 귀속과
+    // 정렬.
     if (r._mainHost == null) r._mainHost = targetHost;
     addToSitemap(r);
   }
 }
 
 function detectTargetHost() {
-  // Pull both host and href so the initial page (which doesn't trigger
-  // onNavigated) still gets a _lastVisitedUrl — without it the host
-  // would later be filtered out of the visited-hosts list when the
-  // user navigates away.
+  // host와 href 둘 다 가져와서 초기 페이지(onNavigated가 발화하지 않는
+  // 케이스)도 _lastVisitedUrl을 갖도록 함 — 없으면 사용자가 다른 곳으로
+  // 이동했을 때 visited-hosts 목록에서 host가 필터링돼 사라짐.
   const expr = 'JSON.stringify({host: location.host, href: location.href})';
   chrome.devtools.inspectedWindow.eval(expr, (result, err) => {
     if (err || !result) return;
@@ -80,9 +78,9 @@ function detectTargetHost() {
     }
     _flushSitemapPending();
     renderSitemapTree();
-    // Tab for the initial inspected page — DevTools++ opened on an
-    // already-loaded page won't see an onNavigated event, so seed
-    // the tab here so the user has something to scope into.
+    // 초기 inspected 페이지의 tab — DevTools++가 이미 로드된 페이지에서
+    // 열리면 onNavigated 이벤트가 발화하지 않으므로 여기서 tab을 시드해서
+    // 사용자가 곧바로 scope에 잡을 수 있게 함.
     if (typeof ensureTab === 'function') {
       ensureTab(targetHost);
       if (typeof setActiveTab === 'function') setActiveTab(targetHost);
@@ -98,28 +96,27 @@ chrome.devtools.network.onNavigated.addListener((url) => {
     detectTargetHost();
     return;
   }
-  // Preserve-log-style: hosts visited earlier in the session stay in
-  // the tree. Only Clear wipes them. The current target moves to the
-  // top of the tree; everything else cascades into "External".
+  // Preserve-log 방식: 세션에서 먼저 방문한 host는 트리에 남음.
+  // Clear만 트리를 비움. 현재 target이 트리 상단으로 이동하고
+  // 나머지는 모두 "External"로 들어감.
   targetHost = newHost;
   if (newHost) {
     if (!sitemapTree[newHost]) {
       sitemapTree[newHost] = { children: {}, requests: [], external: {} };
     }
     if (!sitemapTree[newHost].external) sitemapTree[newHost].external = {};
-    // Track the most recent URL/time the user landed on this host so
-    // the tree row tooltip can show "where they were last".
+    // 사용자가 이 host에서 마지막으로 머문 URL/시간을 추적해서
+    // 트리 행 툴팁에 "where they were last"를 표시할 수 있게 함.
     sitemapTree[newHost]._lastVisitedUrl = url;
     sitemapTree[newHost]._lastVisitedAt = Date.now();
   }
   ensureTargetInTree();
   _flushSitemapPending();
   renderSitemapTree();
-  // Browser-side navigation = user's analysis focus shifted. Pull the
-  // host's tab to active so the list / detail follow. Revisiting an
-  // earlier host reuses its existing tab (ensureTab is idempotent
-  // and setActiveTab no-ops when already active), so accumulation
-  // continues seamlessly.
+  // 브라우저 측 navigation = 사용자의 분석 포커스가 이동. 해당 host의
+  // 탭을 활성화해서 list/detail이 따라오게 함. 이전 host로 돌아가면
+  // 기존 tab을 재사용 (ensureTab은 idempotent, setActiveTab은 이미
+  // 활성이면 no-op) → 누적이 자연스럽게 이어짐.
   if (newHost) {
     if (typeof ensureTab === 'function') {
       ensureTab(newHost);
@@ -129,9 +126,8 @@ chrome.devtools.network.onNavigated.addListener((url) => {
 });
 const sitemapTreeEl = document.getElementById('sitemap-tree');
 
-// Auto Crawl: drives the inspected tab through a list of URLs while
-// Network monitoring records everything. Useful for sweeping a known
-// set of targets in one sitting.
+// Auto Crawl: Network 모니터링이 모두 기록하는 동안 inspected tab을
+// URL 리스트대로 순차 방문. 한 번에 알려진 타겟을 일괄 훑을 때 유용.
 const crawlState = {
   active: false,
   urls: [],
@@ -172,7 +168,7 @@ function startCrawl() {
   const waitVal = parseInt(document.getElementById('crawl-wait').value, 10);
   const waitSec = Math.min(30, Math.max(1, isNaN(waitVal) ? 5 : waitVal));
 
-  // Auto-start network monitoring if not already on
+  // 모니터링이 꺼져 있으면 자동으로 켜기
   if (!networkMonitoring) startNetworkMonitoring();
 
   crawlState.active = true;
@@ -180,7 +176,7 @@ function startCrawl() {
   crawlState.index = 0;
   crawlState.waitMs = waitSec * 1000;
 
-  // UI: lock inputs, swap Start → Stop, reveal progress block
+  // UI: 입력 잠금, Start → Stop으로 교체, progress 블록 표시
   document.getElementById('crawl-urls').disabled = true;
   document.getElementById('crawl-wait').disabled = true;
   document.getElementById('crawl-import-btn').disabled = true;
@@ -202,7 +198,7 @@ function visitNextCrawl() {
   updateCrawlProgress();
   const expr = `location.href = ${JSON.stringify(url)}`;
   chrome.devtools.inspectedWindow.eval(expr, () => {
-    // Errors (chrome:// URLs, blocked, etc.) — skip and continue.
+    // 에러(chrome:// URL, 차단 등) — skip하고 진행.
     if (!crawlState.active) return;
     crawlState.index++;
     crawlState.timeoutId = setTimeout(visitNextCrawl, crawlState.waitMs);
@@ -268,9 +264,9 @@ document.getElementById('crawl-start').addEventListener('click', () => {
   else startCrawl();
 });
 
-// Import .txt — fills the textarea with the file's contents. The
-// textarea stays editable afterward, so users can tweak the imported
-// list (drop unwanted hosts, add a few more) before hitting Start.
+// Import .txt — 파일 내용을 textarea에 채움. import 후에도 textarea는
+// 편집 가능 → 사용자가 import한 목록을 다듬을 수 있음(원치 않는 host 제거,
+// 몇 개 추가) → Start 누르기 전에.
 const _crawlImportFile = document.getElementById('crawl-import-file');
 document.getElementById('crawl-import-btn').addEventListener('click', () => {
   _crawlImportFile.click();
@@ -278,8 +274,8 @@ document.getElementById('crawl-import-btn').addEventListener('click', () => {
 _crawlImportFile.addEventListener('change', (e) => {
   const file = e.target.files && e.target.files[0];
   if (!file) return;
-  // Soft size cap — 200-URL limit produces a tiny file in normal use,
-  // so anything bigger than 256 KB is almost certainly the wrong file.
+  // 소프트 사이즈 상한 — 200-URL 제한이라 정상 사용 시 파일이 매우 작음.
+  // 256 KB 초과면 거의 확실히 잘못된 파일.
   if (file.size > 256 * 1024) {
     showToast('File too large (max 256 KB)');
     e.target.value = '';
@@ -294,16 +290,15 @@ _crawlImportFile.addEventListener('change', (e) => {
     showToast('Failed to read file');
   };
   reader.readAsText(file);
-  // Reset so re-selecting the same filename re-fires the change event.
+  // 동일 파일명 재선택 시에도 change 이벤트 재발화하도록 reset.
   e.target.value = '';
 });
 
 document.getElementById('network-reload').addEventListener('click', () => {
-  // Hard reload — bypass the HTTP cache so cached CSS / JS / images
-  // come back through the network layer and land in the capture. A
-  // normal reload would let the browser serve them from the cache
-  // and skip the chrome.devtools.network event entirely, which would
-  // leave the tree / list with silent gaps.
+  // Hard reload — HTTP 캐시 bypass로 캐시된 CSS/JS/이미지가 네트워크
+  // 레이어로 다시 와서 캡처에 잡히도록. 일반 reload는 브라우저가
+  // 캐시에서 서빙하면서 chrome.devtools.network 이벤트를 아예
+  // 건너뛰어 트리/리스트에 silent gap이 생김.
   chrome.devtools.inspectedWindow.reload({ ignoreCache: true });
 });
 
@@ -327,23 +322,23 @@ function addToSitemap(req) {
   const pathname = parsed.pathname || '/';
   const segments = pathname.split('/').filter(Boolean);
 
-  // No main host known yet — buffer until detectTargetHost / onNavigated
-  // assigns one, then this request will be replayed.
+  // 아직 main host가 확정되지 않음 — detectTargetHost/onNavigated가
+  // 할당할 때까지 버퍼에 보관, 그 후 이 요청을 replay.
   if (!targetHost) {
     _sitemapPending.push(req);
     return;
   }
 
-  // Ensure the active main host node exists.
+  // 활성 main host 노드 보장.
   if (!sitemapTree[targetHost]) {
     sitemapTree[targetHost] = { children: {}, requests: [], external: {} };
   }
   const mainNode = sitemapTree[targetHost];
   if (!mainNode.external) mainNode.external = {};
 
-  // Pick the bucket: same-origin requests go into the main host's own
-  // path tree; cross-origin requests go under that main host's
-  // `external` map (one entry per external host).
+  // 버킷 선택: same-origin 요청은 main host의 path 트리로,
+  // cross-origin 요청은 해당 main host의 `external` map 아래로
+  // (external host당 1 엔트리).
   let node;
   if (host === targetHost) {
     node = mainNode;
@@ -361,7 +356,7 @@ function addToSitemap(req) {
     node = node.children[seg];
   }
 
-  // Dedup: skip if same method + url + status combination exists
+  // Dedup: 동일 method + url + status 조합 있으면 skip
   const isDup = node.requests.some(r => r.method === req.method && r.url === req.url && r.status === req.status);
   if (!isDup) {
     node.requests.push(req);
@@ -370,10 +365,10 @@ function addToSitemap(req) {
   scheduleSitemapRender();
 }
 
-// Throttled tree render for the per-request hot path. Renders at most
-// once per animation frame, and defers rendering while the user has a
-// control inside the tree focused (open Set Scope <select>) so a
-// burst of incoming requests doesn't tear the dropdown down mid-click.
+// per-request hot path용 throttled 트리 렌더. animation frame당 최대
+// 1회 렌더링하고, 사용자가 트리 내부 컨트롤(열려 있는 Set Scope
+// <select>)에 포커스 중이면 렌더링 deferral → burst로 들어오는 요청이
+// dropdown을 클릭 도중에 destroy하지 않도록.
 let _sitemapRenderRaf = 0;
 function scheduleSitemapRender() {
   if (_sitemapRenderRaf) return;
@@ -381,8 +376,8 @@ function scheduleSitemapRender() {
     _sitemapRenderRaf = 0;
     const active = document.activeElement;
     if (active && active.closest && active.closest('.sitemap-tree')) {
-      // Try again next frame — defer until the user finishes
-      // interacting with the tree.
+      // 다음 frame에 재시도 — 사용자가 트리와의 상호작용을 끝낼
+      // 때까지 defer.
       scheduleSitemapRender();
       return;
     }
@@ -392,9 +387,9 @@ function scheduleSitemapRender() {
 
 
 function matchesSitemapFilters(req) {
-  // Site Map's only filter is the global Scope — out-of-scope captured
-  // requests get hidden from the tree until the user clears the scope.
-  // Type/Status filtering lives exclusively in the Network tab now.
+  // Site Map의 유일한 필터는 글로벌 Scope — 스코프 밖 캡처 요청은
+  // 사용자가 scope를 clear할 때까지 트리에서 숨김.
+  // Type/Status 필터링은 이제 Network 탭에만 있음.
   return inGlobalScope(req.url);
 }
 
@@ -422,7 +417,7 @@ function renderSitemapTree() {
     return;
   }
 
-  // Target host always shown first
+  // Target host 항상 먼저 표시
   if (targetHost) {
     ensureTargetInTree();
     const hostNode = sitemapTree[targetHost];
@@ -430,10 +425,10 @@ function renderSitemapTree() {
     if (hostEl) sitemapTreeEl.appendChild(hostEl);
   }
 
-  // Previously-visited hosts (non-target main hosts the user actually
-  // navigated to). Each one renders at the top level beneath the
-  // current target; their cross-origin requests live nested inside
-  // each main host's own External group (handled by buildTreeNode).
+  // 이전 방문 host (사용자가 실제로 이동한 non-target main host).
+  // 각각 현재 target 아래 최상위 레벨로 렌더; 그들의 cross-origin
+  // 요청은 각 main host의 자체 External 그룹 안에 중첩됨
+  // (buildTreeNode가 처리).
   const visitedHosts = hosts.filter(h =>
     h !== targetHost && sitemapTree[h]._lastVisitedUrl
   );
@@ -443,10 +438,10 @@ function renderSitemapTree() {
   }
 }
 
-// Per-main-host External group. Lives as a child of the main host's
-// own tree node so each visited site keeps its third-party traffic
-// scoped to itself. Toggle key includes the main host so different
-// sites' external groups expand independently.
+// per-main-host External 그룹. main host 자체 트리 노드의 자식으로
+// 존재해서 각 방문 site가 자기 third-party 트래픽을 분리 보관. toggle
+// key에 main host를 포함하여 사이트마다 external 그룹이 독립적으로
+// 펼쳐짐.
 function buildHostExternalGroup(externalMap, mainHost) {
   const externalHosts = Object.keys(externalMap || {})
     .filter(h => nodeHasFilteredRequests(externalMap[h]))
@@ -507,7 +502,7 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
 
   const wrapper = document.createElement('div');
 
-  // Node row
+  // 노드 행
   const row = document.createElement('div');
   row.className = 'sitemap-node';
   const isHost = currentPath === '';
@@ -517,9 +512,8 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
       sitemapSelectedNode.path === fullPath) {
     row.classList.add('selected');
   }
-  // Highlight whichever host is the currently-active inspected page,
-  // and show "where the user last was on this host" as a tooltip on
-  // any host that's been visited during this session.
+  // 현재 활성 inspected 페이지인 host를 강조하고, 이번 세션에 방문한
+  // 모든 host에 "이 host에서 마지막으로 머문 곳"을 툴팁으로 표시.
   if (isHost) {
     if (host === targetHost) row.classList.add('sitemap-node-target');
     if (node._lastVisitedUrl) {
@@ -528,7 +522,7 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
     }
   }
 
-  // Toggle icon
+  // Toggle 아이콘
   const nodeKey = host + ':' + fullPath;
   const isExpanded = expandedNodes.has(nodeKey);
   const toggle = document.createElement('span');
@@ -536,13 +530,13 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
   toggle.textContent = hasChildren ? (isExpanded ? '▼' : '▶') : '';
   row.appendChild(toggle);
 
-  // Icon
+  // 아이콘
   const icon = document.createElement('span');
   icon.className = 'sitemap-node-icon';
   icon.textContent = isHost ? '🌐' : (hasPathChildren ? '📁' : '📄');
   row.appendChild(icon);
 
-  // Label
+  // 라벨
   const labelEl = document.createElement('span');
   labelEl.className = 'sitemap-node-label';
   labelEl.textContent = label;
@@ -556,9 +550,9 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
     row.appendChild(countEl);
   }
 
-  // Host-only: "Set Scope" dropdown on hover — pin this domain (or its
-  // wildcard form) as the global scope. Cuts down on Intercept noise
-  // without forcing the user to type the pattern by hand.
+  // host 전용: hover 시 "Set Scope" 드롭다운 — 이 도메인(또는 와일드카드
+  // 형태)을 글로벌 scope로 고정. 사용자가 패턴을 직접 입력하지 않고
+  // Intercept 노이즈를 줄일 수 있게 함.
   if (isHost) {
     const scopeSelect = document.createElement('select');
     scopeSelect.className = 'btn btn-xs sitemap-scope-select';
@@ -597,7 +591,7 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
 
   wrapper.appendChild(row);
 
-  // Children container (restore expanded state)
+  // 자식 컨테이너 (펼침 상태 복원)
   const childrenEl = document.createElement('div');
   childrenEl.className = isExpanded ? 'sitemap-children' : 'sitemap-children collapsed';
 
@@ -608,8 +602,8 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
     if (childEl) childrenEl.appendChild(childEl);
   }
 
-  // Per-host External group — only on the main-host row, only if any
-  // external host has filtered requests to show.
+  // per-host External 그룹 — main-host 행에만, external host 중 표시할
+  // 필터링된 요청이 있을 때만.
   if (hasExternalChildren) {
     const extGroup = buildHostExternalGroup(node.external, host);
     if (extGroup) childrenEl.appendChild(extGroup);
@@ -619,8 +613,8 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
     wrapper.appendChild(childrenEl);
   }
 
-  // Toggle helper — expands or collapses this node's children. Used
-  // by both the explicit toggle arrow and the row-click fallback.
+  // Toggle helper — 이 노드의 자식을 펼치거나 접음. 명시적 toggle
+  // 화살표와 row-click fallback 양쪽에서 사용.
   function toggleExpanded() {
     const collapsed = childrenEl.classList.toggle('collapsed');
     toggle.textContent = collapsed ? '▶' : '▼';
@@ -632,40 +626,33 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
     toggleExpanded();
   });
 
-  // Row click — opens the source viewer for the latest captured
-  // request at this exact node, mirroring DevTools' Sources tab where
-  // clicking a file shows its contents on the right. Nodes with no
-  // direct request (intermediate paths that only have descendants)
-  // fall back to expand/collapse so every row stays clickable.
-  // Tree click — when the node has a directly-captured request,
-  // jump to it in the Network list (selectNetworkRequest opens the
-  // detail panel and highlights the row). Intermediate path nodes
-  // with only descendants fall back to expand/collapse so every row
-  // stays clickable.
+  // 트리 클릭 — 노드에 직접 캡처된 요청이 있으면 Network 리스트의
+  // 그 요청으로 점프 (selectNetworkRequest가 detail 패널을 열고 행을
+  // 강조). 자식만 있는 중간 경로 노드는 expand/collapse로 fallback해서
+  // 모든 행이 클릭 가능하게 유지.
   row.addEventListener('click', (e) => {
-    // Ignore clicks that landed on the host's Set Scope dropdown — it
-    // has its own change handler and shouldn't double-trigger the row.
+    // host의 Set Scope 드롭다운에 떨어진 클릭은 무시 — 자체 change
+    // 핸들러가 있고 row를 이중 트리거하면 안 됨.
     if (e.target.closest('.sitemap-scope-select')) return;
     if (node.requests.length > 0) {
       const latest = node.requests[node.requests.length - 1];
       if (latest && latest.requestId && networkRequestMap.has(latest.requestId)) {
-        // Switch the active tab only when the click landed on a main
-        // host (top-level in sitemapTree, which == tabHosts entry).
-        // External-host nodes (under some main host's `external` map)
-        // don't get their own tabs, so leave the current tab alone
-        // and just open the detail.
+        // main host(sitemapTree의 최상위 = tabHosts entry)에 떨어진
+        // 클릭일 때만 활성 탭 전환. external-host 노드(어떤 main host의
+        // `external` map 아래)는 자체 탭이 없으므로 현재 탭은 그대로
+        // 두고 detail만 연다.
         const reqHost = _reqHost(latest);
         if (reqHost && reqHost !== activeTabHost && tabHosts.indexOf(reqHost) >= 0) {
           setActiveTab(reqHost);
         }
         sitemapSelectedNode = { host, path: fullPath };
         selectNetworkRequest(latest.requestId, { scroll: true });
-        renderSitemapTree(); // refresh .selected highlight
+        renderSitemapTree(); // .selected 하이라이트 갱신
         return;
       }
-      // Captured outside of monitoring → not in the Network detail
-      // map. Surface a hint instead of a silent no-op so the user
-      // knows the row was clickable but produced nothing.
+      // 모니터링 밖에서 캡처됨 → Network detail map에 없음. silent no-op
+      // 대신 힌트를 띄워서 사용자가 행이 클릭 가능했지만 결과가 없었다는
+      // 걸 알게 함.
       showToast('Start Monitoring to inspect this request');
       return;
     }
@@ -676,15 +663,14 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
 }
 
 // ============================================================
-// Send to Browser — open captured request in a new tab so it goes
-// through the proxy and lands in the original panel's Intercept queue.
+// Send to Browser — 캡처된 요청을 새 탭에서 열어 프록시를 거쳐
+// 원본 패널의 Intercept 큐에 도착하게 함.
 // ============================================================
 
-// Browser-managed headers we strip from the swap payload — sending
-// these would either be redundant or fight with what the new tab's
-// browser-set values should naturally be (Cookie comes from the jar,
-// Origin/Referer reflect the launcher tab, Content-Type is set by the
-// form-submit / GET semantics).
+// 브라우저가 관리하는 헤더는 swap payload에서 제거 — 보내봐야
+// 새 탭의 브라우저 자체 값과 충돌하거나 중복임 (Cookie는 jar에서,
+// Origin/Referer는 launcher 탭이 결정, Content-Type은 form-submit/GET
+// 의미가 결정).
 const BROWSER_MANAGED_HEADERS_S2B = new Set([
   'cookie', 'host', 'origin', 'referer', 'user-agent',
   'accept', 'accept-encoding', 'accept-language',
@@ -700,9 +686,9 @@ function _filterHeadersForSwap(headers) {
   for (const [name, value] of Object.entries(headers || {})) {
     if (BROWSER_MANAGED_HEADERS_S2B.has(name.toLowerCase())) continue;
     // HTTP/2 pseudo-headers (:authority / :method / :path / :scheme /
-    // :status) appear in captures whenever Chrome talked to the origin
-    // over h2. They are invalid in HTTP/1.1 token names and would crash
-    // node's http.request() if forwarded — drop them.
+    // :status)는 Chrome이 origin과 h2로 통신할 때 캡처에 들어옴.
+    // HTTP/1.1 token 이름으로는 invalid라 forward하면 node http.request()
+    // 가 crash — drop.
     if (name.startsWith(':')) continue;
     out[name] = value;
   }
@@ -757,7 +743,7 @@ function _parseFormUrlencodedFields(body) {
     try {
       name = decodeURIComponent(rawName.replace(/\+/g, ' '));
       value = decodeURIComponent(rawValue.replace(/\+/g, ' '));
-    } catch { /* malformed encoding — pass through raw */ }
+    } catch { /* 잘못된 인코딩 — raw 그대로 통과 */ }
     fields.push({ name, value });
   }
   return fields;
@@ -783,9 +769,9 @@ function sendToBrowserNewTab() {
     payload.fields = _parseFormUrlencodedFields(req.requestPostData || '');
     payload.enctype = 'application/x-www-form-urlencoded';
   }
-  // Background handles tab creation, DNR tagging, and header-swap
-  // registration as one async sequence. We get a `send_to_browser_error`
-  // broadcast back if anything fails.
+  // Background가 tab 생성/DNR 태깅/header-swap 등록을 한 묶음의 async
+  // 시퀀스로 처리. 실패하면 `send_to_browser_error` 브로드캐스트가
+  // 돌아옴.
   sendToBg({
     type: 'open_new_tab_for_intercept',
     payload,
@@ -804,11 +790,10 @@ function updateSendToBrowserButton() {
     btn.title = 'Select a request first';
     return;
   }
-  // Replay edit mode is mutually exclusive with Send to Browser — the
-  // user is editing a request to fire via fetch, sending to a new tab
-  // would either compete with that or silently send the un-edited
-  // captured request, both of which are surprising. Lock the button
-  // until they exit replay edit.
+  // Replay edit 모드는 Send to Browser와 상호 배타 — 사용자가 fetch로
+  // 발화할 요청을 편집 중인데 새 탭으로 보내면 그것과 경쟁하거나
+  // 편집되지 않은 캡처 요청이 silently 전송됨. 둘 다 놀라움. replay
+  // edit 종료까지 버튼 잠금.
   if (msgReplayEditing) {
     btn.disabled = true;
     btn.title = 'Exit Replay edit (click ↻ Replay again) to use Send to Browser';
@@ -825,35 +810,33 @@ document.getElementById('detail-send-to-browser').addEventListener('click', send
 
 
 // ============================================================
-// 1. Network monitoring (using chrome.devtools.network API - no debugger needed)
+// 1. Network 모니터링 (chrome.devtools.network API 사용 — debugger 불필요)
 // ============================================================
 const networkRequests = [];
-const networkRequestMap = new Map(); // requestId -> request object
+const networkRequestMap = new Map(); // requestId -> request 객체
 let networkMonitoring = false;
 let selectedRequestId = null;
 let networkIdCounter = 0;
 
-// Per-host tabs above the Network list. Each captured host gets its
-// own tab the first time a request lands; the active tab acts as a
-// host filter on the global networkRequests array (data isn't
-// duplicated per tab — a single source plus a render-time filter).
-// Browser navigation auto-switches the active tab; revisiting an
-// earlier host reuses its existing tab so accumulation continues.
-const tabHosts = []; // ordered list of host strings (display order)
+// Network 리스트 상단의 host별 탭. 각 캡처된 host는 첫 요청이 떨어질
+// 때 자체 탭을 받음; 활성 탭은 전역 networkRequests 배열에 host 필터로
+// 작동(탭마다 데이터 복제 없음 — 단일 소스 + 렌더 타임 필터).
+// 브라우저 navigation은 활성 탭 자동 전환; 이전 host로 돌아오면 기존
+// 탭 재사용해서 누적 이어짐.
+const tabHosts = []; // host 문자열 정렬 리스트 (표시 순서)
 let activeTabHost = null;
 
-// Multi-select for export. Tracks request IDs the user has checked via
-// the per-row checkbox or master checkbox; independent from
-// selectedRequestId (which drives the detail panel).
+// Export용 멀티 선택. 사용자가 행별 체크박스 또는 master 체크박스로
+// 체크한 request ID 추적; selectedRequestId(detail 패널 드라이브)와는
+// 독립.
 const selectedExportIds = new Set();
-let _lastCheckedReqId = null; // anchor for shift-click range selection
+let _lastCheckedReqId = null; // shift-click 범위 선택의 앵커
 
-// View filter — multi-select Type (mime category) + Status (HTTP code
-// range). Empty Set on either side means "no filter on that axis";
-// when both are empty the filter is fully inactive. Independent of
-// Scope (which acts as a domain gate) and Search (which marks but
-// doesn't hide). Applied at render time only — captured data stays
-// intact in networkRequests so toggling filters never loses anything.
+// 뷰 필터 — 멀티 선택 Type (mime 카테고리) + Status (HTTP code 범위).
+// 한 쪽이 빈 Set이면 "그 축은 필터 없음"; 둘 다 비면 필터 완전 비활성.
+// Scope(도메인 게이트)와 Search(마크하지만 숨기지 않음)와는 독립.
+// 렌더 시점에만 적용 — 캡처 데이터는 networkRequests에 그대로 보존되어
+// 필터 토글로 잃지 않음.
 const networkFilter = {
   types: new Set(),    // 'api' | 'page' | 'script' | 'style' | 'image' | 'font' | 'other'
   statuses: new Set(), // '2xx' | '3xx' | '4xx' | '5xx'
@@ -885,9 +868,9 @@ const networkDetail = document.getElementById('network-detail');
 const networkSplit = document.querySelector('.network-split');
 const networkTabsEl = document.getElementById('network-tabs');
 
-// Pull the host out of a request URL once. Stored on the request the
-// first time it's looked up so repeated tab-filter checks don't
-// re-parse the URL on every render frame.
+// 요청 URL에서 host를 한 번만 추출. 처음 조회될 때 요청에 저장해서
+// 반복되는 tab-filter 체크가 매 렌더 frame마다 URL을 re-parse하지
+// 않도록.
 function _reqHost(req) {
   if (req._host != null) return req._host;
   try { req._host = new URL(req.url).host; }
@@ -895,11 +878,11 @@ function _reqHost(req) {
   return req._host;
 }
 
-// Per-tab visibility mode — 'all' (default) shows the full session
-// (direct hits + externals captured during that session, mirroring the
-// Site Map's main-host → External attribution), 'internal' narrows to
-// direct same-host hits only. Per-tab state so the user can keep, e.g.,
-// github.com on All while sandboxing a focused look on reddit.com.
+// per-tab 가시성 모드 — 'all' (기본)은 전체 세션 표시(direct hit +
+// 그 세션 동안 캡처된 externals, Site Map의 main-host → External 귀속과
+// 동일), 'internal'은 direct same-host hit만으로 좁힘. per-tab 상태라
+// 사용자가 예를 들어 github.com은 All로 두고 reddit.com은 좁혀서 볼 수
+// 있음.
 const tabFilterMode = new Map(); // host → 'all' | 'internal'
 function getTabFilterMode(host) {
   return tabFilterMode.get(host) || 'all';
@@ -908,17 +891,16 @@ function getTabFilterMode(host) {
 function matchesActiveTab(req) {
   if (!activeTabHost) return true;
   if (_reqHost(req) === activeTabHost) return true;
-  // 'internal' mode skips the session-attribution branch — externals
-  // (CDN .map files, analytics, ads) drop out of view.
+  // 'internal' 모드는 session-attribution 분기를 건너뜀 — externals
+  // (CDN .map 파일, analytics, ads)이 뷰에서 빠짐.
   if (getTabFilterMode(activeTabHost) === 'internal') return false;
   if (req._mainHost === activeTabHost) return true;
   return false;
 }
 
-// Make sure a tab exists for the given host. Called from the request
-// pipeline (every captured request) and from explicit user actions
-// (tree click, navigation event). Returns true if a new tab was
-// added — caller can use this to decide whether to redraw.
+// 주어진 host의 탭이 존재하도록 보장. 요청 파이프라인(모든 캡처 요청)
+// 과 명시적 사용자 액션(트리 클릭, navigation 이벤트) 양쪽에서 호출.
+// 새 탭이 추가됐으면 true 반환 — caller가 재렌더 여부 결정에 사용.
 function ensureTab(host) {
   if (!host) return false;
   if (tabHosts.indexOf(host) >= 0) return false;
@@ -930,15 +912,14 @@ function ensureTab(host) {
   return true;
 }
 
-// Switch the active tab. Re-renders all the host-filtered views so
-// the list / count / search-match-set / selection-master all reflect
-// the new tab in one shot.
+// 활성 탭 전환. host-필터링된 모든 뷰를 재렌더해서 list/count/
+// search-match-set/selection-master가 새 탭을 한 번에 반영.
 function setActiveTab(host) {
   if (!host || activeTabHost === host) return;
   ensureTab(host);
   activeTabHost = host;
-  // Stale row highlight from the prior tab — the request might no
-  // longer be in the visible set. Clear before re-rendering.
+  // 이전 탭의 stale 행 하이라이트 — 요청이 이제 보이는 집합에 없을
+  // 수 있음. 재렌더 전 clear.
   if (selectedRequestId) {
     const sel = networkRequestMap.get(selectedRequestId);
     if (!sel || _reqHost(sel) !== host) {
@@ -956,8 +937,8 @@ function setActiveTab(host) {
   }
 }
 
-// Sync the All / Host-only toggle to the active tab's stored mode.
-// Called on tab switch and on each click.
+// All / Host-only 토글을 활성 탭의 저장된 모드와 동기화.
+// 탭 전환 시 + 매 클릭 시 호출.
 function refreshTabModeToggleUI() {
   const wrap = document.getElementById('network-tab-mode-toggle');
   if (!wrap) return;
@@ -965,19 +946,18 @@ function refreshTabModeToggleUI() {
   wrap.querySelectorAll('.tab-mode-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.mode === mode);
   });
-  // Disable when there's no tab to scope into — toggle is meaningless.
+  // scope 잡을 탭이 없으면 disable — 토글이 무의미.
   wrap.classList.toggle('disabled', !activeTabHost);
 }
 
-// Close a tab — wipes that host's captured requests from the global
-// store and drops the corresponding tree subtree so both views
-// agree. The user gets a confirm dialog first because data loss is
-// irreversible (no undo / no buffer).
+// 탭 close — 해당 host의 캡처 요청을 전역 store에서 wipe하고 대응되는
+// 트리 서브트리도 드롭해서 두 뷰가 일치하도록. 데이터 손실이 비가역
+// (undo/버퍼 없음)이라 confirm 다이얼로그를 먼저 띄움.
 function closeTab(host) {
   if (!host) return;
-  // Match the matchesActiveTab predicate so the confirm dialog's count
-  // and the actual wipe target are exactly what the user has been
-  // looking at — direct host hits AND the session's externals.
+  // matchesActiveTab predicate와 매칭해서 confirm 다이얼로그의 카운트와
+  // 실제 wipe 대상이 사용자가 보고 있던 것과 정확히 일치하도록 —
+  // direct host hits + 그 세션의 externals.
   const belongsToTab = r => _reqHost(r) === host || r._mainHost === host;
   const count = networkRequests.filter(belongsToTab).length;
   const msg = count > 0
@@ -985,7 +965,7 @@ function closeTab(host) {
     : `Close tab "${host}"?`;
   if (!window.confirm(msg)) return;
 
-  // Drop matching requests in place (preserves array reference).
+  // 매칭 요청을 in-place로 드롭 (배열 참조 보존).
   for (let i = networkRequests.length - 1; i >= 0; i--) {
     if (belongsToTab(networkRequests[i])) {
       const req = networkRequests[i];
@@ -994,23 +974,22 @@ function closeTab(host) {
       networkRequests.splice(i, 1);
     }
   }
-  // Tree: drop main host bucket + any external-of-other-hosts that
-  // pointed at this host. The ones we own at the top level are the
-  // visible tab's subtree.
+  // 트리: main host 버킷 + 이 host를 가리키던 다른 host들의 external
+  // 항목 모두 드롭. 최상위에 있는 것이 보이는 탭의 서브트리.
   if (sitemapTree[host]) delete sitemapTree[host];
   for (const mainHost of Object.keys(sitemapTree)) {
     const ext = sitemapTree[mainHost].external;
     if (ext && ext[host]) delete ext[host];
   }
-  // Tab list itself.
+  // 탭 리스트 자체.
   const idx = tabHosts.indexOf(host);
   if (idx >= 0) tabHosts.splice(idx, 1);
   if (activeTabHost === host) {
     activeTabHost = tabHosts.length > 0 ? tabHosts[Math.min(idx, tabHosts.length - 1)] : null;
   }
-  // Forget this tab's mode — fresh tabs default to 'all' next time.
+  // 이 탭의 모드 forget — 다음에 열리는 탭은 기본 'all'.
   tabFilterMode.delete(host);
-  // The selection might have pointed at a now-gone request.
+  // selection이 이제 사라진 요청을 가리키고 있을 수 있음.
   if (selectedRequestId && !networkRequestMap.has(selectedRequestId)) {
     closeDetail();
   }
@@ -1034,12 +1013,11 @@ function renderNetworkTabs() {
     return;
   }
   networkTabsEl.classList.remove('hidden');
-  // Per-tab counts mirror what each tab actually shows: a request is
-  // in a tab when its host matches (direct) OR its _mainHost matches
-  // (captured during that session). One walk through networkRequests,
-  // one request can count toward up to two tabs (its host's tab if
-  // any, plus its session host's tab) — that's the correct total
-  // because matchesActiveTab admits both.
+  // per-tab 카운트는 각 탭이 실제로 보여주는 것과 일치: host가 매칭
+  // (direct) 되거나 _mainHost가 매칭(그 세션 동안 캡처됨)된 요청이
+  // 탭에 있음. networkRequests를 한 번 walk; 한 요청이 최대 2개 탭에
+  // 카운트될 수 있음 (host 탭 + session host 탭) — matchesActiveTab이
+  // 둘 다 admit하므로 이 합계가 정확함.
   const counts = new Map();
   const tabSet = new Set(tabHosts);
   for (const r of networkRequests) {
@@ -1063,9 +1041,8 @@ function renderNetworkTabs() {
   _updateExportMenuTabLabels(tabHosts.length);
 }
 
-// Reflect the current active tab + total tab count in the Export
-// menu's section headers so the user can tell at a glance which scope
-// each option will write out.
+// Export 메뉴 섹션 헤더에 현재 활성 탭 + 전체 탭 카운트를 반영해서
+// 사용자가 각 옵션이 어떤 스코프로 export하는지 한눈에 파악 가능.
 function _updateExportMenuTabLabels(tabCount) {
   const tabSec = document.getElementById('export-menu-section-tab');
   const allSec = document.getElementById('export-menu-section-all');
@@ -1081,9 +1058,9 @@ function _updateExportMenuTabLabels(tabCount) {
   }
 }
 
-// Click delegation — switches active tab on label/count click,
-// closes on the X click. data-host carries the target through the
-// re-render so we don't need per-element listeners.
+// 클릭 위임 — label/count 클릭 시 활성 탭 전환, X 클릭 시 close.
+// data-host로 re-render 이후에도 타깃을 전달하므로 element별 리스너
+// 불필요.
 networkTabsEl.addEventListener('click', (e) => {
   const closeEl = e.target.closest('.tab-close');
   if (closeEl) {
@@ -1100,8 +1077,8 @@ document.getElementById('network-start').addEventListener('click', startNetworkM
 document.getElementById('network-stop').addEventListener('click', stopNetworkMonitoring);
 document.getElementById('network-clear').addEventListener('click', clearNetwork);
 
-// All / Host-only toggle. Per-tab — sets the active tab's filter mode
-// and re-renders. The other tabs keep their own modes untouched.
+// All / Host-only 토글. per-tab — 활성 탭의 필터 모드를 설정하고
+// re-render. 다른 탭들은 자기 모드 그대로 유지.
 document.querySelectorAll('#network-tab-mode-toggle .tab-mode-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     if (!activeTabHost) return;
@@ -1120,7 +1097,7 @@ document.querySelectorAll('#network-tab-mode-toggle .tab-mode-btn').forEach(btn 
 });
 refreshTabModeToggleUI();
 
-// Detail panel tab switching
+// Detail 패널 탭 전환
 document.querySelectorAll('.detail-tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
@@ -1128,8 +1105,8 @@ document.querySelectorAll('.detail-tab').forEach(tab => {
     tab.classList.add('active');
     const pane = document.getElementById('detail-' + tab.dataset.detail);
     pane.classList.add('active');
-    // When a search is active, scroll the first match in the newly
-    // shown tab into view so clicking the 🔍 badge is self-explanatory.
+    // 검색 활성 시, 새로 보이는 탭의 첫 매치를 view에 스크롤해서
+    // 🔍 배지 클릭의 의도가 자체 설명되도록.
     if (searchTerm) {
       const firstMark = pane.querySelector('mark.network-search-mark');
       if (firstMark) firstMark.scrollIntoView({ block: 'center' });
@@ -1137,7 +1114,7 @@ document.querySelectorAll('.detail-tab').forEach(tab => {
   });
 });
 
-// Detail panel close
+// Detail 패널 close
 document.getElementById('detail-close').addEventListener('click', closeDetail);
 
 function closeDetail() {
@@ -1148,11 +1125,11 @@ function closeDetail() {
   updateSendToBrowserButton();
 }
 
-// chrome.devtools.network event listener (always active, no attach needed)
+// chrome.devtools.network 이벤트 리스너 (항상 활성, attach 불필요)
 chrome.devtools.network.onRequestFinished.addListener(processNetworkRequest);
 
-// Track URLs+statuses we've already ingested so HAR replay (auto-start)
-// doesn't re-add the same entries the live listener already processed.
+// 이미 인제스트한 URL+status 추적 — HAR replay(auto-start)가 라이브
+// 리스너가 이미 처리한 동일 entry를 중복 추가하지 않도록.
 const _ingestedRequestKeys = new Set();
 function _ingestKey(harEntry) {
   const startedDateTime = harEntry.startedDateTime || '';
@@ -1160,23 +1137,23 @@ function _ingestKey(harEntry) {
 }
 
 function processNetworkRequest(harEntry) {
-  // Skip data: URIs entirely — they're inline payloads, not real
-  // network traffic, and a single page can produce hundreds of them
-  // (icons, etc.) that would only flood the list and slow scanning.
+  // data: URI는 완전히 skip — 인라인 페이로드라 실제 네트워크 트래픽이
+  // 아니고, 한 페이지에서 수백 개(아이콘 등)가 나올 수 있어서 리스트만
+  // 범람시키고 스캐닝을 느리게 만듦.
   if (harEntry.request.url.startsWith('data:')) return;
 
-  // Global scope gate — out-of-scope requests are ignored entirely
-  // (not added to Site Map or Network lists). Empty scope = all in scope.
+  // 글로벌 스코프 게이트 — 스코프 밖 요청은 완전히 무시(Site Map과
+  // Network 리스트에도 추가 안 함). 빈 스코프 = 전 범위 in scope.
   if (!inGlobalScope(harEntry.request.url)) return;
 
-  // Auth tab probe — the test buttons fire `fetch()` variants that
-  // come back through onRequestFinished. Drop them entirely so the
-  // Monitor timeline only shows real user / page traffic.
+  // Auth 탭 probe — 테스트 버튼이 발화하는 `fetch()` 변종이
+  // onRequestFinished로 돌아옴. 완전히 드롭해서 Monitor 타임라인이
+  // 실제 사용자/페이지 트래픽만 보이도록.
   if (consumeAuthTestFireMatch(harEntry.request.url, harEntry.request.method)) return;
 
-  // Dedup against HAR replay so the same entry doesn't land twice
-  // (e.g. live listener fires for a request that's also still in
-  // the HAR snapshot taken at auto-start).
+  // HAR replay와의 dedup — 같은 entry가 두 번 들어가지 않도록
+  // (예: 라이브 리스너가 발화한 요청이 auto-start 시점 HAR 스냅샷에도
+  // 여전히 있는 경우).
   const key = _ingestKey(harEntry);
   if (_ingestedRequestKeys.has(key)) return;
   _ingestedRequestKeys.add(key);
@@ -1193,20 +1170,20 @@ function processNetworkRequest(harEntry) {
   const responseHeaders = {};
   (resp.headers || []).forEach(h => { responseHeaders[h.name] = h.value; });
 
-  // post data
+  // post 데이터
   let postData = null;
   if (r.postData) {
     postData = r.postData.text || null;
   }
 
-  // Raw numeric size/time alongside the display strings — exported for
-  // sorting/filtering downstream.
+  // 표시용 문자열과 함께 raw 숫자 size/time 보존 — 다운스트림 정렬/
+  // 필터를 위해 export.
   const rawSize = resp.content?.size ?? resp._transferSize ?? null;
   const rawTime = harEntry.time != null ? Math.round(harEntry.time) : null;
 
-  // HAR-replayed entries can already carry the body inline in
-  // response.content.text — use it directly so the request shows its
-  // payload immediately without depending on getContent.
+  // HAR-replay된 entry는 response.content.text에 이미 인라인 body를
+  // 가지고 있을 수 있음 — 직접 사용해서 getContent에 의존하지 않고
+  // 즉시 페이로드 표시.
   const inlineBody = (resp.content && typeof resp.content.text === 'string') ? resp.content.text : null;
   const inlineBodyBase64 = inlineBody != null && resp.content && resp.content.encoding === 'base64';
 
@@ -1232,23 +1209,21 @@ function processNetworkRequest(harEntry) {
     responseBodyLoaded: inlineBody != null,
     responseBase64: inlineBodyBase64,
     initiator: harEntry._initiator || null,
-    // Active main host at capture time — drives session-based tab
-    // separation so externals (CDN, .map files, analytics) appear in
-    // the same tab as the host that loaded them. Mirrors the
-    // attribution Site Map already uses (sitemapTree[main].external).
-    // Null when targetHost isn't known yet; _flushSitemapPending
-    // back-fills these once detection completes.
+    // 캡처 시점의 활성 main host — externals(CDN, .map 파일, analytics)
+    // 가 그것을 로드한 host와 같은 탭에 나타나도록 session 기반 탭
+    // 분리 드라이브. Site Map이 이미 쓰는 귀속(sitemapTree[main].external)
+    // 과 동일. targetHost가 아직 모를 때는 null; _flushSitemapPending이
+    // detection 완료 후 back-fill.
     _mainHost: targetHost || null,
-    _harEntry: harEntry, // HAR entry reference (for body loading)
+    _harEntry: harEntry, // HAR entry 참조 (body 로딩용)
   };
 
-  // Replay correlation runs FIRST so the row's displayed headers /
-  // body reflect the user's modifications before scan / sitemap /
-  // search index pull from req. Page-context fetch silently drops
-  // header edits to forbidden names (Cookie, User-Agent, Sec-*, etc.)
-  // and the HAR entry only carries the wire-level result; without
-  // this override the row would silently appear "reverted" even
-  // though Send went through with the user's intent.
+  // Replay 상관관계가 먼저 실행돼서 row의 표시 headers/body가 scan/
+  // sitemap/search index가 req에서 pull하기 전에 사용자 수정사항을
+  // 반영. 페이지 컨텍스트 fetch는 forbidden name(Cookie, User-Agent,
+  // Sec-*)에 대한 헤더 수정을 silently drop하고, HAR entry는 wire-level
+  // 결과만 가짐; 이 override가 없으면 Send가 사용자 의도대로 갔어도
+  // row는 silently "reverted"로 보임.
   const replayMatch = consumeReplayFireMatch(req.url, req.method);
   if (replayMatch) {
     req._isReplay = true;
@@ -1260,38 +1235,36 @@ function processNetworkRequest(harEntry) {
     }
   }
 
-  // Initial scanner pass — runs against URL/headers/request body and the
-  // response status. Body-side findings come on a second pass once the
-  // body is loaded below.
+  // 초기 스캐너 패스 — URL/headers/request body와 response status에
+  // 대해 실행. body-side finding은 아래 body 로드 후 2차 패스에서.
   req.scanResults = scanRequest(req);
 
-  // Site Map always collects
+  // Site Map은 항상 수집
   addToSitemap(req);
 
-  // Network list only when monitoring is ON
+  // Network 리스트는 monitoring ON일 때만
   if (!networkMonitoring) return;
   networkRequests.push(req);
   networkRequestMap.set(reqId, req);
   reindexRequestForSearch(req);
-  // Tabs follow main-host navigation only — third-party / CDN /
-  // analytics requests don't get their own tabs (they'd flood the
-  // bar). detectTargetHost + onNavigated handle tab creation on
-  // browser-side navigation; per-request ensureTab here would
-  // create one for every external resource.
+  // 탭은 main-host navigation만 따라감 — third-party/CDN/analytics
+  // 요청은 자체 탭을 받지 않음(바를 범람시킬 수 있음).
+  // detectTargetHost + onNavigated가 브라우저 측 navigation에서 탭
+  // 생성을 처리; 여기서 per-request ensureTab을 하면 모든 external
+  // resource에 대해 탭을 만들게 됨.
   scheduleAppendNetworkRow(req);
 
-  // Eagerly try source-map mapping so the Initiator column reflects
-  // the final "↑ Mapped" state without waiting for the user to click
-  // into the request. Cheap thanks to sourceMapCache (per-script
-  // dedup) and runIdle scheduling.
+  // source-map 매핑을 eager하게 시도해서 Initiator 컬럼이 사용자가
+  // 요청을 클릭하기 전에 최종 "↑ Mapped" 상태를 반영. sourceMapCache
+  // (per-script dedup)와 runIdle 스케줄링 덕분에 cheap.
   if (req.initiator && req.initiator.stack && req.initiator.stack.callFrames) {
     runIdle(() => _eagerEnrichInitiator(req));
   }
 
-  // Eagerly load the body for text-like responses so the scanner can
-  // see body-side findings without waiting for the user to click in.
-  // Queue caps concurrency; the body scan itself runs in idle time so
-  // a flood of requests doesn't block paint.
+  // text-like 응답은 body를 eager 로드해서 사용자가 클릭하기 전에
+  // 스캐너가 body-side finding을 볼 수 있게. 큐가 동시성 제한;
+  // body scan 자체는 idle time에 실행되어 요청 폭주가 paint를
+  // 차단하지 않도록.
   if (scanShouldEagerLoadBody(req) && !req.responseBodyLoaded) {
     queueBodyLoad(req, (content, encoding) => {
       if (content == null) return;
@@ -1312,9 +1285,9 @@ function processNetworkRequest(harEntry) {
   }
 }
 
-// Re-build the search index for a single request and, if a search is
-// active, refresh membership / dots / counts. Called on request
-// capture and again when a body arrives late or scanResults change.
+// 단일 요청의 검색 인덱스 재빌드, 검색 활성 시 membership/dots/count
+// 갱신. 요청 캡처 시점과 body가 늦게 도착하거나 scanResults가 바뀔 때
+// 재호출.
 function reindexRequestForSearch(req) {
   buildSearchIndex(req);
   if (!searchTerm) return;
@@ -1323,9 +1296,9 @@ function reindexRequestForSearch(req) {
   refreshSearchUI();
 }
 
-// Replay HAR for everything Chrome already captured before the panel
-// opened — auto-start uses this so a user landing on an already-loaded
-// page sees its requests instead of an empty table.
+// 패널이 열리기 전에 Chrome이 이미 캡처한 모든 것에 대해 HAR replay —
+// auto-start가 이를 써서 이미 로드된 페이지에 들어온 사용자가 빈
+// 테이블 대신 그 요청들을 보게 함.
 function replayExistingNetworkHAR() {
   if (!chrome.devtools || !chrome.devtools.network ||
       typeof chrome.devtools.network.getHAR !== 'function') return;
@@ -1359,12 +1332,12 @@ function clearNetwork() {
   _ingestedRequestKeys.clear();
   selectedExportIds.clear();
   _lastCheckedReqId = null;
-  // Tree shares the data the list is built from, so Clear wipes both.
+  // 트리는 리스트가 만들어진 데이터를 공유하므로 Clear가 둘 다 wipe.
   Object.keys(sitemapTree).forEach(k => delete sitemapTree[k]);
   expandedNodes.clear();
   _sitemapPending.length = 0;
-  // Tabs are derived from captured data — wipe them too so the bar
-  // reflects the empty state, not a row of orphan host names.
+  // 탭은 캡처 데이터에서 파생 — 함께 wipe해서 바가 orphan host name
+  // 행이 아닌 빈 상태를 반영.
   tabHosts.length = 0;
   activeTabHost = null;
   renderNetworkTabs();
@@ -1372,14 +1345,14 @@ function clearNetwork() {
   renderNetworkTable();
   renderSitemapTree();
   updateSelectionUI();
-  // Drop search matches but preserve the term so the user can keep
-  // typing into a freshly cleared list.
+  // 검색 매치는 드롭하되 검색어는 보존해서 새로 비워진 리스트에 사용자가
+  // 같은 검색어로 계속 타이핑 가능하도록.
   searchMatchedIds = [];
   searchCursor = -1;
   refreshSearchUI();
 }
 
-// Shared JSON download helper for the export menu paths.
+// export 메뉴 경로들이 공유하는 JSON 다운로드 헬퍼.
 function _downloadJson(filename, data) {
   const json = JSON.stringify(data, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
@@ -1408,9 +1381,9 @@ function _exportMetadata() {
   };
 }
 
-// Export every captured request — full headers, bodies (where loaded),
-// scan results, and initiator. Source set is determined by scope
-// (current tab / all tabs) and selectedOnly (limit to checked rows).
+// 캡처된 모든 요청을 export — full headers, bodies(로드된 경우),
+// scan results, initiator. 소스 집합은 scope(current tab / all tabs)와
+// selectedOnly(checked 행으로 제한)로 결정.
 function exportAllRequests(scope, selectedOnly) {
   const source = _exportSource(scope, selectedOnly);
   const items = source.map(r => ({
@@ -1434,8 +1407,8 @@ function exportAllRequests(scope, selectedOnly) {
     responseBase64: !!r.responseBase64,
     scanResults: r.scanResults || [],
     initiator: r.initiator || null,
-    // Session attribution — preserve so a re-imported file lands in
-    // the same per-host tab grouping the original capture had.
+    // Session 귀속 보존 — 재임포트된 파일이 원본 캡처와 동일한
+    // per-host 탭 그룹핑으로 들어가도록.
     mainHost: r._mainHost || null,
   }));
 
@@ -1449,11 +1422,11 @@ function exportAllRequests(scope, selectedOnly) {
 }
 
 // ============================================================
-// Import — load a previously exported JSON back into the panel
+// Import — 이전에 export한 JSON을 패널로 다시 로드
 // ============================================================
-// Accepts either format we produce: Detection-only (items have
-// `findings`) or All-requests (items have full request data) — and
-// falls back to a flat `requests` array as a defensive alternative.
+// 우리가 만드는 두 포맷 모두 수용: Detection-only(아이템이 `findings`
+// 보유) 또는 All-requests(아이템이 전체 요청 데이터 보유) — 그리고
+// 방어적 대안으로 flat `requests` 배열도 fallback.
 
 let _importIdCounter = 0;
 
@@ -1476,15 +1449,14 @@ function _parseImportJson(text) {
   return { items };
 }
 
-// Convert one imported item into a req object compatible with the
-// rest of the panel. Supports wrapped (`{request: {...}, ...}`) and
-// flat (`{method, url, ...}`) shapes; pulls scanResults from either
-// `findings` (Detection format) or `scanResults` (All format).
+// 임포트된 아이템 1개를 패널의 나머지와 호환되는 req 객체로 변환.
+// wrapped (`{request: {...}, ...}`)와 flat (`{method, url, ...}`) 형태
+// 모두 지원; scanResults는 `findings`(Detection 포맷) 또는 `scanResults`
+// (All 포맷)에서 가져옴.
 function _itemToReq(item) {
   const meta = item.request || item;
-  // Session attribution — prefer the export's stamp, fall back to
-  // the URL's host so legacy exports (no mainHost) still land in the
-  // most-natural tab.
+  // Session 귀속 — export의 스탬프 우선, URL의 host로 fallback해서
+  // legacy export(mainHost 없음)도 가장 자연스러운 탭에 들어가도록.
   let mainHost = item.mainHost || null;
   if (!mainHost) {
     try { mainHost = new URL(meta.url || '').host || null; } catch {}
@@ -1533,11 +1505,10 @@ function _applyImport(reqs, mode, filename) {
     networkRequestMap.set(r.requestId, r);
     buildSearchIndex(r);
   }
-  // Rebuild the tab strip from imported _mainHost values so the user
-  // gets the same per-session navigation they had at capture time.
-  // _mainHost is preserved by export; legacy exports without it get
-  // their URL host as the fallback (set in _itemToReq), so a flat
-  // import still produces sensible tabs.
+  // 임포트된 _mainHost 값으로 탭 strip 재구성 — 캡처 시점과 동일한
+  // per-session navigation을 사용자에게 제공. _mainHost는 export가
+  // 보존; 그게 없는 legacy export는 URL host로 fallback(_itemToReq에서
+  // 설정), 그래서 flat import도 sensible한 탭을 만들어냄.
   const importedMainHosts = new Set();
   for (const r of reqs) {
     if (r._mainHost) importedMainHosts.add(r._mainHost);
@@ -1564,8 +1535,8 @@ function hideImportNotice() {
   document.getElementById('network-import-notice').classList.add('hidden');
 }
 
-// Three-way confirmation modal for the overwrite/append decision.
-// Single-shot: handlers are detached after a choice is made.
+// overwrite/append 결정을 위한 3-way 확인 모달.
+// 일회성: 선택 후 핸들러는 detach.
 function showImportConfirm(message, onChoice) {
   const modal = document.getElementById('import-confirm-modal');
   document.getElementById('import-confirm-msg').textContent = message;
@@ -1619,11 +1590,11 @@ document.getElementById('network-import').addEventListener('click', () => {
 _importFileInput.addEventListener('change', (e) => {
   const file = e.target.files && e.target.files[0];
   if (file) importNetworkData(file);
-  e.target.value = ''; // allow re-selecting the same file
+  e.target.value = ''; // 동일 파일 재선택 허용
 });
 document.getElementById('network-import-notice-close').addEventListener('click', hideImportNotice);
 
-// Export-button dropdown — pick scope before downloading.
+// Export 버튼 드롭다운 — 다운로드 전 scope 선택.
 const _exportBtn = document.getElementById('network-export');
 const _exportMenu = document.getElementById('network-export-menu');
 _exportBtn.addEventListener('click', (e) => {
@@ -1640,20 +1611,20 @@ document.querySelectorAll('.export-menu-item').forEach(item => {
   });
 });
 
-// Source-set picker for the export menu.
-//   scope        : 'tab' (active host only) | 'all' (every capture)
-//   selectedOnly : true  → narrow to the rows the user has checked
-// The ENTIRE networkRequests array IS the storage; filtering happens
-// per call so the data is never duplicated.
+// export 메뉴의 소스셋 picker.
+//   scope        : 'tab' (활성 host만) | 'all' (전체 캡처)
+//   selectedOnly : true  → 사용자가 체크한 행으로 좁힘
+// 전체 networkRequests 배열이 storage; 필터링은 호출 시점에 일어나서
+// 데이터가 중복되지 않음.
 function _exportSource(scope, selectedOnly) {
   let base;
   if (scope === 'all') {
     base = networkRequests;
   } else {
-    // 'tab' — exactly what the user sees in the active tab. Mirrors
-    // matchesActiveTab so the export captures the same session view
-    // (direct hits + the session's externals). When no tab is active
-    // yet, fall back to all so the file isn't silently empty.
+    // 'tab' — 활성 탭에서 사용자가 보는 그대로. matchesActiveTab을
+    // 미러링해서 export가 동일한 session view(direct hits + 그 세션의
+    // externals)를 캡처. 아직 활성 탭이 없을 때는 all로 fallback해서
+    // 파일이 silently 비지 않도록.
     base = activeTabHost
       ? networkRequests.filter(r => matchesActiveTab(r))
       : networkRequests;
@@ -1669,7 +1640,7 @@ document.addEventListener('click', (e) => {
   _exportMenu.classList.add('hidden');
 });
 
-// ---------- Network Filter (Type / Status multi-select) ----------
+// ---------- Network 필터 (Type / Status 멀티 선택) ----------
 const _filterBtn = document.getElementById('network-filter-btn');
 const _filterMenu = document.getElementById('network-filter-menu');
 _filterBtn.addEventListener('click', (e) => {
@@ -1682,9 +1653,9 @@ document.addEventListener('click', (e) => {
   _filterMenu.classList.add('hidden');
 });
 
-// Sync the menu's checkbox state into the networkFilter Sets and re-
-// render. Called on every change inside the menu — filtering is
-// instant, so toggling a checkbox immediately reflects in the table.
+// 메뉴의 체크박스 상태를 networkFilter Set으로 동기화 + 재렌더.
+// 메뉴 내부의 모든 변경 시 호출 — 필터링은 즉시 반영되어 체크박스
+// 토글이 곧바로 테이블에 적용됨.
 function applyNetworkFilterFromUI() {
   networkFilter.types.clear();
   networkFilter.statuses.clear();
@@ -1696,11 +1667,11 @@ function applyNetworkFilterFromUI() {
   });
   _refreshFilterButtonLabel();
   renderNetworkTable();
-  // Selection persists across filter toggles (same model as Scope) but
-  // master indeterminate ratio depends on what's visible.
+  // selection은 필터 토글 사이에 지속됨(Scope와 동일 모델), 단 master
+  // indeterminate 비율은 visible 항목에 따라 달라짐.
   updateSelectionUI();
-  // Search match list ANDs with what's visible — a filter change can
-  // flip rows in / out of the matched set.
+  // 검색 매치 리스트는 visible 항목과 AND — 필터 변경이 매칭 집합에서
+  // 행을 in/out으로 뒤집을 수 있음.
   if (searchTerm) {
     recomputeSearchMatches();
     refreshAllRowDots();
@@ -1747,10 +1718,10 @@ function fetchResponseBody(req) {
   });
 }
 
-// Bounded-concurrency body loader. The DevTools getContent API isn't
-// great when fired hundreds of times at once, so eager loads queue up
-// here with a small concurrency cap. User-initiated fetches still go
-// through fetchResponseBody (no queue) for snappy detail-panel opens.
+// 동시성 제한 body 로더. DevTools getContent API가 한 번에 수백 번
+// 발화되면 좋지 않아서 eager 로드는 작은 동시성 cap으로 큐잉.
+// 사용자 발화 fetch는 여전히 fetchResponseBody(큐 없음)로 빠른
+// detail 패널 오픈.
 const _bodyLoadQueue = [];
 let _activeBodyLoads = 0;
 const MAX_CONCURRENT_BODY_LOADS = 5;
@@ -1764,8 +1735,8 @@ function processBodyLoadQueue() {
   while (_activeBodyLoads < MAX_CONCURRENT_BODY_LOADS && _bodyLoadQueue.length > 0) {
     const { req, callback } = _bodyLoadQueue.shift();
     if (req.responseBodyLoaded) {
-      // Body was loaded by a user click while waiting in the queue —
-      // hand the cached content back without another getContent call.
+      // 큐 대기 중에 사용자 클릭으로 body가 로드됨 — 다른 getContent
+      // 호출 없이 캐시된 내용 반환.
       callback(req.responseBody, req.responseBase64 ? 'base64' : null);
       continue;
     }
@@ -1782,8 +1753,8 @@ function processBodyLoadQueue() {
   }
 }
 
-// Run a function during idle time so heavy scans don't block UI on
-// burst loads. Falls back to setTimeout in browsers without rIC.
+// idle time에 함수를 실행해서 무거운 스캔이 burst 로드 시 UI를 막지
+// 않도록. rIC가 없는 브라우저에서는 setTimeout으로 fallback.
 function runIdle(fn) {
   if (typeof requestIdleCallback === 'function') {
     requestIdleCallback(fn, { timeout: 2000 });
@@ -1792,20 +1763,18 @@ function runIdle(fn) {
   }
 }
 
-// Maximum visible rows in the network table — older rows are dropped
-// from the DOM (data stays in `networkRequests` for export and
-// addressing). On busy portal sites a thousand rows is enough to spot
-// patterns without melting the renderer.
+// network 테이블의 최대 가시 행 — 오래된 행은 DOM에서 드롭(데이터는
+// export와 addressing을 위해 `networkRequests`에 남음). 바쁜 포털
+// 사이트에서 천 행이면 렌더러를 녹이지 않고 패턴 식별이 가능.
 const MAX_NETWORK_ROWS = 1000;
 
-// Initiator column badge — small text badge on each row reflecting
-// the kind of initiator data we have. After enrichFramesWithSourceMaps
-// runs and at least one frame maps to original source, the badge
-// upgrades to "↑ Mapped".
+// Initiator 컬럼 배지 — 각 행의 작은 텍스트 배지로 우리가 가진
+// initiator 데이터 종류를 반영. enrichFramesWithSourceMaps 실행 후
+// 한 프레임이라도 원본 소스로 매핑되면 배지가 "↑ Mapped"로 업그레이드.
 function renderInitiatorBadge(r) {
-  // Tooltip pulls from the same descriptions used inside the Initiator
-  // detail tab, so hovering the column badge tells the same story as
-  // the type indicator inside the detail view.
+  // 툴팁은 Initiator detail 탭 안에서 쓰는 동일 설명에서 가져옴 →
+  // 컬럼 배지에 hover하면 detail view 안 type 인디케이터와 같은
+  // 정보를 보여줌.
   if (r._sourcemapMapped) {
     const t = escapeAttr(INITIATOR_TYPE_DESCRIPTIONS.mapped || '');
     return `<span class="initiator-cell-badge initiator-cell-mapped" title="${t}">↑ Mapped</span>`;
@@ -1820,7 +1789,7 @@ function renderInitiatorBadge(r) {
     const desc = escapeAttr(INITIATOR_TYPE_DESCRIPTIONS.parser || '');
     return `<span class="initiator-cell-badge initiator-cell-parser" title="${desc}">parser</span>`;
   }
-  return ''; // 'other' / unknown
+  return ''; // 'other' / 알 수 없음
 }
 
 function updateNetworkRowInitiator(req) {
@@ -1832,8 +1801,8 @@ function updateNetworkRowInitiator(req) {
   if (cell) cell.innerHTML = renderInitiatorBadge(req);
 }
 
-// Repaint just the URL cell after the user marks/unmarks a request as
-// a login from the Auth tab. Saves a full table re-render.
+// 사용자가 Auth 탭에서 요청을 login으로 mark/unmark 한 뒤 URL 셀만
+// 다시 그림. 전체 테이블 재렌더 절약.
 function updateNetworkRowAuth(req) {
   const row = networkTable.querySelector(
     `tr[data-request-id="${CSS.escape(req.requestId)}"]`
@@ -1850,8 +1819,8 @@ function updateNetworkRowAuth(req) {
   urlCell.innerHTML = authBadge + replayBadge + escapeHtml(truncateUrl(req.url));
 }
 
-// Build a single <tr> for a request without touching the DOM. Returns
-// the element so callers can append/insert as they choose.
+// 요청에 대한 단일 <tr>을 DOM 건드리지 않고 빌드. element를 반환해서
+// caller가 원하는 대로 append/insert.
 function buildNetworkRow(r) {
   const statusClass = r.status >= 400 ? 'status-error'
     : r.status >= 300 ? 'status-redirect'
@@ -1866,16 +1835,14 @@ function buildNetworkRow(r) {
   if (searchTerm && searchMatchedIds.includes(r.requestId)) tr.classList.add('search-hit');
   if (r._isReplay) tr.classList.add('row-replay');
   const checkedAttr = selectedExportIds.has(r.requestId) ? 'checked' : '';
-  // Replay-originated requests get a small ↻ badge prefix in the URL
-  // cell so they're distinguishable in the timeline at a glance —
-  // user can tell which entries came from their own Replay Sends vs
-  // browser-driven captures.
+  // Replay에서 시작한 요청은 URL 셀에 작은 ↻ 배지 prefix를 받아서
+  // 타임라인에서 한눈에 구분 가능 — 사용자가 자기 Replay Send에서
+  // 온 항목 vs 브라우저 발화 캡처를 알 수 있음.
   const replayBadge = r._isReplay
     ? '<span class="row-replay-badge" title="Sent via Replay">↻</span> '
     : '';
-  // Login-detected (or manually marked) requests get a small 🔐 prefix
-  // so the user can spot auth flows in the list without opening the
-  // Auth tab on every row.
+  // Login 감지(또는 수동 마킹) 요청은 작은 🔐 prefix를 받아서 사용자가
+  // 모든 행마다 Auth 탭을 열지 않고도 인증 흐름을 식별 가능.
   const authBadge = _isReqAuth(r)
     ? '<span class="row-auth-badge" title="Detected as login request — see Auth tab">🔐</span> '
     : '';
@@ -1894,16 +1861,16 @@ function buildNetworkRow(r) {
 }
 
 function updateNetworkCount() {
-  // The active tab is the user's "session" boundary — counts are
-  // tab-scoped so "100 / 271 (filtered)" reads as 100 visible out of
-  // the tab's 271, not out of the global 3948 pool. Scope + Type/
-  // Status filters are the secondary axis layered on top of the tab.
+  // 활성 탭이 사용자의 "세션" 경계 — count는 tab-scope이므로
+  // "100 / 271 (filtered)"이 글로벌 3948 풀이 아닌 탭의 271 중 100
+  // visible로 읽힘. Scope + Type/Status 필터는 탭 위에 layering된
+  // 보조 축.
   const hasTab = activeTabHost != null;
   const hasScope = !!globalScope.regex;
   const hasFilter = networkFilterIsActive();
 
-  let tabTotal = 0; // total in the active tab (or global when no tab)
-  let visible = 0;  // after Scope + Type/Status applied
+  let tabTotal = 0; // 활성 탭(또는 탭 없을 때 글로벌)의 총합
+  let visible = 0;  // Scope + Type/Status 적용 후
   for (const r of networkRequests) {
     if (hasTab && !matchesActiveTab(r)) continue;
     tabTotal++;
@@ -1925,15 +1892,15 @@ function updateNetworkCount() {
   }
 }
 
-// Trim oldest visible rows when the table exceeds MAX_NETWORK_ROWS.
+// 테이블이 MAX_NETWORK_ROWS 초과 시 가장 오래된 visible 행 trim.
 function enforceMaxNetworkRows() {
   while (networkTable.children.length > MAX_NETWORK_ROWS) {
     networkTable.removeChild(networkTable.firstChild);
   }
 }
 
-// Update the badges cell of an existing row. No-op if the row was
-// already trimmed off the visible window.
+// 기존 행의 배지 셀 업데이트. 행이 visible window에서 이미 trim된
+// 경우 no-op.
 function updateNetworkRowBadges(req) {
   const row = networkTable.querySelector(
     `tr[data-request-id="${CSS.escape(req.requestId)}"]`
@@ -1943,14 +1910,14 @@ function updateNetworkRowBadges(req) {
   if (cell) cell.innerHTML = renderScanBadgesInline(req.scanResults);
 }
 
-// Full re-render — used on clear / startup, and whenever the global
-// Scope changes since Scope is now a view filter too. Streaming events
-// use the append/batch path below to avoid O(n²) rebuilds.
+// 전체 재렌더 — clear/startup, 그리고 글로벌 Scope가 바뀔 때마다
+// 사용 (Scope도 이제 view 필터). 스트리밍 이벤트는 아래 append/batch
+// 경로를 써서 O(n²) rebuild 회피.
 function renderNetworkTable() {
   networkTable.innerHTML = '';
-  // Apply active-tab + Scope + Type/Status as view filters. All three
-  // are pure view filters — networkRequests stays intact, so toggling
-  // any of them is reversible without losing data.
+  // active-tab + Scope + Type/Status를 view 필터로 적용. 셋 다 순수
+  // view 필터 — networkRequests는 그대로라 어떤 것을 토글해도 데이터
+  // 손실 없이 reversible.
   const hasTab = activeTabHost != null;
   const hasScope = !!globalScope.regex;
   const hasFilter = networkFilterIsActive();
@@ -1972,9 +1939,9 @@ function renderNetworkTable() {
   updateNetworkCount();
 }
 
-// Streaming append: incoming requests are queued and flushed once per
-// animation frame. Keeps a portal site's burst of hundreds of requests
-// from triggering hundreds of separate layout/paint cycles.
+// 스트리밍 append: 들어오는 요청을 큐잉해서 animation frame당 한 번
+// flush. 포털 사이트의 수백 요청 burst가 수백 개의 별도 layout/paint
+// 사이클을 트리거하지 않도록.
 const _pendingNetworkRows = [];
 let _networkRenderRaf = 0;
 
@@ -1995,13 +1962,13 @@ function flushPendingNetworkRows() {
   let appended = 0;
   let countTouchedTabs = false;
   for (const r of _pendingNetworkRows) {
-    // Streaming row inherits the same filter axes as the full re-
-    // render (active tab + Scope + Type/Status). Scope is already
-    // enforced upstream in processNetworkRequest so we only re-check
-    // tab + filter here. Tabs surface request counts on the bar; if
-    // any incoming row's host has a tab, mark for re-render.
+    // 스트리밍 행도 전체 재렌더와 동일한 필터 축(active tab + Scope +
+    // Type/Status)을 상속. Scope는 processNetworkRequest 상류에서
+    // 이미 enforce되므로 여기서는 tab + filter만 다시 체크. 탭은 바에
+    // request count를 표시; 들어오는 행의 host가 탭을 가지고 있으면
+    // re-render 마크.
     if (hasTab && !matchesActiveTab(r)) {
-      // Out-of-tab rows still update the inactive tab's count badge.
+      // out-of-tab 행도 비활성 탭의 카운트 배지는 업데이트.
       if (tabHosts.includes(_reqHost(r))) countTouchedTabs = true;
       continue;
     }
@@ -2013,32 +1980,33 @@ function flushPendingNetworkRows() {
   if (appended > 0) {
     networkTable.appendChild(fragment);
     enforceMaxNetworkRows();
-    // The active tab itself just got more rows — refresh its count.
+    // 활성 탭 자체에 행이 더 추가됨 — 카운트 갱신.
     countTouchedTabs = true;
   }
   if (countTouchedTabs) renderNetworkTabs();
   updateNetworkCount();
-  // New unchecked rows can flip master state from checked → indeterminate.
+  // 새로 들어온 unchecked 행이 master 상태를 checked → indeterminate로
+  // 뒤집을 수 있음.
   if (selectedExportIds.size > 0) updateSelectionUI();
 }
 
-// Click delegation on tbody — attached once at load so each new row
-// doesn't need its own listener. Clicking the Initiator cell jumps
-// straight to the Initiator detail tab; clicks on the row checkbox
-// only toggle export selection without opening the detail panel.
+// tbody에 클릭 위임 — 로드 시 한 번만 attach해서 새 행마다 자체
+// listener가 필요하지 않도록. Initiator 셀 클릭 시 Initiator detail
+// 탭으로 바로 점프; row 체크박스 클릭은 detail 패널을 열지 않고
+// export 선택만 토글.
 networkTable.addEventListener('click', (e) => {
   const row = e.target.closest('tr[data-request-id]');
   if (!row) return;
   const reqId = row.dataset.requestId;
-  // Row checkbox → toggle export selection. Stop here so the click
-  // doesn't fall through to the detail-open path.
+  // Row 체크박스 → export 선택 토글. 여기서 멈춰서 클릭이 detail-open
+  // 경로로 떨어지지 않도록.
   if (e.target.matches('input.row-select')) {
     handleRowCheckboxClick(reqId, e.target.checked, e.shiftKey);
     return;
   }
-  // Treat clicks on the select-cell padding (outside the input) as
-  // a no-op rather than detail-open — clicking the cell that's "for"
-  // the checkbox shouldn't surprise users by opening a detail panel.
+  // select-cell padding(input 바깥) 클릭은 detail-open이 아닌 no-op로
+  // 처리 — 체크박스용 셀을 클릭하면 detail 패널이 열려서 사용자를
+  // 놀라게 하지 않도록.
   if (e.target.closest('td.select-cell')) return;
   const wantInitiator = !!e.target.closest('.initiator-cell');
   selectNetworkRequest(reqId, {
@@ -2048,12 +2016,12 @@ networkTable.addEventListener('click', (e) => {
 });
 
 // ============================================================
-// Multi-select for export
+// export용 멀티 선택
 // ============================================================
-// `getVisibleRequests` returns requests in the same order as the
-// rendered table (active tab + Scope + Type/Status Filter applied).
-// All selection ops — select-all, range, Cmd+A — operate on this
-// view so what the user sees matches what they select.
+// `getVisibleRequests`는 렌더된 테이블과 같은 순서로 요청 반환
+// (active tab + Scope + Type/Status 필터 적용). select-all, range,
+// Cmd+A 등 모든 selection 작업이 이 view를 기준으로 동작 → 사용자가
+// 보는 것과 선택하는 것이 일치.
 function getVisibleRequests() {
   const hasTab = activeTabHost != null;
   const hasScope = !!globalScope.regex;
@@ -2084,9 +2052,9 @@ function toggleSelection(reqId, checked) {
 }
 
 function handleRowCheckboxClick(reqId, checked, shiftKey) {
-  // Shift+click extends the previously-checked anchor across the
-  // visible range. The new state for the entire range is the state
-  // of the just-clicked checkbox (matches Gmail/GitHub UX).
+  // Shift+click은 이전 체크된 anchor를 visible 범위에 걸쳐 확장.
+  // 전체 범위의 새 상태는 방금 클릭된 체크박스의 상태(Gmail/GitHub UX
+  // 와 동일).
   if (shiftKey && _lastCheckedReqId && _lastCheckedReqId !== reqId) {
     const visible = getVisibleRequests();
     const i = visible.findIndex(r => r.requestId === _lastCheckedReqId);
@@ -2106,8 +2074,8 @@ function handleRowCheckboxClick(reqId, checked, shiftKey) {
   updateSelectionUI();
 }
 
-// Sync the toolbar counter, master-checkbox state, and export-menu
-// items with the current selection. Called after any selection change.
+// 툴바 카운터, master 체크박스 상태, export 메뉴 아이템을 현재 선택과
+// 동기화. selection 변경 후에 호출.
 function updateSelectionUI() {
   const count = selectedExportIds.size;
   const wrap = document.getElementById('network-selection');
@@ -2116,8 +2084,8 @@ function updateSelectionUI() {
     wrap.classList.toggle('hidden', count === 0);
     label.textContent = `${count} selected`;
   }
-  // Master checkbox: checked when every visible row is selected,
-  // indeterminate when some are, unchecked when none.
+  // Master 체크박스: 모든 visible 행이 선택되면 checked, 일부면
+  // indeterminate, 없으면 unchecked.
   const master = document.getElementById('network-select-all');
   if (master) {
     const visible = getVisibleRequests();
@@ -2136,10 +2104,9 @@ function updateSelectionUI() {
       master.indeterminate = true;
     }
   }
-  // Export menu — "Selected requests" items are enabled only when at
-  // least one row is checked; their per-item count reflects the
-  // matching subset (current tab vs all). The Full requests items
-  // always work, no count badge.
+  // Export 메뉴 — "Selected requests" 항목은 적어도 한 행이 체크된
+  // 경우만 활성; 각 항목의 카운트는 매칭 서브셋(current tab vs all)을
+  // 반영. Full requests 항목은 항상 작동, 카운트 배지 없음.
   const tabSelected = activeTabHost
     ? networkRequests.filter(r => _reqHost(r) === activeTabHost && selectedExportIds.has(r.requestId)).length
     : count;
@@ -2155,8 +2122,8 @@ function updateSelectionUI() {
 
 function clearExportSelection() {
   if (selectedExportIds.size === 0) return;
-  // Snapshot to avoid Set mutation during iteration when removing
-  // class from each visible row.
+  // 각 visible 행에서 class를 제거하는 동안 Set 변형을 피하기 위해
+  // 스냅샷.
   const ids = Array.from(selectedExportIds);
   selectedExportIds.clear();
   for (const id of ids) setRowCheckedClass(id, false);
@@ -2176,20 +2143,19 @@ function deselectAllVisible() {
   updateSelectionUI();
 }
 
-// Master checkbox: if every visible row is selected, deselect them all;
-// otherwise select all visible. Indeterminate state defaults to "select all".
+// Master 체크박스: 모든 visible 행이 선택돼 있으면 전부 deselect,
+// 아니면 모두 select. indeterminate 상태는 기본 "select all".
 document.getElementById('network-select-all').addEventListener('click', (e) => {
-  // Use the post-click state to decide direction. If it ended up
-  // checked (or was indeterminate flipped to checked), select-all;
-  // otherwise deselect.
+  // post-click 상태로 방향 결정. checked로 끝났으면(또는
+  // indeterminate가 checked로 뒤집혔으면) select-all, 아니면 deselect.
   if (e.target.checked) selectAllVisible();
   else deselectAllVisible();
 });
 
 document.getElementById('network-selection-clear').addEventListener('click', clearExportSelection);
 
-// Cmd/Ctrl+A while the Network tab is active selects all visible rows.
-// Skip when the user is typing in a form field.
+// Network 탭 활성 시 Cmd/Ctrl+A로 모든 visible 행 선택.
+// 사용자가 폼 필드에 타이핑 중이면 skip.
 document.addEventListener('keydown', (e) => {
   if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'a') return;
   const networkSection = document.getElementById('network');
@@ -2200,8 +2166,8 @@ document.addEventListener('keydown', (e) => {
   selectAllVisible();
 });
 
-// Move selection to a request, open the detail panel, and (optionally)
-// scroll the row into view. Shared by click handlers and keyboard nav.
+// 요청으로 selection 이동, detail 패널 오픈, (옵션으로) 행을 view로
+// 스크롤. click 핸들러와 keyboard nav가 공유.
 function selectNetworkRequest(reqId, opts) {
   const req = networkRequestMap.get(reqId);
   if (!req) return;
@@ -2223,17 +2189,16 @@ function selectNetworkRequest(reqId, opts) {
   updateSendToBrowserButton();
 }
 
-// ↑/↓ keyboard navigation through the request list while the Network
-// tab is active. Suppresses the browser's default scroll so the keys
-// move the selection instead. Operates on the visible-row set so
-// keys stay inside what the user can actually see — Tab / Scope /
-// Type-Status filters all participate, and the "All hosts" toggle
-// flips the navigable pool accordingly.
+// Network 탭 활성 시 ↑/↓ 키보드로 요청 리스트 navigation. 브라우저
+// 기본 스크롤을 억제해서 키가 선택을 이동하게 함. visible-row set에
+// 작동해서 키가 사용자가 실제로 볼 수 있는 범위 안에 머묾 — Tab/
+// Scope/Type-Status 필터가 모두 참여하고, "All hosts" 토글이
+// 그에 맞게 navigable pool을 뒤집음.
 document.addEventListener('keydown', (e) => {
   const networkSection = document.getElementById('network');
   if (!networkSection || !networkSection.classList.contains('active')) return;
   if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-  // Don't hijack the keys while the user is typing in a form field.
+  // 사용자가 폼 필드에 타이핑 중이면 키를 hijack하지 않음.
   const t = e.target;
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
   const visible = getVisibleRequests();
@@ -2255,71 +2220,71 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ============================================================
-// Network search — keyword match across request/response detail
+// Network 검색 — 요청/응답 detail에 걸친 키워드 매칭
 //
-// Scope (the toolbar URL filter) already covers the URL itself, so
-// this search deliberately skips the URL field and looks at:
+// Scope(툴바 URL 필터)가 이미 URL 자체를 커버하지만, 도메인 필터의
+// 부수 효과 외에 단어 단위 검색도 필요하므로 URL도 인덱스에 포함.
+// 검색 대상:
 //   - request headers (key+value)
-//   - query string params (key+value, parsed from URL.search)
+//   - query string params (key+value, URL.search에서 파싱)
 //   - request body (POST data)
 //   - response headers (key+value)
-//   - response body (text only; base64 bodies skipped)
+//   - response body (text only; base64 body는 skip)
 //   - Detection scanResults (evidence + location)
 //
-// A combined lower-cased index string is built per-request and cached
-// on req._searchIndex so each keystroke does a single indexOf rather
-// than walking every field. The index is rebuilt whenever the body
-// arrives late or scanResults change.
+// 요청별로 합쳐진 lower-case 인덱스 문자열을 빌드해서 req._searchIndex에
+// 캐시 → 매 키스트로크가 모든 필드를 walking하는 대신 indexOf 1회만.
+// body가 늦게 도착하거나 scanResults가 바뀌면 인덱스 재빌드.
 // ============================================================
 
 let searchTerm = '';
-let searchMatchedIds = [];   // requestIds, in networkRequests order
-let searchCursor = -1;       // index into searchMatchedIds
+let searchMatchedIds = [];   // requestId, networkRequests 순서
+let searchCursor = -1;       // searchMatchedIds 안 인덱스
 let _searchDebounceTimer = 0;
 const SEARCH_DEBOUNCE_MS = 300;
 
 function buildSearchIndex(req) {
   const parts = [];
-  // Request headers
+  // 요청 헤더
   if (req.requestHeaders) {
     for (const [k, v] of Object.entries(req.requestHeaders)) {
       parts.push(k); parts.push(String(v));
     }
   }
-  // Response headers
+  // 응답 헤더
   if (req.responseHeaders) {
     for (const [k, v] of Object.entries(req.responseHeaders)) {
       parts.push(k); parts.push(String(v));
     }
   }
-  // Full URL — Scope handles host/path-based filtering, but the search
-  // box also indexes the URL itself so a keyword in the path or query
-  // is found regardless of which other field carries it.
+  // Full URL — Scope가 host/path 기반 필터링을 처리하지만, 검색 박스도
+  // URL 자체를 인덱싱해서 path나 query에 있는 키워드가 어떤 다른
+  // 필드가 들고 있든 발견되도록.
   parts.push(req.url);
-  // Query params (decoded) — searchParams returns URL-decoded values,
-  // so "hello world" still matches "?q=hello%20world" even though the
-  // raw URL only contains the encoded form.
+  // Query params (decoded) — searchParams는 URL-decoded 값을 반환하므로
+  // "hello world"가 raw URL에 인코딩된 형태("?q=hello%20world")만
+  // 있어도 매칭됨.
   try {
     const u = new URL(req.url);
     for (const [k, v] of u.searchParams) {
       parts.push(k); parts.push(v);
     }
   } catch { /* malformed URL */ }
-  // Request body
+  // 요청 body
   if (req.requestPostData) {
     const body = req.requestPostData.length > AUTODECODE_BODY_LIMIT
       ? req.requestPostData.slice(0, AUTODECODE_BODY_LIMIT)
       : req.requestPostData;
     parts.push(body);
   }
-  // Response body — text only, large bodies clipped to AUTODECODE_BODY_LIMIT
+  // Response body — text only, 대용량은 AUTODECODE_BODY_LIMIT으로 clip
   if (req.responseBody && !req.responseBase64) {
     const body = req.responseBody.length > AUTODECODE_BODY_LIMIT
       ? req.responseBody.slice(0, AUTODECODE_BODY_LIMIT)
       : req.responseBody;
     parts.push(body);
   }
-  // Detection findings — surfaced in the Detection tab
+  // Detection findings — Detection 탭에 노출
   if (req.scanResults) {
     for (const f of req.scanResults) {
       if (f.evidence) parts.push(String(f.evidence));
@@ -2335,10 +2300,9 @@ function reqMatchesSearch(req) {
   return req._searchIndex.indexOf(searchTerm) !== -1;
 }
 
-// Recompute the matched-ids list from scratch. Called after a search
-// term change, after Scope changes (search ANDs with Scope), and after
-// any data mutation that could flip a request in or out (clear,
-// import, late body load).
+// matched-id 리스트를 처음부터 재계산. 검색어 변경 후, Scope 변경 후
+// (검색은 Scope와 AND), 그리고 요청을 in/out으로 뒤집을 수 있는 데이터
+// 변경 후(clear, import, 늦은 body 로드) 호출.
 function recomputeSearchMatches() {
   if (!searchTerm) {
     searchMatchedIds = [];
@@ -2356,8 +2320,8 @@ function recomputeSearchMatches() {
     if (reqMatchesSearch(req)) matched.push(req.requestId);
   }
   searchMatchedIds = matched;
-  // Preserve the cursor on the same request if it's still in the set;
-  // otherwise reset to the first match.
+  // 같은 요청이 여전히 set 안에 있으면 cursor 보존; 아니면 첫 매치로
+  // reset.
   if (selectedRequestId && matched.includes(selectedRequestId)) {
     searchCursor = matched.indexOf(selectedRequestId);
   } else {
@@ -2371,17 +2335,17 @@ function applySearch(rawTerm) {
   recomputeSearchMatches();
   refreshAllRowDots();
   refreshSearchUI();
-  // Auto-open the first match (only when entering a non-empty term).
-  // Keep the existing selection if it already matched, otherwise jump.
+  // 첫 매치 자동 오픈 (비어있지 않은 검색어 입력 시에만).
+  // 이미 매칭된 selection이 있으면 유지, 아니면 점프.
   if (term && searchMatchedIds.length > 0) {
     const targetId = searchMatchedIds[searchCursor];
     if (targetId !== selectedRequestId) {
       selectNetworkRequest(targetId, { scroll: true });
-      return; // selectNetworkRequest -> showDetail handles highlight
+      return; // selectNetworkRequest -> showDetail가 highlight 처리
     }
   }
-  // Re-render detail of the currently selected request so marks
-  // (or their absence) reflect the new term.
+  // 현재 선택된 요청의 detail 재렌더 → mark(또는 부재)가 새 검색어를
+  // 반영하도록.
   if (selectedRequestId) {
     const req = networkRequestMap.get(selectedRequestId);
     if (req) showDetail(req);
@@ -2424,8 +2388,8 @@ function refreshSearchUI() {
   }
 }
 
-// Toggle the .search-hit class on every visible row to mirror the
-// matched-ids set. Cheap relative to a full re-render.
+// 모든 visible 행의 .search-hit 클래스 토글로 matched-ids set 미러.
+// 전체 재렌더 대비 cheap.
 function refreshAllRowDots() {
   const matched = new Set(searchMatchedIds);
   networkTable.querySelectorAll('tr[data-request-id]').forEach(tr => {
@@ -2437,10 +2401,9 @@ function refreshAllRowDots() {
   });
 }
 
-// Wrap every occurrence of `term` inside text nodes under `rootEl`
-// with <mark class="network-search-mark">. Skips nodes already inside
-// a mark (idempotent on re-runs against the same root). Returns the
-// number of matches injected.
+// `rootEl` 아래 텍스트 노드 안의 `term` 모든 발생을
+// <mark class="network-search-mark">로 wrap. 이미 mark 안의 노드는
+// skip(같은 root에 재실행 시 idempotent). 주입된 매치 수 반환.
 function highlightMarksIn(rootEl, term) {
   if (!rootEl || !term) return 0;
   const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, {
@@ -2482,13 +2445,12 @@ function highlightMarksIn(rootEl, term) {
   return count;
 }
 
-// Tabs eligible for body-level highlighting + tab badge. Initiator
-// is excluded by design — its content is call-stack frames, not a
-// good fit for keyword search.
+// body-level 하이라이트 + 탭 배지 대상 탭. Initiator는 의도적 제외 —
+// 내용이 call-stack 프레임이라 키워드 검색에 적합하지 않음.
 const SEARCH_TARGET_TABS = ['message', 'detection'];
 
 function applyDetailHighlights(req) {
-  // Always clear stale marks/badges so a cleared term wipes the UI.
+  // stale mark/배지를 항상 clear → 검색어 비우면 UI도 비도록.
   for (const key of SEARCH_TARGET_TABS) {
     const btn = document.querySelector(`.detail-tab[data-detail="${key}"]`);
     if (btn) btn.classList.remove('has-search-match');
@@ -2505,8 +2467,8 @@ function applyDetailHighlights(req) {
       if (!firstMatchTab) firstMatchTab = key;
     }
   }
-  // If the active tab has no match but another tab does, switch to
-  // the first matching tab so the user sees results immediately.
+  // 활성 탭에 매치가 없는데 다른 탭에 있으면 첫 매칭 탭으로 전환 →
+  // 사용자가 즉시 결과를 보도록.
   const activeTab = document.querySelector('.detail-tab.active');
   const activeKey = activeTab ? activeTab.dataset.detail : null;
   const activeHasMatch = activeKey
@@ -2519,14 +2481,14 @@ function applyDetailHighlights(req) {
       document.querySelector(`.detail-tab[data-detail="${targetKey}"]`).classList.add('active');
       document.getElementById('detail-' + targetKey).classList.add('active');
     }
-    // Scroll the first match in the target tab into view.
+    // 대상 탭의 첫 매치를 view로 스크롤.
     const pane = document.getElementById('detail-' + targetKey);
     const firstMark = pane && pane.querySelector('mark.network-search-mark');
     if (firstMark) firstMark.scrollIntoView({ block: 'center' });
   }
 }
 
-// Wire up search input + buttons.
+// 검색 input + 버튼 wire up.
 (function initNetworkSearch() {
   const input = document.getElementById('network-search');
   const clearBtn = document.getElementById('network-search-clear');
@@ -2544,7 +2506,7 @@ function applyDetailHighlights(req) {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      // Flush any pending debounce so Enter acts on the current value.
+      // pending debounce를 flush해서 Enter가 현재 값에 작동하도록.
       if (_searchDebounceTimer) {
         clearTimeout(_searchDebounceTimer);
         _searchDebounceTimer = 0;
@@ -2567,7 +2529,7 @@ function applyDetailHighlights(req) {
 })();
 
 // ============================================================
-// Network Detail Panel
+// Network Detail 패널
 // ============================================================
 
 function showDetail(req) {
@@ -2579,36 +2541,33 @@ function showDetail(req) {
 }
 
 // ============================================================
-// Message tab — vertical Request / Response split rendering raw HTTP.
-// This is the differentiator vs native DevTools: instead of separating
-// header-name/value into a table, we show the on-the-wire message
-// (request line + headers + blank line + body, response status line +
-// headers + blank line + body). Replay edits happen in-place via a
-// textarea overlay on the request pane.
+// Message 탭 — raw HTTP를 렌더링하는 수직 Request/Response split.
+// native DevTools 대비 차별점: header-name/value를 테이블로 분리하는
+// 대신 on-the-wire 메시지를 그대로 표시(request line + headers + 빈
+// 줄 + body, response status line + headers + 빈 줄 + body). Replay
+// 편집은 request pane에 textarea overlay로 in-place.
 // ============================================================
 
-// Per-request UI state for the new tab. Keyed by selectedRequestId so
-// switching between requests resets format toggles / replay edit mode
-// to a clean default (we don't want a half-edited replay textarea
-// surviving a row change).
+// 새 탭의 per-request UI 상태. selectedRequestId 기준이라 요청 사이를
+// 전환하면 format toggle/replay edit mode가 깨끗한 기본값으로 reset
+// (한 행을 바꿨는데 절반 편집된 replay textarea가 남으면 안 됨).
 let msgRequestFormat = 'raw';   // 'raw' | 'pretty'
 let msgResponseFormat = 'raw';  // 'raw' | 'pretty'
-// Auto Decode toggle per pane — independent of Raw/Pretty. When on,
-// encoded substrings (JWT / Base64 / URL-encoded / Unix timestamp /
-// nested JSON) inside the raw HTTP text are replaced with their
-// decoded form, marked with a dotted underline + soft yellow tint
-// so the user can see at-a-glance where decoded content sits. Hover
-// shows the original encoded value.
+// pane별 Auto Decode 토글 — Raw/Pretty와 독립. 켜지면 raw HTTP 텍스트
+// 안의 인코딩된 substring(JWT/Base64/URL-encoded/Unix timestamp/
+// nested JSON)이 디코딩된 형태로 교체되며, dotted underline + 옅은
+// 노란 tint로 마킹되어 사용자가 디코딩된 콘텐츠 위치를 한눈에 볼 수
+// 있음. hover 시 원본 인코딩 값을 보여줌.
 let msgRequestDecode = false;
 let msgResponseDecode = false;
 let msgRequestWrap = false;
 let msgResponseWrap = false;
 let msgReplayEditing = false;
 let msgPreviewMode = 'raw';     // 'raw' | 'preview'
-let msgReplayLastResponse = null; // overrides original response display when set
+let msgReplayLastResponse = null; // 설정 시 원본 응답 표시를 override
 
 function renderMessageTab(req) {
-  // Reset per-request UI state on row change.
+  // 행 변경 시 per-request UI 상태 reset.
   msgRequestFormat = 'raw';
   msgResponseFormat = 'raw';
   msgRequestDecode = false;
@@ -2618,7 +2577,7 @@ function renderMessageTab(req) {
   msgReplayEditing = false;
   msgPreviewMode = 'raw';
   msgReplayLastResponse = null;
-  // Reset toggles in the DOM so the active class lines up.
+  // DOM 토글 reset → active 클래스가 맞춰지도록.
   document.querySelectorAll('.msg-format-toggle .msg-format-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.fmt === 'raw');
   });
@@ -2634,16 +2593,15 @@ function renderMessageTab(req) {
 
 function renderRequestPane(req) {
   const meta = document.getElementById('msg-request-meta');
-  // Method only — the full URL lives in the request line of the raw
-  // HTTP body below, so duplicating it in the pane header just bloats
-  // the strip and forces truncation. Title still carries the URL on
-  // hover for quick reference.
+  // Method만 — full URL은 아래 raw HTTP body의 request line에 있어서
+  // pane 헤더에 중복하면 strip만 부풀고 truncation 강요됨. Title은
+  // 여전히 URL을 들고 있어 hover로 빠르게 확인 가능.
   meta.textContent = req.method || '';
   meta.title = req.url || '';
 
   const bodyEl = document.getElementById('msg-request-body');
   if (msgReplayEditing) {
-    // Editor stays in place — text already populated by enter handler.
+    // 에디터는 in place 유지 — 텍스트는 이미 enter 핸들러가 채움.
     _toggleDecodeBtn('request', false);
     return;
   }
@@ -2659,7 +2617,7 @@ function renderResponsePane(req) {
   const meta = document.getElementById('msg-response-meta');
   const resp = msgReplayLastResponse;
   if (resp) {
-    // Active replay result overrides the captured response display.
+    // 활성 replay 결과가 캡처된 응답 표시를 override.
     const sCls = _statusClass(resp.status);
     meta.innerHTML = `<span class="${sCls}">${resp.status} ${escapeHtml(resp.statusText || '')}</span> · ${resp.time} ms · ${formatBytes((resp.body || '').length)}` +
       ` <span style="color:#8a6d00">(replay)</span>`;
@@ -2677,25 +2635,24 @@ function renderResponsePane(req) {
     return;
   }
 
-  // Raw / pretty text path — handle imports / unloaded body / base64
-  // identically so replay results and captures share the same code.
+  // Raw / pretty text 경로 — import/unloaded body/base64를 동일하게
+  // 처리해서 replay 결과와 캡처가 같은 코드를 공유.
   const view = resp ? _viewFromReplay(resp) : _viewFromCapture(req);
   if (view.placeholder) {
     bodyEl.innerHTML = `<div class="msg-empty">${escapeHtml(view.placeholder)}</div>`;
     _toggleDecodeBtn('response', false);
     return;
   }
-  // Pair the response status line's HTTP version with whatever the
-  // request side detected — same connection, same wire protocol.
-  // Replay results come back through fetch() (h1.1 to local proxy),
-  // so they always render as 1.1 unless we have a captured-h2 origin.
+  // response status line의 HTTP version을 request side가 감지한 것과
+  // 짝맞춤 — 같은 연결, 같은 wire protocol. Replay 결과는 fetch()로
+  // 돌아옴(local proxy로 h1.1)이므로 captured-h2 origin이 없으면 항상
+  // 1.1로 렌더.
   const text = buildRawResponse(view, msgResponseFormat, resp ? '1.1' : _detectHttpVersion(req));
   const wrapCls = msgResponseWrap ? ' wrap' : '';
   let html = `<pre class="msg-raw${wrapCls}">${_renderRawHtml(text)}</pre>`;
-  // Diff badge for replay results. Always rendered when we have a
-  // replay response — _renderReplayDiff handles the case where the
-  // original body isn't available so status / availability info still
-  // surfaces instead of disappearing silently.
+  // replay 결과의 diff 배지. replay 응답이 있으면 항상 렌더 —
+  // _renderReplayDiff가 원본 body가 없는 경우도 처리해서 status/
+  // availability 정보가 silently 사라지지 않고 노출되도록.
   if (resp && req) {
     html += _renderReplayDiff(req, resp);
   }
@@ -2714,7 +2671,7 @@ function _statusClass(s) {
   return '';
 }
 
-// Wraps a captured request into the shape buildRawResponse expects.
+// 캡처된 요청을 buildRawResponse가 기대하는 모양으로 wrap.
 function _viewFromCapture(req) {
   if (req._imported && !req.responseBodyLoaded) {
     return { placeholder: 'Not included in the imported file' };
@@ -2743,11 +2700,10 @@ function _viewFromReplay(resp) {
   };
 }
 
-// Detect whether the captured request was carried over HTTP/2 by
-// looking for h2 pseudo-headers (`:authority`, `:method`, `:path`,
-// `:scheme`). They only exist on h2 connections, so their presence is
-// authoritative. Returns the version string we want on the rendered
-// request/status line.
+// 캡처된 요청이 HTTP/2로 전달됐는지 감지 — h2 pseudo-headers
+// (`:authority`, `:method`, `:path`, `:scheme`) 검사. h2 연결에서만
+// 존재하므로 그 존재가 authoritative. 렌더된 request/status line에
+// 표시할 version 문자열 반환.
 function _detectHttpVersion(req) {
   const headers = (req && req.requestHeaders) || {};
   for (const k of Object.keys(headers)) {
@@ -2756,10 +2712,9 @@ function _detectHttpVersion(req) {
   return '1.1';
 }
 
-// Build the raw HTTP request string. Path/query come from the URL so
-// the request line matches what went on the wire. Host header is
-// derived from the URL when not in the captured headers (browser
-// always sends it). Body comes verbatim from requestPostData.
+// raw HTTP request 문자열 빌드. path/query는 URL에서 가져와서 request
+// line이 wire에 나간 그대로와 일치. 캡처된 헤더에 Host가 없으면 URL
+// 에서 파생(브라우저는 항상 보냄). Body는 requestPostData에서 그대로.
 function buildRawRequest(req, format) {
   const method = req.method || 'GET';
   let path = '/';
@@ -2768,20 +2723,20 @@ function buildRawRequest(req, format) {
     const u = new URL(req.url);
     path = (u.pathname || '/') + (u.search || '');
     host = u.host;
-  } catch { /* fall back */ }
+  } catch { /* fallback */ }
 
   const headers = req.requestHeaders || {};
   const httpVersion = _detectHttpVersion(req);
   const lines = [`${method} ${path} HTTP/${httpVersion}`];
-  // Synthesize Host if absent — readers expect it on a raw HTTP line.
-  // For h2 the equivalent is :authority, so don't double-render it.
+  // Host가 없으면 합성 — 읽는 입장에서 raw HTTP line에 있을 거라 기대.
+  // h2의 등가물은 :authority라 이중 렌더 안 함.
   if (host && !_findHeaderCI(headers, 'host') && httpVersion !== '2') {
     lines.push(`Host: ${host}`);
   }
   for (const [k, v] of Object.entries(headers)) {
-    // h2 pseudo-headers are already encoded in the request line — drop
-    // them from the rendered header list to avoid the redundant /
-    // misleading ":method: GET" alongside "GET / HTTP/2".
+    // h2 pseudo-headers는 이미 request line에 인코딩되어 있음 — 렌더된
+    // 헤더 목록에서 드롭해서 "GET / HTTP/2"와 함께 ":method: GET"이
+    // 중복/오인되지 않도록.
     if (k.startsWith(':')) continue;
     lines.push(`${k}: ${v}`);
   }
@@ -2789,10 +2744,10 @@ function buildRawRequest(req, format) {
   return lines.join('\n') + '\n\n' + (format === 'pretty' ? _prettyBody(body, headers) : body);
 }
 
-// Build the raw HTTP response string from a view object (works for
-// both captures and replay results since both share {status, headers,
-// body}). httpVersion is supplied by the caller — paired with the
-// request side so request/response status lines stay consistent.
+// view 객체에서 raw HTTP response 문자열 빌드 (캡처와 replay 결과
+// 모두 {status, headers, body}를 공유하므로 양쪽 다 작동). httpVersion
+// 은 caller가 공급 — request side와 짝맞춰서 request/response status
+// line이 일관되도록.
 function buildRawResponse(view, format, httpVersion) {
   const status = view.status || 0;
   const statusText = view.statusText || '';
@@ -2804,16 +2759,15 @@ function buildRawResponse(view, format, httpVersion) {
     lines.push(`${k}: ${v}`);
   }
   const body = view.body || '';
-  if (view._bin) return lines.join('\n') + '\n\n' + body; // binary placeholder string
+  if (view._bin) return lines.join('\n') + '\n\n' + body; // 바이너리 placeholder 문자열
   return lines.join('\n') + '\n\n' + (format === 'pretty' ? _prettyBody(body, headers) : body);
 }
 
-// Tokenize a built raw HTTP message string into HTML with the request /
-// status line in blue and header names in red-bold. The first line
-// (request line for requests, status line for responses) is colored
-// distinctly; subsequent lines until the first blank line are
-// "Header-Name: value" pairs. Everything after the blank line is body
-// content rendered as-is.
+// 빌드된 raw HTTP 메시지 문자열을 토큰화해서 request/status line은
+// 파랑, 헤더 이름은 red-bold인 HTML로. 첫 줄(request의 request line,
+// response의 status line)은 distinct하게 색칠; 이후 첫 빈 줄까지의
+// 줄은 "Header-Name: value" 쌍. 빈 줄 이후는 body 콘텐츠를 그대로
+// 렌더.
 function _renderRawHtml(text) {
   if (!text) return '';
   const blankIdx = text.indexOf('\n\n');
@@ -2831,46 +2785,45 @@ function _renderRawHtml(text) {
       out.push(escapeHtml(line));
     } else {
       const name = line.slice(0, colon);
-      const rest = line.slice(colon); // includes ':' + value
+      const rest = line.slice(colon); // ':' + value 포함
       out.push(`<span class="msg-header-name">${escapeHtml(name)}</span>${escapeHtml(rest)}`);
     }
   }
-  // Blank separator line between headers and body, then body verbatim.
+  // 헤더와 body 사이 빈 구분 줄, 이후 body 그대로.
   return out.join('\n') + '\n\n' + (body ? escapeHtml(body) : '');
 }
 
-// ---- Auto Decode (inline replacement) ----
-// Find all encoded substrings inside a plain-text snippet and return
-// their positions plus the parsed finding. Priority order: JWT > URL-
-// encoded > Base64. Overlapping matches are filtered — earliest non-
-// overlapping wins (priority order matters because we scan in that
-// order and dedupe by start position).
+// ---- Auto Decode (인라인 치환) ----
+// plain-text 스니펫 안의 모든 인코딩된 substring 위치 + 파싱된 finding
+// 반환. 우선순위: JWT > URL-encoded > Base64. 겹치는 매치는 필터링 —
+// earliest non-overlapping 승리 (우선순위 중요: 그 순서로 스캔하고
+// start 위치로 dedupe).
 function _scanEncodedPositions(text) {
   if (!text || typeof text !== 'string') return [];
   const results = [];
   let m;
 
-  // 1. JWT — three-segment, both header and payload start with eyJ
+  // 1. JWT — 3-segment, header와 payload 모두 eyJ로 시작
   const jwtRe = /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g;
   while ((m = jwtRe.exec(text)) !== null) {
     const f = detectJWT(m[0]);
     if (f) results.push({ start: m.index, end: m.index + m[0].length, finding: f });
   }
-  // 2. URL-encoded — 2+ %XX runs (with surrounding url-safe chars)
+  // 2. URL-encoded — 2+ %XX 연속 (주변에 url-safe 문자)
   const urlRe = /[A-Za-z0-9~._!*'()\-+]*(?:%[0-9A-Fa-f]{2}[A-Za-z0-9~._!*'()\-+]*){2,}/g;
   while ((m = urlRe.exec(text)) !== null) {
     const f = detectUrlEncoded(m[0]);
     if (f) results.push({ start: m.index, end: m.index + m[0].length, finding: f });
   }
-  // 3. Base64 — broad shape, validated via detectBase64 (printability +
-  //    length + padding alignment).
+  // 3. Base64 — 넓은 모양, detectBase64로 검증 (출력 가능성 +
+  //    길이 + padding 정렬).
   const b64Re = /[A-Za-z0-9+/]{16,}={0,2}/g;
   while ((m = b64Re.exec(text)) !== null) {
     const f = detectBase64(m[0]);
     if (f) results.push({ start: m.index, end: m.index + m[0].length, finding: f });
   }
 
-  // Resolve overlaps (earlier scan order wins via stable sort + skip).
+  // 겹침 해결 (stable sort + skip으로 earlier scan order 승리).
   results.sort((a, b) => a.start - b.start);
   const filtered = [];
   let lastEnd = -1;
@@ -2883,10 +2836,10 @@ function _scanEncodedPositions(text) {
   return filtered;
 }
 
-// Compact, single-line display string for an inline replacement.
-// Multi-line decoded values would break the raw HTTP indentation, so
-// JSON values use compact serialization. The original is preserved on
-// the `title` attribute of the wrapping span.
+// 인라인 치환을 위한 compact, single-line 표시 문자열.
+// multi-line 디코딩 값은 raw HTTP 들여쓰기를 깨뜨릴 수 있으므로
+// JSON 값은 compact serialization 사용. 원본은 wrapping span의
+// `title` 속성에 보존.
 function _decodedDisplay(finding) {
   switch (finding.type) {
     case 'jwt': {
@@ -2902,10 +2855,10 @@ function _decodedDisplay(finding) {
   }
 }
 
-// Walk the text nodes inside `rootEl` and replace any encoded
-// substring with a styled span carrying the decoded form. Original
-// encoded text moves to the span's title attribute so the user can
-// hover to verify what was decoded.
+// `rootEl` 안의 텍스트 노드를 walk하면서 인코딩된 substring을
+// 디코딩된 형태를 담은 styled span으로 교체. 원본 인코딩 텍스트는
+// span의 title 속성으로 이동 → 사용자가 hover로 무엇이 디코딩됐는지
+// 확인 가능.
 function _applyDecodeMarks(rootEl) {
   if (!rootEl) return;
   const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT);
@@ -2936,17 +2889,17 @@ function _applyDecodeMarks(rootEl) {
   }
 }
 
-// True when the raw pane text contains at least one encoded substring
-// the Decode toggle can rewrite. Used to gate Decode button visibility
-// so the button appears only when there's something to decode.
+// raw pane 텍스트에 Decode 토글이 rewrite 가능한 인코딩된 substring이
+// 최소 하나 있으면 true. Decode 버튼 가시성 게이트에 사용 → 디코드할
+// 게 있을 때만 버튼이 나타남.
 function _paneHasDecodable(text) {
   if (!text) return false;
   return _scanEncodedPositions(text).length > 0;
 }
 
-// Show / hide the Decode button for a given pane and reset its active
-// state + companion flag when hiding so toggling it back on doesn't
-// inherit a stale "active" state from a previous request.
+// 주어진 pane의 Decode 버튼을 show/hide. 숨길 때는 active 상태와
+// 동반 플래그를 reset해서 다시 토글할 때 이전 요청의 stale "active"
+// 상태를 상속하지 않도록.
 function _toggleDecodeBtn(pane, show) {
   const btn = document.querySelector(`.msg-decode-btn[data-pane="${pane}"]`);
   if (!btn) return;
@@ -2966,22 +2919,21 @@ function _findHeaderCI(headers, name) {
   return null;
 }
 
-// Pretty-print the body when the Content-Type makes the format clear.
-// JSON gets indented to 2 spaces. Anything else stays as-is — partial
-// XML / HTML pretty-printing without a parser tends to mangle, and
-// the user can always switch back to Raw.
+// Content-Type이 포맷을 분명히 할 때 body를 pretty-print.
+// JSON은 2 space 들여쓰기. 그 외에는 그대로 — parser 없이 부분 XML/HTML
+// pretty-print는 mangle되기 쉽고, 사용자는 언제든 Raw로 돌릴 수 있음.
 function _prettyBody(body, headers) {
   if (!body || typeof body !== 'string') return body;
   const ct = (_findHeaderCI(headers, 'content-type') || '').toLowerCase();
   if (ct.includes('json') || (body.trimStart().startsWith('{') || body.trimStart().startsWith('['))) {
     try { return JSON.stringify(JSON.parse(body), null, 2); }
-    catch { /* not valid JSON — fall through */ }
+    catch { /* 유효 JSON 아님 — fall through */ }
   }
   return body;
 }
 
-// Preview button on the response pane. Toggles between raw text and
-// the most useful rendered form for the response's mime type.
+// response pane의 Preview 버튼. raw 텍스트와 응답 mime type에 가장
+// 유용한 렌더 형태를 토글.
 function _renderResponsePreview(bodyEl, req, replayResp) {
   const view = replayResp ? _viewFromReplay(replayResp) : _viewFromCapture(req);
   if (view.placeholder) {
@@ -3010,15 +2962,15 @@ function _renderResponsePreview(bodyEl, req, replayResp) {
       return;
     } catch { /* fall through */ }
   }
-  // No useful preview — show raw + a notice.
+  // 유용한 preview 없음 — raw + 안내 표시.
   showToast('No preview available for this content type');
   msgPreviewMode = 'raw';
   document.getElementById('msg-preview-toggle').classList.remove('active');
   renderResponsePane(req);
 }
 
-// Format toggle (Raw / Pretty) — delegated. Only toggles the side
-// the click landed in; the other side keeps its current mode.
+// Format 토글 (Raw / Pretty) — 위임. 클릭이 떨어진 쪽만 토글하고
+// 다른 쪽은 현재 모드 유지.
 document.querySelectorAll('.msg-format-toggle').forEach(group => {
   const side = group.dataset.pane; // 'request' | 'response'
   group.querySelectorAll('.msg-format-btn').forEach(btn => {
@@ -3029,8 +2981,8 @@ document.querySelectorAll('.msg-format-toggle').forEach(group => {
       const fmt = btn.dataset.fmt;
       if (side === 'request') {
         msgRequestFormat = fmt;
-        // No re-render in replay edit mode — the textarea content is
-        // user-owned and shouldn't be reset by a format toggle.
+        // replay edit 모드에서는 재렌더 안 함 — textarea 내용은
+        // 사용자 소유라 format 토글로 reset되면 안 됨.
         if (!msgReplayEditing) {
           const req = networkRequestMap.get(selectedRequestId);
           if (req) renderRequestPane(req);
@@ -3044,10 +2996,10 @@ document.querySelectorAll('.msg-format-toggle').forEach(group => {
   });
 });
 
-// Decode toggle — independent from Raw/Pretty. When active the pane's
-// raw text gets its encoded substrings replaced inline (handled by
-// _applyDecodeMarks called from the pane renderers). On enable, scroll
-// the first decoded span into view so the user sees the result.
+// Decode 토글 — Raw/Pretty와 독립. 활성 시 pane의 raw 텍스트의
+// 인코딩된 substring이 인라인으로 교체됨 (pane renderer에서 호출되는
+// _applyDecodeMarks가 처리). 활성화 시 첫 디코딩된 span을 view로
+// 스크롤 → 사용자가 결과를 보도록.
 document.querySelectorAll('.msg-decode-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const side = btn.dataset.pane;
@@ -3072,9 +3024,9 @@ document.querySelectorAll('.msg-decode-btn').forEach(btn => {
   });
 });
 
-// Wrap toggle — flips white-space: pre ↔ pre-wrap on the pane's
-// <pre>. Lives on per-pane state and survives format / decode toggles
-// within the same request selection.
+// Wrap 토글 — pane의 <pre>에서 white-space: pre ↔ pre-wrap 뒤집기.
+// per-pane 상태로 살며, 같은 요청 선택 내에서 format/decode 토글 후
+// 에도 보존.
 document.querySelectorAll('.msg-wrap-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const side = btn.dataset.pane;
@@ -3094,9 +3046,9 @@ document.querySelectorAll('.msg-wrap-btn').forEach(btn => {
   });
 });
 
-// Replay button — toggles the request pane between raw view and
-// editable textarea. Pressing once enters edit mode and seeds the
-// textarea with the current raw request; pressing again cancels.
+// Replay 버튼 — request pane을 raw 뷰와 편집 가능한 textarea 사이에서
+// 토글. 한 번 누르면 edit 모드 진입 + textarea를 현재 raw request로
+// 시드; 다시 누르면 취소.
 document.getElementById('msg-replay-toggle').addEventListener('click', () => {
   if (msgReplayEditing) {
     _exitReplayEdit();
@@ -3107,9 +3059,9 @@ document.getElementById('msg-replay-toggle').addEventListener('click', () => {
   _enterReplayEdit(req);
 });
 
-// Snapshot of the captured request's method/URL/headers/body taken when
-// replay edit mode opens — drives the Original/Modified state badge
-// without relying on string equality of free-form raw text.
+// replay edit 모드가 열릴 때 찍은 캡처 요청의 method/URL/headers/body
+// 스냅샷 — free-form raw text의 string 비교에 의존하지 않고
+// Original/Modified 상태 배지를 드라이브.
 let msgReplayOriginalSnapshot = null;
 
 function _enterReplayEdit(req) {
@@ -3122,11 +3074,11 @@ function _enterReplayEdit(req) {
   updateSendToBrowserButton();
 }
 
-// Render (or re-render) the editor's DOM from a snapshot. Called on
-// initial entry and when the user clicks the Original/Modified button
-// to restore the seed. Event delegation in setupReplayEditorListeners
-// covers tab clicks / + Add Header / KV row removes / input tracking,
-// so re-rendering doesn't accumulate listeners.
+// 스냅샷에서 에디터의 DOM을 렌더(또는 재렌더). 초기 진입 시와
+// 사용자가 Original/Modified 버튼으로 시드를 복원할 때 호출.
+// setupReplayEditorListeners의 이벤트 위임이 탭 클릭 / + Add Header
+// / KV row 제거 / input 추적을 커버하므로 재렌더로 listener가
+// 누적되지 않음.
 function _renderReplayEditor(snap) {
   const bodyEl = document.getElementById('msg-request-body');
   bodyEl.innerHTML = `
@@ -3171,36 +3123,35 @@ function _renderReplayEditor(snap) {
     _addReplayKvRow(list, name, value, true);
   }
   document.getElementById('msg-replay-body-input').value = snap.body;
-  // Decide initial body view based on the seeded body shape. Form
-  // view is only useful for x-www-form-urlencoded payloads — JSON or
-  // multipart bodies should stay raw to avoid surprising the user.
+  // 시드된 body 모양에 따라 초기 body view 결정. Form view는
+  // x-www-form-urlencoded 페이로드에만 유용 — JSON이나 multipart body는
+  // 사용자를 놀라게 하지 않도록 raw 유지.
   const formCapable = _replayBodyLooksFormEncoded(snap);
   _setReplayBodyView(formCapable ? 'form' : 'raw', { populate: true, formCapable });
 }
 
-// True when the body looks like form-urlencoded — either by Content-
-// Type header or a heuristic on the body string. Used to decide whether
-// to default the Body pane to Form view, and whether the Form/Raw
-// toggle is offered at all.
+// body가 form-urlencoded처럼 보일 때 true — Content-Type 헤더 또는
+// body 문자열 휴리스틱 둘 중 하나. Body pane을 Form 뷰로 기본 설정할지,
+// 그리고 Form/Raw 토글을 제공할지 결정.
 function _replayBodyLooksFormEncoded(snap) {
   const ct = (snap.headers || [])
     .find(h => h.name.toLowerCase() === 'content-type');
   if (ct && /application\/x-www-form-urlencoded/i.test(ct.value)) return true;
-  // Heuristic for missing Content-Type: body has at least one `=`,
-  // no JSON markers, no leading angle bracket, no obvious raw text.
+  // Content-Type이 없을 때의 휴리스틱: body에 최소 1개 `=`, JSON 마커
+  // 없음, 선두 angle bracket 없음, 명백한 raw text 아님.
   const body = (snap.body || '').trim();
   if (!body) return false;
   if (body.startsWith('{') || body.startsWith('[')) return false;
   if (body.startsWith('<')) return false;
   if (!body.includes('=')) return false;
-  // Reject if it looks like prose (contains lots of spaces / words).
+  // prose처럼 보이면(공백/단어 많음) reject.
   if (/\s{2,}/.test(body)) return false;
   return true;
 }
 
-// Switch the body pane between Form and Raw views. Keeps the underlying
-// body content in sync — Form ↔ Raw conversions happen at toggle time
-// so edits in one view are visible in the other on switch.
+// body pane을 Form과 Raw 뷰 사이에서 전환. 기저 body 내용을
+// 동기화 유지 — Form ↔ Raw 변환은 토글 시점에 일어나므로 한 뷰의
+// 편집이 전환 시 다른 뷰에서 보임.
 function _setReplayBodyView(view, opts) {
   opts = opts || {};
   const formContainer = document.getElementById('msg-replay-body-form');
@@ -3208,15 +3159,15 @@ function _setReplayBodyView(view, opts) {
   const addBtn = document.getElementById('msg-replay-add-field');
   const toggle = document.querySelector('.replay-body-format-toggle');
   if (!formContainer || !ta || !toggle) return;
-  // Hide the Form button entirely when the body isn't form-shaped — no
-  // point offering a view that can't represent it.
+  // body가 form 모양이 아니면 Form 버튼을 완전히 숨김 — 표현 불가능한
+  // 뷰를 제공할 의미 없음.
   if (opts.formCapable === false) {
     toggle.classList.add('hidden');
   }
   if (view === 'form' && opts.formCapable === false) view = 'raw';
 
   if (opts.populate && view === 'form') {
-    // Initial population from the textarea value
+    // textarea 값에서 초기 population
     formContainer.innerHTML = '';
     const fields = _parseFormUrlencodedFields(ta.value || '');
     if (fields.length === 0) {
@@ -3225,12 +3176,12 @@ function _setReplayBodyView(view, opts) {
       for (const f of fields) _addReplayBodyField(formContainer, f.name, f.value, true);
     }
   } else if (!opts.populate) {
-    // Toggle: convert from the previously-active view to the new one.
+    // 토글: 이전 활성 뷰에서 새 뷰로 변환.
     if (view === 'raw') {
-      // Form → Raw: encode current fields into textarea.
+      // Form → Raw: 현재 필드를 textarea로 인코드.
       ta.value = _encodeReplayBodyForm(formContainer);
     } else {
-      // Raw → Form: parse textarea into KV rows.
+      // Raw → Form: textarea를 KV 행으로 파싱.
       formContainer.innerHTML = '';
       const fields = _parseFormUrlencodedFields(ta.value || '');
       if (fields.length === 0) {
@@ -3241,7 +3192,7 @@ function _setReplayBodyView(view, opts) {
     }
   }
 
-  // Apply visibility
+  // 가시성 적용
   if (view === 'form') {
     formContainer.classList.remove('hidden');
     if (addBtn) addBtn.classList.remove('hidden');
@@ -3254,8 +3205,8 @@ function _setReplayBodyView(view, opts) {
   toggle.querySelectorAll('.replay-body-fmt-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.bfmt === view);
   });
-  // Track active view on the editor element so reads (Send) know which
-  // pane carries the source of truth.
+  // editor element에 활성 뷰 추적 → read(Send) 시점에 어느 pane이
+  // source of truth인지 알 수 있도록.
   const editor = document.querySelector('.replay-editor');
   if (editor) editor.dataset.bodyView = view;
 }
@@ -3272,11 +3223,10 @@ function _addReplayBodyField(container, name, value, enabled) {
   container.appendChild(row);
 }
 
-// Encode the form-view rows back into application/x-www-form-urlencoded
-// for the Send payload (and for the Raw-toggle round-trip). Uses `+`
-// for spaces — application/x-www-form-urlencoded convention; encode-
-// URIComponent emits %20 which would round-trip differently from
-// captured request bodies.
+// form-view 행을 application/x-www-form-urlencoded로 다시 인코드
+// (Send 페이로드 + Raw 토글 round-trip용). 공백은 `+` 사용 —
+// application/x-www-form-urlencoded 관행; encodeURIComponent는 %20을
+// 내보내는데 캡처된 request body와 round-trip이 달라짐.
 function _encodeReplayBodyForm(container) {
   const parts = [];
   container.querySelectorAll('.replay-kv-row').forEach(row => {
@@ -3294,11 +3244,10 @@ function _formUrlEncode(s) {
   return encodeURIComponent(String(s)).replace(/%20/g, '+');
 }
 
-// Semantic equality for form-encoded bodies — covers the case where
-// the user's untouched form fields re-encode with a slightly different
-// byte form (e.g. + vs %20, missing trailing = on empty fields). If
-// either body fails to parse cleanly we just say "not equal" and let
-// the string compare drive Modified state.
+// form-encoded body의 시맨틱 동등성 — 사용자가 건드리지 않은 form
+// 필드가 약간 다른 byte 형태로 re-encode되는 경우(예: + vs %20, 빈
+// 필드의 trailing = 누락)를 커버. 한쪽 body가 파싱에 실패하면 "not
+// equal"이라 보고 string 비교가 Modified 상태를 드라이브하게 둠.
 function _replayBodiesFormEqual(a, b) {
   if (a == null || b == null) return false;
   const fa = _parseFormUrlencodedFields(a);
@@ -3312,15 +3261,15 @@ function _replayBodiesFormEqual(a, b) {
   return true;
 }
 
-// Attached once at script init — handles all replay editor interactions
-// via delegation so re-rendering the editor (for Original restore) does
-// not require re-binding listeners or risk accumulation.
+// 스크립트 init 시 한 번만 attach — 모든 replay editor 상호작용을
+// 위임으로 처리해서 에디터 재렌더(Original 복원용) 시 listener
+// 재바인딩이 필요 없고 누적 위험도 없음.
 function _setupReplayEditorListeners() {
   const bodyEl = document.getElementById('msg-request-body');
   if (!bodyEl) return;
   bodyEl.addEventListener('click', (e) => {
     if (!msgReplayEditing) return;
-    // Tab switching
+    // 탭 전환
     const tab = e.target.closest('.replay-editor-tab');
     if (tab) {
       bodyEl.querySelectorAll('.replay-editor-tab').forEach(t => t.classList.remove('active'));
@@ -3330,7 +3279,7 @@ function _setupReplayEditorListeners() {
       if (pane) pane.classList.add('active');
       return;
     }
-    // Body Form/Raw format toggle
+    // Body Form/Raw 포맷 토글
     const fmtBtn = e.target.closest('.replay-body-fmt-btn');
     if (fmtBtn) {
       _setReplayBodyView(fmtBtn.dataset.bfmt);
@@ -3351,7 +3300,7 @@ function _setupReplayEditorListeners() {
       _refreshReplayState();
       return;
     }
-    // KV remove
+    // KV 제거
     const removeBtn = e.target.closest('.kv-remove');
     if (removeBtn) {
       const row = removeBtn.closest('.replay-kv-row');
@@ -3359,11 +3308,10 @@ function _setupReplayEditorListeners() {
       return;
     }
   });
-  // Edit-tracking — any input/change inside the editor recomputes
-  // Modified state. KV checkbox toggle bubbles change events here too.
-  // Also re-evaluates the forbidden-header lock when the user retypes
-  // a row's name (e.g. they add a fresh row and type "Cookie" → row
-  // value should lock).
+  // Edit 추적 — 에디터 내부의 input/change가 Modified 상태 재계산.
+  // KV 체크박스 토글의 change 이벤트도 여기로 bubble.
+  // 사용자가 row의 name을 다시 입력할 때(예: 새 row 추가 후 "Cookie"
+  // 입력) forbidden-header 잠금도 재평가.
   bodyEl.addEventListener('input', (e) => {
     if (!msgReplayEditing) return;
     if (e.target.classList && e.target.classList.contains('kv-name')) {
@@ -3394,9 +3342,8 @@ function _exitReplayEdit() {
   updateSendToBrowserButton();
 }
 
-// Capture the request's editable state in the same shape the editor
-// reads/writes, so Modified detection is a structural compare instead
-// of a stringy diff.
+// 요청의 편집 가능 상태를 에디터의 read/write 모양과 동일하게 캡처 →
+// Modified 감지가 stringy diff가 아닌 구조적 비교가 되도록.
 function _captureReplaySnapshot(req) {
   const headers = [];
   const captured = req.requestHeaders || {};
@@ -3407,9 +3354,9 @@ function _captureReplaySnapshot(req) {
   return {
     method: req.method || 'GET',
     url: req.url || '',
-    // The replay editor is HTTP/1.1-only on the wire (fetch's behavior),
-    // but the input is editable for security-testing scenarios where
-    // the user wants to record an intended-but-unsendable mutation.
+    // replay editor는 wire 상에서 HTTP/1.1 only(fetch 동작)지만,
+    // 입력은 편집 가능 — 사용자가 의도된 but unsendable 변형을 기록
+    // 하려는 보안 테스트 시나리오를 위해.
     version: 'HTTP/1.1',
     headers,
     body: req.requestPostData || '',
@@ -3427,9 +3374,9 @@ function _readReplayEditor() {
     const value = row.querySelector('.kv-value').value;
     if (name) headers.push({ name, value });
   });
-  // Body is read from whichever view is currently active. Form view
-  // re-encodes its rows on every read so the user always sees the
-  // same payload regardless of which surface they edited in.
+  // body는 현재 활성 뷰에서 read. Form view는 매 read마다 rows를
+  // re-encode → 사용자가 어느 surface에서 편집했든 항상 같은
+  // 페이로드를 보게 됨.
   const editor = document.querySelector('.replay-editor');
   const view = (editor && editor.dataset.bodyView) || 'raw';
   let body;
@@ -3447,10 +3394,10 @@ function _readReplayEditor() {
   };
 }
 
-// Headers fetch() silently drops in page-context — browser fills in
-// its own value regardless of what's typed. Listed lowercase for the
-// per-row check; we also recognize prefix families (Sec-, Proxy-,
-// Access-Control-) below.
+// 페이지 컨텍스트에서 fetch()가 silently drop하는 헤더 — 무엇을
+// 입력하든 브라우저가 자체 값으로 채움. per-row 체크용으로 lowercase
+// 리스트; prefix 패밀리(Sec-, Proxy-, Access-Control-)는 아래에서
+// 별도 인식.
 const _FORBIDDEN_REPLAY_HEADERS = new Set([
   'accept-charset', 'accept-encoding',
   'connection', 'content-length',
@@ -3475,9 +3422,9 @@ function _isForbiddenReplayHeader(name) {
   return false;
 }
 
-// Apply / clear the forbidden lock styling on a KV row based on its
-// current name. Called both at row build time and from the input
-// delegation handler when the user retypes the name.
+// KV row의 현재 name에 따라 forbidden lock 스타일링을 적용/해제.
+// 행 빌드 시점과 사용자가 name을 다시 입력할 때 input 위임 핸들러
+// 양쪽에서 호출.
 function _applyForbiddenLock(row) {
   const nameEl = row.querySelector('.kv-name');
   const valueEl = row.querySelector('.kv-value');
@@ -3494,8 +3441,8 @@ function _applyForbiddenLock(row) {
   nameEl.title = tip;
 }
 
-// KV rows are pure DOM — toggle/remove/forbidden-lock are handled by
-// event delegation in _setupReplayEditorListeners.
+// KV row는 순수 DOM — toggle/remove/forbidden-lock은
+// _setupReplayEditorListeners의 이벤트 위임이 처리.
 function _addReplayKvRow(list, name, value, enabled) {
   const row = document.createElement('div');
   row.className = 'replay-kv-row' + (enabled ? '' : ' disabled');
@@ -3528,41 +3475,40 @@ function _replaySnapshotEqual(a, b) {
     if (a.headers[i].name !== b.headers[i].name) return false;
     if (a.headers[i].value !== b.headers[i].value) return false;
   }
-  // Body: byte-equal first, then semantic form-encoded compare so
-  // round-trip-through-the-Form-view doesn't false-positive Modified.
+  // Body: byte-equal 먼저, 그 다음 시맨틱 form-encoded 비교 →
+  // Form-view를 통한 round-trip이 Modified로 false-positive 안 되도록.
   if (a.body === b.body) return true;
   if (_replayBodiesFormEqual(a.body, b.body)) return true;
   return false;
 }
 
-// Original/Modified button — restores all editor fields to the snapshot.
+// Original/Modified 버튼 — 모든 에디터 필드를 스냅샷으로 복원.
 document.getElementById('msg-replay-state').addEventListener('click', () => {
   if (!msgReplayOriginalSnapshot) return;
   _renderReplayEditor(msgReplayOriginalSnapshot);
   _refreshReplayState();
 });
 
-// Send button — read the editor state, build the fetch payload, fire
-// it via inspectedWindow.eval (page context, so cookies attach
-// naturally), poll for the result, then update the response pane.
+// Send 버튼 — 에디터 상태 read, fetch payload 빌드, inspectedWindow.eval
+// 로 발화(page context이므로 쿠키가 자연스럽게 attach), 결과 polling,
+// response pane 업데이트.
 document.getElementById('msg-replay-send').addEventListener('click', () => {
   const cur = _readReplayEditor();
   if (!cur) return;
   const req = networkRequestMap.get(selectedRequestId);
   if (!req) return;
-  // Resolve the URL against the captured origin so users can edit just
-  // the path/query if they want.
+  // 사용자가 path/query만 편집할 수 있도록 캡처 origin에 대해 URL 해결.
   let resolvedUrl;
   try { resolvedUrl = new URL(cur.url, req.url).href; } catch { resolvedUrl = cur.url; }
-  // Full set the user typed — fed to the row override so the captured
-  // entry shows exactly what was edited, even for headers fetch will
-  // silently drop on the wire.
+  // 사용자가 입력한 전체 set — row override에 공급해서 fetch가 wire
+  // 상에서 silently drop하는 헤더라도 캡처된 항목이 편집된 그대로
+  // 보이도록.
   const displayHeaders = {};
   for (const { name, value } of cur.headers) displayHeaders[name] = value;
-  // Wire-allowed subset — what fetch() will actually attempt to send.
+  // wire 허용 subset — fetch()가 실제로 보낼 시도를 할 헤더.
   const fetchHeaders = {};
   for (const { name, value } of cur.headers) {
-    // fetch() refuses these — the browser sets them itself.
+    // fetch()는 이걸 거부 — 브라우저가 자체 설정.
     if (/^(host|content-length)$/i.test(name)) continue;
     fetchHeaders[name] = value;
   }
@@ -3576,23 +3522,21 @@ document.getElementById('msg-replay-send').addEventListener('click', () => {
   });
 });
 
-// Replay-fire queue — short-TTL list of recent (url, method) tuples
-// plus the user's intended request shape, so the network capture
-// pipeline can tag matching incoming requests as "_isReplay" AND
-// override the row's headers / body display with what the user
-// actually typed. Page-context fetch silently drops forbidden header
-// modifications (Cookie / User-Agent / Origin / Sec-* / Referer /
-// DNT etc.) and replaces them with browser defaults — so HAR alone
-// reports the wire view, which doesn't match the user's intent. The
-// stashed `displayHeaders` / `displayBody` give the row a faithful
-// view of what was sent (or attempted) without contaminating the
-// origin server with a tag header.
+// Replay-fire 큐 — 최근 (url, method) 튜플 + 사용자가 의도한 요청
+// 모양의 short-TTL 리스트. network 캡처 파이프라인이 매칭되는
+// 들어오는 요청을 "_isReplay"로 태그하고 row의 headers/body 표시를
+// 사용자가 실제로 입력한 것으로 override 가능. 페이지 컨텍스트 fetch는
+// forbidden 헤더 수정(Cookie/User-Agent/Origin/Sec-*/Referer/DNT 등)
+// 을 silently drop하고 브라우저 기본값으로 교체 — 따라서 HAR만으로는
+// wire 뷰만 보고되어 사용자 의도와 일치하지 않음. stash된
+// `displayHeaders`/`displayBody`가 row에 faithful한 뷰를 제공 →
+// origin 서버에 tag 헤더로 오염시키지 않고.
 const _replayFireQueue = [];
 const _REPLAY_FIRE_TTL_MS = 10000;
 
 function _markReplayFired(url, method, display) {
   const now = Date.now();
-  // Drop expired entries opportunistically — keeps the queue tiny.
+  // 기회적으로 만료 항목 제거 — 큐를 작게 유지.
   for (let i = _replayFireQueue.length - 1; i >= 0; i--) {
     if (now - _replayFireQueue[i].t > _REPLAY_FIRE_TTL_MS) {
       _replayFireQueue.splice(i, 1);
@@ -3605,10 +3549,9 @@ function _markReplayFired(url, method, display) {
   });
 }
 
-// Called from processNetworkRequest. Returns the matched fire-queue
-// entry (with displayHeaders/displayBody) and removes it, or null when
-// there's no match. URL match is exact (we set it ourselves to the
-// same string the page-side fetch was given).
+// processNetworkRequest에서 호출. 매칭된 fire-queue 항목
+// (displayHeaders/displayBody 포함)을 반환하고 제거, 매치 없으면 null.
+// URL 매치는 정확(우리가 page-side fetch에 준 것과 같은 문자열로 설정).
 function consumeReplayFireMatch(url, method) {
   const now = Date.now();
   for (let i = 0; i < _replayFireQueue.length; i++) {
@@ -3622,12 +3565,12 @@ function consumeReplayFireMatch(url, method) {
   return null;
 }
 
-// Auth test fire queue — the Auth tab's "Test: empty/wrong password"
-// buttons fire variant fetches via inspectedWindow.eval just like
-// Replay does, but those are *internal probes* and shouldn't appear
-// in the user's Monitor timeline. processNetworkRequest checks this
-// queue before adding the request to networkRequests; on match the
-// capture is dropped entirely (no row, no scan, no sitemap entry).
+// Auth test fire 큐 — Auth 탭의 "Test: empty/wrong password" 버튼이
+// Replay와 마찬가지로 inspectedWindow.eval로 변종 fetch를 발화하는데,
+// 이것들은 *내부 probe*라서 사용자의 Monitor 타임라인에 나타나면 안
+// 됨. processNetworkRequest가 networkRequests에 요청을 추가하기 전에
+// 이 큐를 체크; 매치되면 캡처가 완전히 드롭(row 없음, scan 없음,
+// sitemap 항목 없음).
 const _authTestFireQueue = [];
 const _AUTH_TEST_FIRE_TTL_MS = 10000;
 
@@ -3654,16 +3597,15 @@ function consumeAuthTestFireMatch(url, method) {
   return false;
 }
 
-// Fire the parsed replay request via the inspected page's context.
-// Mirrors the polling pattern the old executeReplay used.
+// 파싱된 replay 요청을 inspected 페이지의 컨텍스트로 발화.
+// 예전 executeReplay가 쓰던 polling 패턴 미러링.
 function _sendReplayFetch(originalReq, payload) {
   const sendBtn = document.getElementById('msg-replay-send');
   sendBtn.textContent = 'Sending...';
   sendBtn.disabled = true;
-  // Tag this fire so the eventual onRequestFinished can mark the
-  // captured row as a replay AND override its displayed headers/body
-  // with what the user actually typed (page-context fetch drops a
-  // bunch of header modifications silently).
+  // 이 발화를 태그 → 결과적으로 onRequestFinished가 캡처된 row를
+  // replay로 마크하고 표시 headers/body를 사용자가 실제 입력한 것으로
+  // override 가능 (page-context fetch는 헤더 수정 일부를 silently drop).
   _markReplayFired(payload.url, payload.method, {
     headers: payload.displayHeaders || payload.headers,
     body: 'displayBody' in payload ? payload.displayBody : payload.body,
@@ -3725,11 +3667,11 @@ function _sendReplayFetch(originalReq, payload) {
         let parsed;
         try { parsed = JSON.parse(raw); } catch { showToast('Replay result parse failed'); return; }
         if (!parsed.ok) {
-          // Page-context fetch failed — usually CORS for cross-origin
-          // assets without ACAO headers. Fall back to a background-
-          // service-worker fetch (host_permissions: <all_urls>, no
-          // page-level CORS gate). Cookies still ride along via
-          // credentials:'include' for SameSite=Lax / None hosts.
+          // page-context fetch 실패 — 보통 ACAO 헤더 없는 cross-origin
+          // 자산의 CORS. background-service-worker fetch로 fallback
+          // (host_permissions: <all_urls>, page-level CORS 게이트
+          // 없음). 쿠키는 credentials:'include'로 SameSite=Lax/None
+          // 호스트에 여전히 따라 감.
           _sendReplayFetchViaBackground(originalReq, payload, parsed.error);
           return;
         }
@@ -3740,10 +3682,9 @@ function _sendReplayFetch(originalReq, payload) {
   });
 }
 
-// Background-fetch fallback used when the page-context fetch errors
-// out (typically CORS). Doesn't run by default — only after the page
-// path actually fails — so the page's session context is preferred
-// when reachable.
+// page-context fetch가 에러(보통 CORS)일 때 사용하는 background-fetch
+// fallback. 기본 실행 안 함 — page 경로가 실제로 실패한 후에만 →
+// 페이지의 session 컨텍스트가 도달 가능할 때 우선.
 function _sendReplayFetchViaBackground(originalReq, payload, pageError) {
   const sendBtn = document.getElementById('msg-replay-send');
   sendBtn.textContent = 'Sending (CORS fallback)...';
@@ -3777,8 +3718,8 @@ function _sendReplayFetchViaBackground(originalReq, payload, pageError) {
   });
 }
 
-// Preview button — toggles the response pane between raw text and
-// rendered preview (HTML iframe / image / JSON tree).
+// Preview 버튼 — response pane을 raw 텍스트와 렌더된 preview(HTML
+// iframe/이미지/JSON tree) 사이에서 토글.
 document.getElementById('msg-preview-toggle').addEventListener('click', () => {
   msgPreviewMode = msgPreviewMode === 'raw' ? 'preview' : 'raw';
   document.getElementById('msg-preview-toggle').classList.toggle('active', msgPreviewMode === 'preview');
@@ -3786,16 +3727,15 @@ document.getElementById('msg-preview-toggle').addEventListener('click', () => {
   if (req) renderResponsePane(req);
 });
 
-// Diff result HTML for a replay response vs the captured original.
-// Always renders both Status and Body sections so the user can see at
-// a glance which dimensions changed and which didn't — silent missing
-// sections were causing confusion (a status change being hidden because
-// the body matched, JSON formatting differences showing nothing at all,
-// non-JSON differences showing nothing, and so on).
+// 캡처된 원본 vs replay 응답의 diff 결과 HTML. Status와 Body 섹션을
+// 항상 렌더 → 사용자가 어떤 차원이 변했는지/안 변했는지 한눈에 파악.
+// silent 누락 섹션이 혼란을 유발했음(body 매치라서 status 변경이 숨김,
+// JSON 포매팅 차이만 있으면 아무것도 안 보임, 비-JSON 차이가 안
+// 보임 등).
 function _renderReplayDiff(originalReq, replayResp) {
   const sections = [];
 
-  // ---- Status section ----
+  // ---- Status 섹션 ----
   const oStatus = originalReq.status;
   const nStatus = replayResp.status;
   if (oStatus != null && nStatus != null) {
@@ -3813,7 +3753,7 @@ function _renderReplayDiff(originalReq, replayResp) {
     }
   }
 
-  // ---- Body section ----
+  // ---- Body 섹션 ----
   const bodyAvailable = originalReq.responseBodyLoaded && originalReq.responseBody != null;
   if (!bodyAvailable) {
     sections.push(
@@ -3826,9 +3766,9 @@ function _renderReplayDiff(originalReq, replayResp) {
     if (oBody === nBody) {
       sections.push(`<div class="msg-diff-identical">Response body identical to original</div>`);
     } else {
-      // Try JSON diff. If both parse and the structures match, the
-      // text-level mismatch was just whitespace / key-order — surface
-      // that explicitly instead of falling through to silence.
+      // JSON diff 시도. 둘 다 파싱되고 구조가 일치하면 text-level
+      // 불일치는 공백/key-order 차이일 뿐 — silence로 fall through하지
+      // 말고 명시적으로 노출.
       let handled = false;
       try {
         const origObj = JSON.parse(oBody);
@@ -3843,10 +3783,10 @@ function _renderReplayDiff(originalReq, replayResp) {
           );
         }
         handled = true;
-      } catch { /* not JSON — handled below */ }
+      } catch { /* JSON 아님 — 아래에서 처리 */ }
       if (!handled) {
-        // Non-JSON body that differs — show a size-delta line so the
-        // user at least knows it changed and by how much.
+        // 다른 비-JSON body — size-delta 줄 표시 → 사용자가 적어도
+        // 변경된 사실과 변경량을 알 수 있도록.
         sections.push(
           `<div class="diff-title">Body differs ` +
           `(${oBody.length} → ${nBody.length} bytes)</div>`
@@ -3873,7 +3813,7 @@ function headerRowsHtml(headers, extraClass) {
 
 
 // ============================================================
-// Initiator — Call stack trace + sensitive pattern detection
+// Initiator — Call stack trace + 민감 패턴 감지
 // ============================================================
 
 const SENSITIVE_PATTERNS = [
@@ -3889,11 +3829,10 @@ const SENSITIVE_PATTERNS = [
   { pattern: /pay|price|amount|billing|checkout/i, label: 'Payment' },
 ];
 
-// Severity tier each sensitive pattern carries when surfaced in the
-// Initiator tab's findings list. Mirrors how the Detection tab grades
-// its categories — auth/credential/business-logic gets HIGH, things
-// the server commonly enforces (validation, navigation, crypto
-// algorithm) settle at MEDIUM.
+// Initiator 탭의 findings 리스트에 노출될 때 각 민감 패턴이 갖는
+// severity 등급. Detection 탭이 카테고리에 매기는 방식 미러링 —
+// auth/credential/비즈니스 로직은 HIGH, 서버에서 흔히 강제되는 것
+// (validation, navigation, crypto algorithm)은 MEDIUM.
 const SENSITIVE_PATTERN_SEVERITY = {
   'OTP/MFA': 'high',
   'Authentication': 'high',
@@ -3907,104 +3846,104 @@ const SENSITIVE_PATTERN_SEVERITY = {
   'Payment': 'high',
 };
 
-// Hover-tooltip text for the Type indicator at the top of the
-// Initiator tab. Keyed by initiator.type, plus a synthetic 'mapped'
-// entry shown on the Mapped indicator when source-map decoding lands.
+// Initiator 탭 상단 Type 인디케이터의 호버 툴팁 텍스트. initiator.type
+// 키, source-map 디코딩 성공 시 Mapped 인디케이터에 표시될 합성
+// 'mapped' 엔트리도 포함.
 const INITIATOR_TYPE_DESCRIPTIONS = {
   script:
-    `This request was triggered by JavaScript code.
-Check the Call Stack to see which function
-initiated this request.
-If sensitive function labels (Authentication,
-Token, etc.) are highlighted, click that frame
-to review the source.`,
+    `이 요청은 JavaScript 코드에 의해 발생했습니다.
+어떤 함수가 요청을 시작했는지 Call Stack에서
+확인하세요.
+민감 함수 라벨(Authentication, Token 등)이
+강조 표시되어 있으면 해당 프레임을 클릭해
+소스를 검토하세요.`,
   parser:
-    `This request was triggered by the HTML parser
-reading static markup tags such as
-<img src>, <script src>, or <link href>.
-If user input is reflected into HTML,
-this may be an SSRF or XSS review point.`,
+    `이 요청은 HTML 파서가 정적 마크업 태그
+(<img src>, <script src>, <link href> 등)를
+읽으면서 발생했습니다.
+사용자 입력이 HTML에 반영되는 구조라면
+SSRF 또는 XSS 검토 지점이 될 수 있습니다.`,
   mapped:
-    `Source map decoding succeeded for this request.
-The bundled code has been traced back to
-the original file name and line number.
-Click a frame marked with ↑ to view
-the original source inline.
-If source maps are accessible in production,
-consider reviewing for source map exposure.`,
+    `이 요청에 대해 소스맵 디코딩이 성공했습니다.
+번들된 코드가 원본 파일명과 라인 번호로
+역매핑되어 있습니다.
+↑ 표시가 있는 프레임을 클릭하면 인라인으로
+원본 소스를 볼 수 있습니다.
+운영 환경에서 소스맵이 접근 가능하다면
+소스맵 노출 여부 검토를 고려하세요.`,
 };
 
-// Hover-tooltip text for the SENSITIVE_PATTERNS labels — both the
-// hint badges at the top of the Initiator tab and the per-frame
-// sensitive-badge inside the call stack.
+// SENSITIVE_PATTERNS 라벨의 호버 툴팁 텍스트 — Initiator 탭 상단의
+// 힌트 배지와 call stack 안의 per-frame sensitive 배지 양쪽 모두.
 const SENSITIVE_PATTERN_DESCRIPTIONS = {
   'OTP/MFA':
-    `An OTP or multi-factor authentication handler
-is present in the call stack.
-This is a key branching point in the auth flow.
-Modify the OTP parameter in the Replay tab
-and re-send to verify server-side validation.`,
+    `OTP 또는 다중 인증 핸들러가
+콜스택에 포함되어 있습니다.
+인증 플로우의 핵심 분기점입니다.
+Replay 탭에서 OTP 파라미터를 수정해
+재전송하여 서버측 검증을 확인하세요.`,
   'Authentication':
-    `A login, logout, or session handler
-is present in the call stack.
-This request is part of the authentication flow.
-Modify the credentials in the Replay tab
-and re-send to review access control.`,
+    `로그인 / 로그아웃 / 세션 핸들러가
+콜스택에 포함되어 있습니다.
+이 요청은 인증 플로우의 일부입니다.
+Replay 탭에서 자격 증명을 수정해
+재전송하여 접근 통제를 검토하세요.`,
   'Token':
-    `A token issuance, validation, or refresh function
-is present in the call stack.
-Check the Response tab to see if a token
-is exposed in the response body.
-If a 🔑 token Detection badge is also present,
-trace the full token exposure flow.`,
+    `토큰 발급 / 검증 / 갱신 함수가
+콜스택에 포함되어 있습니다.
+Response 탭에서 응답 본문에 토큰이
+노출되는지 확인하세요.
+🔑 token Detection 배지가 함께 있으면
+전체 토큰 노출 경로를 추적하세요.`,
   'Validation':
-    `An input validation function is present
-in the call stack.
-This is a client-side validation point.
-Modify the parameter values in the Replay tab
-and re-send to verify whether the server
-performs its own validation independently.`,
+    `입력 검증 함수가 콜스택에
+포함되어 있습니다.
+클라이언트측 검증 지점입니다.
+Replay 탭에서 파라미터 값을 수정해
+재전송하여 서버가 독립적으로
+검증을 수행하는지 확인하세요.`,
   'Authorization':
-    `A permission or access control function
-is present in the call stack.
-Access control logic may exist on the client side.
-Modify privilege-related parameters
-in the Replay tab and re-send to check
-whether server-side enforcement is in place.`,
+    `권한 / 접근 통제 함수가
+콜스택에 포함되어 있습니다.
+클라이언트측에 접근 통제 로직이
+존재할 수 있습니다.
+Replay 탭에서 권한 관련 파라미터를
+수정해 재전송하여 서버측 강제 적용
+여부를 확인하세요.`,
   'Crypto':
-    `An encryption, hashing, or signing function
-is present in the call stack.
-Client-side cryptographic logic is involved.
-Use DevTools breakpoints to inspect the
-plaintext value before encryption,
-or review the algorithm and key strength.`,
+    `암호화 / 해싱 / 서명 함수가
+콜스택에 포함되어 있습니다.
+클라이언트측 암호 로직이 관여하고 있습니다.
+DevTools 브레이크포인트로 암호화 이전의
+평문 값을 확인하거나,
+알고리즘 / 키 강도를 검토하세요.`,
   'Credential':
-    `A password or credential-handling function
-is present in the call stack.
-Check the Payload tab to see if credentials
-are transmitted in plaintext.
-Prioritize review if a 🔴 sensitive
-Detection badge is also present.`,
+    `비밀번호 / 자격 증명 처리 함수가
+콜스택에 포함되어 있습니다.
+Payload 탭에서 자격 증명이 평문으로
+전송되는지 확인하세요.
+🔴 sensitive Detection 배지가 함께 있으면
+우선 검토하세요.`,
   'File Operation':
-    `A file upload or download function
-is present in the call stack.
-Modify file path parameters in the Replay tab
-and re-send to check for Path Traversal
-or arbitrary file access.`,
+    `파일 업로드 / 다운로드 함수가
+콜스택에 포함되어 있습니다.
+Replay 탭에서 파일 경로 파라미터를
+수정해 재전송하여 Path Traversal 또는
+임의 파일 접근 가능성을 확인하세요.`,
   'Navigation':
-    `A redirect or page navigation function
-is present in the call stack.
-This is an SSRF or Open Redirect review point.
-Modify URL parameters in the Replay tab
-and re-send to check whether redirection
-to an external domain is possible.`,
+    `리다이렉트 / 페이지 네비게이션 함수가
+콜스택에 포함되어 있습니다.
+SSRF 또는 Open Redirect 검토 지점입니다.
+Replay 탭에서 URL 파라미터를 수정해
+재전송하여 외부 도메인으로의 리다이렉션이
+가능한지 확인하세요.`,
   'Payment':
-    `A payment or amount-handling function
-is present in the call stack.
-This is a business logic vulnerability review point.
-Modify price or quantity parameters
-in the Replay tab and re-send to verify
-whether the server enforces proper validation.`,
+    `결제 / 금액 처리 함수가
+콜스택에 포함되어 있습니다.
+비즈니스 로직 취약점 검토 지점입니다.
+Replay 탭에서 금액 / 수량 파라미터를
+수정해 재전송하여 서버가 적절한
+검증을 적용하는지 확인하세요.`,
 };
 
 function detectSensitive(name) {
@@ -4026,7 +3965,7 @@ function shortenUrl(url) {
   }
 }
 
-// Inline source viewer cache: url → source text
+// 인라인 소스 뷰어 캐시: url → 소스 텍스트
 const sourceCache = {};
 
 function fetchSource(url, callback) {
@@ -4034,16 +3973,16 @@ function fetchSource(url, callback) {
     callback(sourceCache[url]);
     return;
   }
-  // Inline data URIs — decode directly, no I/O needed.
+  // 인라인 data URI — 직접 디코드, I/O 불필요.
   if (url.startsWith('data:')) {
     const text = decodeDataUri(url);
     sourceCache[url] = text;
     callback(text);
     return;
   }
-  // DevTools resources first — covers webpack-internal://, eval'd virtual
-  // scripts, and avoids re-fetching things the page already loaded
-  // (works for cross-origin scripts too, where fetch() would CORS-fail).
+  // DevTools resources 먼저 — webpack-internal://, eval된 가상 스크립트
+  // 커버, 페이지가 이미 로드한 것을 재 fetch 안 함 (cross-origin
+  // 스크립트에도 작동, 거기서는 fetch()가 CORS-fail).
   chrome.devtools.inspectedWindow.getResources((resources) => {
     const res = resources && resources.find(r => r.url === url);
     if (res) {
@@ -4062,9 +4001,9 @@ function fetchSource(url, callback) {
   });
 }
 
-// Fallback: ask the inspected page to fetch() the URL. Used when the
-// DevTools resource cache doesn't have it (e.g. .map files the page
-// itself didn't load).
+// Fallback: inspected 페이지에 URL을 fetch()해달라고 요청. DevTools
+// resource 캐시에 없을 때 사용 (예: 페이지 자체가 로드하지 않은 .map
+// 파일).
 function fetchSourceViaPage(url, callback) {
   const expr = `fetch(${JSON.stringify(url)}).then(r=>r.ok?r.text():null).then(t=>{window.__dtpp_src=t}).catch(()=>{window.__dtpp_src=null})`;
   chrome.devtools.inspectedWindow.eval(expr, () => {
@@ -4088,18 +4027,17 @@ function fetchSourceViaPage(url, callback) {
 }
 
 // ============================================================
-// Source map decoder (Initiator integration)
+// Source map 디코더 (Initiator 통합)
 // ============================================================
-// Decodes v3 source maps lazily so a stack frame at bundle.js:1:12345
-// can be displayed as Auth.tsx:42:5. Self-contained — no external
-// library — and forgiving: a missing/broken map just leaves the
-// frame showing the bundled location like before.
+// v3 source map을 lazy 디코드 → bundle.js:1:12345의 stack frame을
+// Auth.tsx:42:5로 표시. 자체 포함 — 외부 라이브러리 없음 — 너그러움:
+// map이 없거나 깨졌으면 frame에 번들 위치 그대로 표시.
 
 const VLQ_BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
-// Decode one VLQ value starting at pos. Returns [value, nextPos].
-// VLQ chars are base64; bit 5 (0x20) marks continuation, bit 0 of the
-// assembled value is the sign bit.
+// pos에서 시작해 VLQ 값 1개 디코드. [value, nextPos] 반환.
+// VLQ 문자는 base64; bit 5 (0x20)이 continuation 마크, 조립된 값의
+// bit 0이 부호 비트.
 function decodeVlq(str, pos) {
   let result = 0;
   let shift = 0;
@@ -4118,10 +4056,10 @@ function decodeVlq(str, pos) {
   return [negative ? -result : result, pos];
 }
 
-// Parse a v3 "mappings" string. Returns segments[generatedLine] = sorted
-// list of { generatedColumn, sourceIndex, originalLine, originalColumn }.
-// Source/line/column indices are delta-encoded across the whole map;
-// generatedColumn resets per line.
+// v3 "mappings" 문자열 파싱. segments[generatedLine] = 정렬된
+// { generatedColumn, sourceIndex, originalLine, originalColumn } 리스트
+// 반환. source/line/column 인덱스는 map 전체에 걸쳐 delta-encoded;
+// generatedColumn은 line마다 reset.
 function parseMappings(mappings) {
   const lines = mappings.split(';');
   const result = [];
@@ -4131,7 +4069,7 @@ function parseMappings(mappings) {
     const segments = [];
     let pos = 0;
     while (pos < lineStr.length) {
-      // A segment ends at ',' or end of line
+      // segment는 ',' 또는 line 끝에서 종료
       const fields = [];
       while (pos < lineStr.length && lineStr[pos] !== ',') {
         const [v, newPos] = decodeVlq(lineStr, pos);
@@ -4139,7 +4077,7 @@ function parseMappings(mappings) {
         pos = newPos;
       }
       if (fields.length >= 1) generatedColumn += fields[0];
-      // 4 or 5 fields = mapped to a source. 1 field = unmapped marker.
+      // 4개 또는 5개 필드 = source로 매핑. 1개 필드 = unmapped 마커.
       if (fields.length >= 4) {
         sourceIndex += fields[1];
         originalLine += fields[2];
@@ -4153,8 +4091,8 @@ function parseMappings(mappings) {
   return result;
 }
 
-// Binary search for the largest segment with generatedColumn <= column
-// on the given generated line. Returns the segment or null.
+// 주어진 generated line에서 generatedColumn <= column인 가장 큰
+// segment를 binary search. segment 또는 null 반환.
 function lookupMapping(segments, line, column) {
   if (line < 0 || line >= segments.length) return null;
   const lineSegs = segments[line];
@@ -4172,11 +4110,11 @@ function lookupMapping(segments, line, column) {
   return found >= 0 ? lineSegs[found] : null;
 }
 
-// scriptUrl → parsed map { sources, sourcesContent, segments, mapUrl } or null.
+// scriptUrl → 파싱된 map { sources, sourcesContent, segments, mapUrl } 또는 null.
 const sourceMapCache = {};
 
-// Decode a "data:[<mediatype>][;base64],<data>" URI into text. Returns
-// null if it can't be parsed or decoded.
+// "data:[<mediatype>][;base64],<data>" URI를 텍스트로 디코드. 파싱
+// 또는 디코드 실패 시 null 반환.
 function decodeDataUri(uri) {
   const m = uri.match(/^data:([^,]*),([\s\S]*)$/);
   if (!m) return null;
@@ -4187,14 +4125,14 @@ function decodeDataUri(uri) {
   }
 }
 
-// Parse a v3 source map JSON string into the cache-friendly shape we use
-// elsewhere. Returns null on any structural problem (unsupported
-// version, index map, malformed JSON).
+// v3 source map JSON 문자열을 다른 곳에서 쓰는 cache-friendly 모양으로
+// 파싱. 구조적 문제(미지원 version, index map, malformed JSON) 시
+// null 반환.
 function parseSourceMapText(text, mapUrl) {
   try {
     const map = JSON.parse(text);
     if (map.version !== 3) return null;
-    if (map.sections) return null; // Index maps — out of MVP scope.
+    if (map.sections) return null; // Index map은 MVP 범위 밖.
     return {
       sources: map.sources || [],
       sourcesContent: map.sourcesContent || [],
@@ -4206,10 +4144,10 @@ function parseSourceMapText(text, mapUrl) {
   }
 }
 
-// Fetch a script's source map (resolved from //# sourceMappingURL=) and
-// parse it. Cached. Falls through with null on any failure — callers
-// should treat that as "no mapping, use bundled location". Handles both
-// external .map URLs and inline data: URIs (eval-source-map style).
+// 스크립트의 source map(//# sourceMappingURL=에서 해결)을 fetch +
+// 파싱. 캐시됨. 실패 시 null로 fall through — caller는 "매핑 없음,
+// 번들 위치 사용"으로 처리. 외부 .map URL과 inline data: URI
+// (eval-source-map 스타일) 둘 다 처리.
 function getSourceMap(scriptUrl, callback) {
   if (sourceMapCache[scriptUrl] !== undefined) {
     callback(sourceMapCache[scriptUrl]);
@@ -4222,7 +4160,7 @@ function getSourceMap(scriptUrl, callback) {
     if (!m) { sourceMapCache[scriptUrl] = null; callback(null); return; }
     const rawMapUrl = m[1].trim();
 
-    // Inline map — common in webpack's eval-source-map and similar dev modes.
+    // 인라인 map — webpack의 eval-source-map 같은 dev 모드에서 흔함.
     if (rawMapUrl.startsWith('data:')) {
       const text = decodeDataUri(rawMapUrl);
       const parsed = text ? parseSourceMapText(text, rawMapUrl) : null;
@@ -4258,7 +4196,7 @@ function renderSourceViewer(container, source, targetLine) {
     html += `<div class="source-line source-ellipsis">... (${start} lines above)</div>`;
   }
   for (let i = start; i < end; i++) {
-    const lineNum = i + 1; // 1-indexed display
+    const lineNum = i + 1; // 1-indexed 표시
     const isTarget = i === targetLine;
     const cls = isTarget ? 'source-line target-line' : 'source-line';
     html += `<div class="${cls}"><span class="source-linenum">${lineNum}</span><span class="source-code">${escapeHtml(lines[i])}</span></div>`;
@@ -4269,7 +4207,7 @@ function renderSourceViewer(container, source, targetLine) {
   html += '</div>';
   container.innerHTML = html;
 
-  // Scroll target line into view
+  // target line을 view로 스크롤
   const targetEl = container.querySelector('.target-line');
   if (targetEl) targetEl.scrollIntoView({ block: 'center' });
 }
@@ -4277,8 +4215,8 @@ function renderSourceViewer(container, source, targetLine) {
 function renderInitiator(req) {
   const container = document.getElementById('detail-initiator-body');
 
-  // Reset the tab indicator — async source-map enrichment will re-add
-  // it if any frame in the new request maps successfully.
+  // 탭 인디케이터 reset — async source-map enrichment가 새 요청의
+  // 한 프레임이라도 성공적으로 매핑되면 다시 추가.
   const initiatorTabBtn = document.querySelector('.detail-tab[data-detail="initiator"]');
   if (initiatorTabBtn) {
     initiatorTabBtn.classList.remove('has-mapped');
@@ -4293,9 +4231,9 @@ function renderInitiator(req) {
   const init = req.initiator;
   let html = '';
 
-  // Type group — Detection-style header with description card. After
-  // sourcemap enrichment lands, the badge upgrades to "↑ Mapped" and
-  // the count flips to "<N> frames mapped".
+  // Type 그룹 — description 카드와 Detection 스타일 헤더. sourcemap
+  // enrichment가 떨어지면 배지가 "↑ Mapped"로 업그레이드되고 카운트는
+  // "<N> frames mapped"로 뒤집힘.
   const typeStr = init.type || 'unknown';
   const typeDesc = INITIATOR_TYPE_DESCRIPTIONS[typeStr] || '';
   const frames = init.stack?.callFrames || [];
@@ -4314,9 +4252,9 @@ function renderInitiator(req) {
     ${typeDesc ? `<div class="detection-category-desc hidden">${escapeHtml(typeDesc)}</div>` : ''}
   </div>`;
 
-  // Call stack
+  // 콜 스택
   if (frames.length > 0) {
-    // Group frames by their detected sensitive pattern (if any).
+    // 감지된 sensitive 패턴(있으면)별로 프레임 그룹.
     const framesByPattern = {};
     frames.forEach(f => {
       const label = detectSensitive(f.functionName);
@@ -4325,8 +4263,8 @@ function renderInitiator(req) {
       framesByPattern[label].push(f);
     });
 
-    // One Detection-style group per matched pattern; the matched
-    // frames inside are findings carrying that pattern's severity.
+    // 매칭된 패턴마다 Detection 스타일 그룹 1개; 안의 매칭 프레임이
+    // 그 패턴의 severity를 담은 finding.
     for (const [label, list] of Object.entries(framesByPattern)) {
       const sev = SENSITIVE_PATTERN_SEVERITY[label] || 'info';
       const desc = SENSITIVE_PATTERN_DESCRIPTIONS[label] || '';
@@ -4380,13 +4318,13 @@ function renderInitiator(req) {
     });
     html += '</div>';
   } else if (init.url) {
-    // Parser-initiated (e.g. <script src>, <link>, <img>)
+    // 파서 발화 (예: <script src>, <link>, <img>)
     html += `<div class="initiator-parser">Initiated by: <span class="source-link" data-url="${escapeAttr(init.url)}" data-line="${init.lineNumber || 0}">${escapeHtml(init.url)}${init.lineNumber != null ? ':' + (init.lineNumber + 1) : ''}</span></div>`;
   } else {
     html += '<div class="detail-loading">No call stack available.</div>';
   }
 
-  // Inline source viewer placeholder
+  // 인라인 소스 뷰어 placeholder
   html += '<div id="initiator-source-viewer"></div>';
 
   container.innerHTML = html;
@@ -4398,9 +4336,9 @@ function renderInitiator(req) {
 
     const viewer = document.getElementById('initiator-source-viewer');
 
-    // Prefer the mapped original source when the script has a parsed
-    // map and sourcesContent[] inlines the file. Falls through to the
-    // bundled fetch otherwise.
+    // 스크립트에 파싱된 map이 있고 sourcesContent[]가 파일을 inline
+    // 으로 포함하면 매핑된 원본 소스를 우선 사용. 없으면 번들 fetch
+    // 로 fall through.
     const map = sourceMapCache[url];
     if (map) {
       const mapping = lookupMapping(map.segments, lineNum, colNum || 0);
@@ -4443,13 +4381,13 @@ function renderInitiator(req) {
     });
   }
 
-  // Frame body click → inline source viewer
+  // 프레임 본체 클릭 → 인라인 소스 뷰어
   container.querySelectorAll('.initiator-frame').forEach(el => {
     const url = el.dataset.url;
     if (!url) return;
     el.style.cursor = 'pointer';
     el.addEventListener('click', (e) => {
-      // If source-link was clicked, let its own handler take over
+      // source-link 클릭이면 그 핸들러가 처리하도록 양보
       if (e.target.closest('.source-link')) return;
       e.stopPropagation();
       const lineNum = parseInt(el.dataset.line || '0', 10);
@@ -4458,9 +4396,9 @@ function renderInitiator(req) {
     });
   });
 
-  // Source link click → try Sources tab, fallback to inline. If the
-  // script has a usable source map, prefer the mapped inline view —
-  // Sources panel only knows about the bundled file.
+  // 소스 링크 클릭 → Sources 탭 시도, 인라인으로 fallback. 스크립트에
+  // 사용 가능한 source map이 있으면 매핑된 인라인 뷰 선호 — Sources
+  // 패널은 번들 파일만 인식.
   container.querySelectorAll('.initiator-frame .source-link').forEach(link => {
     const frame = link.closest('.initiator-frame');
     const url = frame?.dataset.url;
@@ -4492,7 +4430,7 @@ function renderInitiator(req) {
     });
   });
 
-  // Parser-initiated source link click
+  // 파서 발화 소스 링크 클릭
   container.querySelectorAll('.initiator-parser .source-link[data-url]').forEach(link => {
     const url = link.dataset.url;
     if (!url) return;
@@ -4510,19 +4448,18 @@ function renderInitiator(req) {
     });
   });
 
-  // Click-to-expand for Type and pattern groups — same handler the
-  // Detection tab uses, so the two tabs share UX.
+  // Type 및 패턴 그룹의 click-to-expand — Detection 탭이 쓰는 동일
+  // 핸들러라 두 탭이 UX를 공유.
   container.addEventListener('click', _onDetectionGroupClick);
 
-  // Async: enrich call-stack frames with source map info. Updates DOM
-  // when each script's map resolves. Cache means no repeat fetches.
+  // Async: call-stack 프레임을 source map 정보로 enrich. 각 스크립트의
+  // map이 해결될 때 DOM 업데이트. 캐시가 있어 재 fetch 없음.
   if (frames.length > 0) enrichFramesWithSourceMaps(container, frames, req);
 }
 
-// Lite version of the source-map enrichment that only updates the
-// Initiator column on the row — no DOM rewrite of frame elements.
-// Runs proactively at capture time so the column shows "↑ Mapped"
-// without the user having to click into the request first.
+// 행의 Initiator 컬럼만 업데이트하는 source-map enrichment의 lite
+// 버전 — 프레임 요소의 DOM 재작성 없음. 캡처 시점에 사전 실행해서
+// 사용자가 요청을 클릭하기 전에도 컬럼에 "↑ Mapped"가 표시되도록.
 function _eagerEnrichInitiator(req) {
   if (!req || req._sourcemapMapped) return;
   const frames = (req.initiator && req.initiator.stack && req.initiator.stack.callFrames) || [];
@@ -4533,7 +4470,7 @@ function _eagerEnrichInitiator(req) {
     seen.add(f.url);
     getSourceMap(f.url, (map) => {
       if (!map || req._sourcemapMapped) return;
-      // Walk only this script's frames — first match flips the flag.
+      // 이 스크립트의 프레임만 walk — 첫 매치가 플래그 뒤집음.
       for (const ff of frames) {
         if (ff.url !== f.url) continue;
         const mapping = lookupMapping(map.segments, ff.lineNumber || 0, ff.columnNumber || 0);
@@ -4547,9 +4484,9 @@ function _eagerEnrichInitiator(req) {
   }
 }
 
-// For each unique script URL in the call stack, try to fetch & decode
-// its source map, then rewrite the frame's source-link to show the
-// mapped (original-file:line:col) location alongside the bundled one.
+// call stack의 각 고유 스크립트 URL에 대해 source map을 fetch & 디코드
+// 시도, 그 후 프레임의 source-link를 매핑된 (original-file:line:col)
+// 위치를 번들된 위치와 함께 표시하도록 다시 그림.
 function enrichFramesWithSourceMaps(container, frames, req) {
   const urlToIndices = {};
   frames.forEach((f, i) => {
@@ -4587,22 +4524,22 @@ function enrichFramesWithSourceMaps(container, frames, req) {
           `<span class="mapped-loc">${escapeHtml(mappedLoc)}</span>` +
           `<span class="bundled-loc">${escapeHtml(bundledLoc)}</span>`;
         mappedCount++;
-        // Mark the Initiator tab so the user knows mapping happened
-        // even before they click into the tab.
+        // Initiator 탭을 마킹해서 사용자가 탭 클릭 전에도 매핑이
+        // 일어났음을 인지하도록.
         const tabBtn = document.querySelector('.detail-tab[data-detail="initiator"]');
         if (tabBtn) {
           tabBtn.classList.add('has-mapped');
           tabBtn.title = `Source-mapped frames: ${mappedCount} / ${totalFramesWithUrls}\n\n${INITIATOR_TYPE_DESCRIPTIONS.mapped || ''}`;
         }
-        // Promote the row's Initiator cell to "↑ Mapped" on the first
-        // successful frame mapping. Flag persists on the req so the
-        // cell stays mapped across re-renders.
+        // 첫 성공 프레임 매핑 시 행의 Initiator 셀을 "↑ Mapped"로
+        // 승격. 플래그는 req에 유지되므로 재렌더 사이에도 셀이 매핑
+        // 상태 유지.
         if (req && !req._sourcemapMapped) {
           req._sourcemapMapped = true;
           updateNetworkRowInitiator(req);
         }
-        // Promote the Type group inside the Initiator detail tab so
-        // its badge / count reflect the mapped state.
+        // Initiator detail 탭 안의 Type 그룹도 승격해서 배지/카운트가
+        // 매핑된 상태를 반영.
         const typeGroup = container.querySelector('[data-init-type-group]');
         if (typeGroup) {
           const typeBadge = typeGroup.querySelector('.scan-badge');
@@ -4611,7 +4548,7 @@ function enrichFramesWithSourceMaps(container, frames, req) {
             typeBadge.className = 'scan-badge scan-badge-init-mapped';
             const md = INITIATOR_TYPE_DESCRIPTIONS.mapped || '';
             if (md) typeBadge.title = md;
-            // Replace the inline description card with the mapped one.
+            // 인라인 description 카드도 mapped 버전으로 교체.
             const descBlock = typeGroup.querySelector('.detection-category-desc');
             if (descBlock && md) descBlock.textContent = md;
           }
@@ -4657,10 +4594,9 @@ function renderJsonTree(obj, indent) {
 // ============================================================
 // Auto Decode Layer — JWT, Base64, URL-enc, nested JSON, timestamp
 // ============================================================
-// Scans the active request's headers + body for common encodings and
-// surfaces a "🔍 Decoded" panel beneath the original view. Best-effort:
-// false positives are suppressed by strict format checks rather than
-// asking the user to disable detectors.
+// 활성 요청의 headers + body를 스캔해서 흔한 인코딩을 찾고 원본 뷰
+// 아래에 "🔍 Decoded" 패널을 노출. best-effort: 탐지기 비활성화를
+// 요구하기보다 strict 포맷 체크로 false positive를 억제.
 
 const AUTODECODE_MAX_FINDINGS = 50;
 
@@ -4670,8 +4606,8 @@ function decodeBase64Url(str) {
   return atob(s);
 }
 
-// Heuristic: most bytes printable ASCII (incl. \t \n \r). Used to keep
-// the Base64 detector from claiming arbitrary alphanumeric strings.
+// 휴리스틱: 대부분 바이트가 출력 가능한 ASCII(\t \n \r 포함). Base64
+// 탐지기가 임의의 영숫자 문자열을 주장하지 못하도록 사용.
 function isPrintableMostly(str, threshold) {
   if (str.length === 0) return false;
   let printable = 0;
@@ -4682,8 +4618,8 @@ function isPrintableMostly(str, threshold) {
   return printable / str.length >= (threshold || 0.95);
 }
 
-// Replace numeric epoch fields (exp/iat/nbf/auth_time) with ISO strings
-// alongside the original — used when displaying the JWT payload.
+// 숫자 epoch 필드(exp/iat/nbf/auth_time)를 원본과 함께 ISO 문자열로
+// 교체 — JWT payload 표시 시 사용.
 function humanizeJwtTimestamps(payload) {
   if (!payload || typeof payload !== 'object') return payload;
   const out = { ...payload };
@@ -4739,14 +4675,14 @@ function detectBase64(str) {
   try {
     const parsed = JSON.parse(decoded);
     if (typeof parsed === 'object' && parsed !== null) asJson = parsed;
-  } catch { /* not JSON */ }
+  } catch { /* JSON 아님 */ }
   return { type: 'base64', label: 'Base64', decoded, asJson };
 }
 
 function detectUrlEncoded(str) {
   if (typeof str !== 'string') return null;
-  // Require at least 2 escape sequences to avoid matching strings that
-  // happen to contain a single % literal.
+  // 단일 % 리터럴을 가진 문자열에 매칭되지 않도록 escape sequence
+  // 최소 2개 요구.
   if (!/(%[0-9A-Fa-f]{2}){2,}/.test(str)) return null;
   let decoded;
   try { decoded = decodeURIComponent(str); } catch { return null; }
@@ -4775,17 +4711,17 @@ function detectUnixTimestamp(val) {
     return null;
   }
   let ms;
-  if (n >= 1e9 && n < 1e10) ms = n * 1000;        // 10-digit seconds (2001–2286)
-  else if (n >= 1e12 && n < 1e13) ms = n;          // 13-digit ms
+  if (n >= 1e9 && n < 1e10) ms = n * 1000;        // 10자리 초 (2001–2286)
+  else if (n >= 1e12 && n < 1e13) ms = n;          // 13자리 ms
   else return null;
   const date = new Date(ms);
   if (isNaN(date.getTime())) return null;
   return { type: 'timestamp', label: 'Unix timestamp', raw: n, date: date.toISOString() };
 }
 
-// Try detectors in priority order; return the first hit. JWT first
-// because its three-segment shape is unambiguous, then URL-enc and
-// nested JSON which have clear markers, then Base64 last (broadest).
+// 우선순위 순서로 탐지기 시도; 첫 hit 반환. JWT 먼저 — 3-segment
+// 모양이 명확. 그 다음 URL-enc과 nested JSON(명확한 마커), Base64는
+// 마지막(가장 넓음).
 function detectInString(str) {
   return detectJWT(str)
     || detectUrlEncoded(str)
@@ -4793,9 +4729,9 @@ function detectInString(str) {
     || detectBase64(str);
 }
 
-// Walk a parsed JSON value (object/array/leaf), collecting findings
-// with dotted-path locations. Numbers are checked for timestamps;
-// strings go through the full detector chain.
+// 파싱된 JSON 값(object/array/leaf)을 walk하면서 dotted-path location과
+// 함께 finding 수집. 숫자는 timestamp 체크; 문자열은 전체 탐지기
+// 체인을 통과.
 function autoDecodeScanValue(value, path, findings) {
   if (findings.length >= AUTODECODE_MAX_FINDINGS) return;
   if (typeof value === 'string') {
@@ -4819,8 +4755,8 @@ function autoDecodeScanValue(value, path, findings) {
   }
 }
 
-// Scan a flat header map. Strips the "Bearer "/"Basic "/"Token " prefix
-// before running detectors — JWTs almost always live under one.
+// flat header map 스캔. 탐지기 실행 전 "Bearer "/"Basic "/"Token "
+// prefix를 제거 — JWT는 거의 항상 그 아래 있음.
 function autoDecodeScanHeaders(headers, sourceLabel) {
   const findings = [];
   for (const [name, value] of Object.entries(headers || {})) {
@@ -4841,13 +4777,12 @@ function autoDecodeScanHeaders(headers, sourceLabel) {
   return findings;
 }
 
-// Scan a body string. Tries JSON first, then urlencoded form, then
-// raw string. Each branch calls scanValue/detectInString as appropriate.
+// body 문자열 스캔. JSON 먼저 시도, 그 다음 urlencoded form, 그 다음
+// raw 문자열. 각 분기가 적절히 scanValue/detectInString을 호출.
 //
-// Bodies over 500KB are truncated to the first 50KB before scanning so
-// a single huge payload can't lock up the panel. The truncation is
-// surfaced to the user as a 'notice' finding so they know the result
-// is partial.
+// 500KB 초과 body는 스캔 전 첫 50KB로 truncate → 거대한 페이로드
+// 하나가 패널을 잠그지 않도록. truncation은 'notice' finding으로
+// 사용자에게 노출되어 결과가 부분적임을 알 수 있게 함.
 const AUTODECODE_BODY_LIMIT = 512000;
 const AUTODECODE_BODY_TRUNCATE = 51200;
 
@@ -4889,8 +4824,8 @@ function autoDecodeScanBody(bodyStr, sourceLabel) {
   return findings;
 }
 
-// Replace any existing decoded section in `container` with one built
-// from `findings`. Empty findings → section is removed.
+// `container`의 기존 decoded 섹션을 `findings`로 빌드된 것으로 교체.
+// finding이 비어 있으면 섹션 제거.
 function renderDecodedSection(container, findings) {
   const existing = container.querySelector(':scope > .decoded-section');
   if (existing) existing.remove();
@@ -4904,8 +4839,8 @@ function renderDecodedSection(container, findings) {
 }
 
 function renderDecodedFinding(f) {
-  // Plain notices (e.g. "TRUNCATED") render as a single non-expandable
-  // banner — no body, no chevron, no expandable details.
+  // 일반 notice(예: "TRUNCATED")는 single non-expandable 배너로 렌더 —
+  // body 없음, chevron 없음, expandable detail 없음.
   if (f.type === 'notice') {
     return `<div class="decoded-item decoded-notice">
       <span class="decoded-type-badge type-notice">${escapeHtml(f.label)}</span>
@@ -4960,29 +4895,28 @@ function renderDecodedFinding(f) {
 }
 
 // ============================================================
-// Response Pattern Detection — security-oriented findings on a request
+// Response Pattern Detection — 요청에 대한 보안 지향 finding
 // ============================================================
-// Inspects URL, request body/headers, response body/status against a
-// fixed set of patterns (auth tokens, PII, internal info leaks, sensitive
-// fields, IDOR candidates, privilege params, suspicious responses) and
-// emits a list of findings stored on the request object as scanResults.
-// Body-dependent passes only run when the response body is available;
-// large bodies are truncated using the same limits as Auto Decode.
+// URL, request body/headers, response body/status를 고정 패턴 집합
+// (auth tokens, PII, 내부 정보 leak, 민감 필드, IDOR 후보, 권한
+// 파라미터, 의심 응답)에 대해 검사하고 요청 객체의 scanResults에
+// 저장되는 finding 리스트를 emit. body 의존 패스는 응답 body가
+// 가용할 때만 실행; 대용량 body는 Auto Decode와 같은 한도로 truncate.
 
 const SCAN_BODY_LIMIT = AUTODECODE_BODY_LIMIT;
 const SCAN_BODY_TRUNCATE = AUTODECODE_BODY_TRUNCATE;
 
-// Mimetypes worth eagerly loading the response body for so the scan
-// can include body-side findings on the initial pass.
+// 초기 패스에 body-side finding을 포함할 수 있도록 응답 body를
+// eager 로드할 가치가 있는 mimetype.
 function scanShouldEagerLoadBody(req) {
   const m = req.mimeType || '';
   if (!m) return false;
   return /^(application\/(json|xml|x-www-form-urlencoded|javascript|graphql|ld\+json)|application\/[^;]*\+json|text\/)/i.test(m);
 }
 
-// Append a finding only if the same (category, location) hasn't been
-// seen yet. Keeps the per-request badge list and the detail panel
-// from filling with near-duplicates.
+// 같은 (category, location)이 아직 보이지 않은 경우에만 finding 추가.
+// per-request 배지 리스트와 detail 패널이 near-duplicate로 채워지지
+// 않도록.
 function _scanAdd(findings, seen, finding) {
   const key = `${finding.category}|${finding.location}`;
   if (seen.has(key)) return;
@@ -4994,14 +4928,14 @@ function _scanCheckPrivilegeKey(key) {
   return /^(role|isAdmin|is_admin|admin|privilege|permission)$/i.test(key);
 }
 
-// Match ID-like parameter names. Three shapes are recognized so we catch
-// resource-ID parameters (userId, account_id, etc.) without firing on
-// English words that happen to end in "id" (paid, valid, said).
-//   1) "id" / "ID" exactly
-//   2) camelCase: <lowercase>I<d|D>$  — userId, orderId, accountID
-//   3) separator: _id / -id (any case)
-// session_id / sessionId belong to the 'session' category instead, so
-// we short-circuit those before falling through to the IDOR shapes.
+// ID-like 파라미터 이름 매칭. 3가지 모양 인식 → resource-ID 파라미터
+// (userId, account_id 등)를 잡되 "id"로 끝나는 영단어(paid, valid,
+// said)는 발화하지 않음.
+//   1) "id" / "ID" 정확
+//   2) camelCase: <lowercase>I<d|D>$ — userId, orderId, accountID
+//   3) separator: _id / -id (대소문자 무관)
+// session_id / sessionId는 'session' 카테고리에 속하므로 IDOR 모양으로
+// fall through하기 전에 short-circuit.
 function _scanCheckIdorKey(key) {
   if (_scanCheckSessionKey(key)) return false;
   if (/^id$/i.test(key)) return true;
@@ -5010,18 +4944,17 @@ function _scanCheckIdorKey(key) {
   return false;
 }
 
-// Session / auth tokens passed as URL parameters or request body fields.
-// Distinct from the response-side `token` category, which flags the
-// same kinds of secrets *being returned*. Keeping `access_token` out
-// of this list — it stays a 'token' concept on the response side.
+// URL 파라미터나 request body 필드로 전달되는 session/auth 토큰.
+// 같은 종류의 비밀이 *반환되는* 것을 플래그하는 response-side
+// `token` 카테고리와 별개. `access_token`은 이 리스트에서 제외 —
+// response side의 'token' 개념으로 유지.
 function _scanCheckSessionKey(key) {
   return /^(session[_-]?id|session[_-]?token|auth[_-]?token)$/i.test(key);
 }
 
-// Parameter names that look like IDs but are really analytics /
-// tracking handles, never IDOR candidates. Stored normalized
-// (lowercase, separators stripped) so snake/camel/kebab all match
-// against the same entry.
+// ID처럼 보이지만 실제로는 analytics/tracking handle인 파라미터 이름,
+// IDOR 후보 아님. 정규화 저장(lowercase, separator 제거)이라
+// snake/camel/kebab이 같은 entry에 매칭.
 const IDOR_TRACKING_KEYS_NORMALIZED = new Set([
   'impressionid', 'impid',
   'torosimpid', 'torospagemetaid',
@@ -5037,16 +4970,15 @@ function _scanIsIdorTrackingKey(key) {
   );
 }
 
-// Fixed flag values — semantically not entity IDs even when they
-// arrive in an *_id parameter (e.g. id=control for A/B test bucket).
+// 고정 플래그 값 — *_id 파라미터로 전달돼도 시맨틱적으로 entity ID가
+// 아님 (예: A/B 테스트 버킷의 id=control).
 const IDOR_FLAG_VALUES = new Set([
   'control', 'default', 'n', 'y',
   'true', 'false', 'none', 'null', 'undefined',
 ]);
 
-// Values we filter out as noise: empty, booleans, fixed flags, and a
-// handful of well-known ad/SDK ID prefixes (DAN- for Kakao Ads,
-// sodar/av- for tracking SDKs).
+// 노이즈로 필터링할 값들: 빈 값, boolean, 고정 플래그, 그리고 잘 알려진
+// 광고/SDK ID prefix 몇 개(Kakao Ads의 DAN-, tracking SDK의 sodar/av-).
 function _scanIsIdorNoiseValue(v) {
   if (v === null || v === undefined) return true;
   if (typeof v === 'boolean') return true;
@@ -5059,9 +4991,9 @@ function _scanIsIdorNoiseValue(v) {
   return false;
 }
 
-// Single-stop decision for IDOR: name shape + tracking-key denylist
-// + value-noise filter. Centralized so all three scan locations
-// (query / JSON body walk / form body) make the same call.
+// IDOR을 위한 single-stop 결정: 이름 모양 + tracking-key denylist
+// + value-noise 필터. 3개 스캔 위치(query / JSON body walk / form
+// body)가 모두 같은 호출을 하도록 중앙화.
 function _shouldFlagAsIdor(key, value) {
   if (!_scanCheckIdorKey(key)) return false;
   if (_scanIsIdorTrackingKey(key)) return false;
@@ -5069,68 +5001,66 @@ function _shouldFlagAsIdor(key, value) {
   return true;
 }
 
-// Pull a "<software>/<x.y.z>" version disclosure out of Server /
-// X-Powered-By header values. Returns null if the value has no
-// version number attached (e.g. just "nginx" or "Express").
+// Server / X-Powered-By 헤더 값에서 "<software>/<x.y.z>" 버전 노출
+// 추출. 값에 버전 숫자가 없으면(예: 그냥 "nginx" 또는 "Express")
+// null 반환.
 function _scanExtractServerVersion(value) {
   if (typeof value !== 'string') return null;
   const m = value.match(/([A-Za-z][A-Za-z0-9.-]*)\/(\d+(?:\.\d+)+)/);
   return m ? `${m[1]}/${m[2]}` : null;
 }
 
-// File extensions that look like TLDs in the email regex but are really
-// asset filenames (e.g. "logo@2x.png"). Used to suppress PII false
-// positives. Only includes extensions that are NOT also real TLDs —
-// `tv` / `me` / `io` are kept since they're legitimate domains.
+// 이메일 정규식에서 TLD처럼 보이지만 실제로는 자산 파일명인 확장자
+// (예: "logo@2x.png"). PII false positive 억제용. 진짜 TLD가 아닌
+// 확장자만 포함 — `tv`/`me`/`io`는 유효한 도메인이므로 유지.
 const EMAIL_FILE_EXT_DENY = new Set([
-  // Images
+  // 이미지
   'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp', 'tiff', 'tif', 'avif',
-  // Documents
+  // 문서
   'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'rtf', 'csv',
-  // Audio / video
+  // 오디오/비디오
   'mp3', 'mp4', 'wav', 'avi', 'mov', 'webm', 'mkv', 'ogg', 'm4a', 'flac', 'aac',
-  // Archives
+  // 압축
   'zip', 'rar', 'tar', 'gz', 'tgz', 'bz2', '7z',
-  // Code / web assets
+  // 코드/웹 자산
   'js', 'jsx', 'ts', 'tsx', 'vue', 'css', 'scss', 'sass', 'less', 'html', 'htm', 'php',
-  // Data / config
+  // 데이터/설정
   'json', 'xml', 'yaml', 'yml', 'env', 'lock',
-  // Fonts
+  // 폰트
   'woff', 'woff2', 'ttf', 'eot', 'otf',
 ]);
 
-// HUNT-style parameter dictionary. Each category lists parameter names
-// historically associated with a vuln class — flags candidates worth
-// manual probing, not confirmed bugs. Inspired by Bugcrowd's HUNT.
+// HUNT 스타일 파라미터 사전. 각 카테고리는 역사적으로 vuln 클래스와
+// 연관된 파라미터 이름 나열 — 수동 probing 가치가 있는 후보를 플래그
+// 하지 확정 버그는 아님. Bugcrowd HUNT 영감.
 //
-// Per-keyword severity overrides are supported via `keywordSeverity`.
-// Compound dictionary entries like "return_url" are tokenized during
-// build, so the lookup map only holds single words.
+// per-keyword severity override는 `keywordSeverity`로 지원.
+// "return_url" 같은 합성 사전 엔트리는 빌드 시 토큰화되어 lookup
+// map에는 단일 단어만 보관.
 const HUNT_CATEGORIES = {
-  // The previous five categories (SQLi / LFI / SSRF / RCE / debug)
-  // collapsed into a single "Tampering" bucket. The distinction between
-  // them in practice was noisy — a parameter named `query` could equally
-  // be a SQL search, a URL filter, or a debug toggle. Merging them
-  // surfaces the same set of "this parameter influences server logic"
-  // candidates with one badge and one MEDIUM severity, and the user
-  // moves on to actually probe with payloads in Replay.
+  // 이전 5개 카테고리(SQLi / LFI / SSRF / RCE / debug)를 단일
+  // "Tampering" 버킷으로 합침. 실제로 그 사이의 구분은 노이즈였음 —
+  // `query`라는 파라미터가 SQL search, URL filter, debug 토글일 수
+  // 있음. 합치면 "이 파라미터가 서버 로직에 영향" 후보 같은 집합을
+  // 1개 배지 + 1개 MEDIUM severity로 노출하고, 사용자는 Replay에서
+  // 페이로드로 실제 probing을 진행.
   tampering: {
     badge: '🔨 Tampering',
     defaultSeverity: 'medium',
     keywords: [
-      // SQLi-flavored
+      // SQLi 계열
       'query', 'search', 'filter', 'sort', 'where', 'select', 'order',
       'keyword', 'column', 'field', 'report', 'row',
-      // LFI-flavored
+      // LFI 계열
       'file', 'path', 'dir', 'directory', 'document', 'template',
       'doc', 'folder', 'root', 'pdf', 'pg', 'style', 'page', 'include',
-      // SSRF-flavored
+      // SSRF 계열
       'url', 'redirect', 'dest', 'destination', 'callback', 'return',
       'next', 'host', 'domain', 'uri', 'forward', 'navigate', 'open',
       'feed', 'ref', 'continue',
-      // RCE-flavored
+      // RCE 계열
       'cmd', 'exec', 'command', 'shell', 'execute', 'run',
-      // Debug-flavored
+      // Debug 계열
       'debug', 'test', 'dbg', 'config', 'toggle',
       'enable', 'disable', 'reset', 'adm', 'cfg',
     ],
@@ -5138,7 +5068,7 @@ const HUNT_CATEGORIES = {
 };
 
 // token (lowercased) → { category, badge, severity, matchedKeyword }.
-// Severity is resolved per-token: keywordSeverity[tok] || defaultSeverity.
+// severity는 토큰별로 해결: keywordSeverity[tok] || defaultSeverity.
 const HUNT_KEYWORD_MAP = (() => {
   const map = new Map();
   for (const [category, def] of Object.entries(HUNT_CATEGORIES)) {
@@ -5158,20 +5088,19 @@ const HUNT_KEYWORD_MAP = (() => {
   return map;
 })();
 
-// Post-match noise filter for HUNT hits. Some keywords overlap with
-// browser performance / runtime properties; this lets us keep the
-// keyword in the dictionary but suppress the obvious technical
-// noise variants.
+// HUNT hit의 post-match 노이즈 필터. 일부 키워드는 브라우저
+// performance / runtime 속성과 겹침; 사전에는 그 키워드를 유지하되
+// 명백한 기술적 노이즈 변종은 억제.
 function _scanIsHuntNoise(tokens, hit) {
   if (hit.category === 'tampering') {
-    // 'domain' only flags when the parameter IS exactly "domain" —
-    // domainLookupStart / domainLookupEnd are PerformanceTiming.
+    // 'domain'은 파라미터가 정확히 "domain"일 때만 플래그 —
+    // domainLookupStart / domainLookupEnd는 PerformanceTiming.
     if (hit.matchedKeyword === 'domain') {
       if (tokens.length !== 1 || tokens[0] !== 'domain') return true;
     }
-    // 'redirect' shouldn't fire on perf-timing variants
-    // (redirectStart, redirectEnd, redirectTime, redirectDuration).
-    // Genuine redirect_uri / redirect_url tokenize without these.
+    // 'redirect'는 perf-timing 변종(redirectStart, redirectEnd,
+    // redirectTime, redirectDuration)에서 발화하면 안 됨.
+    // 진짜 redirect_uri / redirect_url은 이런 토큰 없이 토큰화됨.
     if (hit.matchedKeyword === 'redirect') {
       for (const t of tokens) {
         if (t === 'start' || t === 'end' || t === 'time' || t === 'duration') {
@@ -5183,23 +5112,22 @@ function _scanIsHuntNoise(tokens, hit) {
   return false;
 }
 
-// Split a parameter name into lowercase tokens. Handles camelCase
-// (filePath → file, path), snake_case (file_path), kebab-case
-// (file-path), and dot.notation (data.id → data, id). Words like
-// "profile"/"research" stay as a single token, avoiding false
-// positives against "file"/"search".
+// 파라미터 이름을 lowercase 토큰으로 분할. camelCase(filePath →
+// file, path), snake_case(file_path), kebab-case(file-path), dot
+// notation(data.id → data, id) 처리. "profile"/"research" 같은
+// 단어는 단일 토큰으로 유지 → "file"/"search"에 대한 false positive
+// 회피.
 function _scanTokenize(name) {
   if (typeof name !== 'string') return [];
   const snake = name.replace(/([a-z\d])([A-Z])/g, '$1_$2').toLowerCase();
   return snake.split(/[_\-.]/).filter(Boolean);
 }
 
-// Strict matcher: every token in the parameter name must be a known
-// HUNT keyword. Mixed names like isBackForward / open_graph /
-// ping_second / operating_system have non-HUNT tokens (is, back,
-// graph, second, operating) signaling a different domain — those
-// are excluded entirely. redirect_uri / file_path still match
-// because both tokens belong to the vocabulary.
+// strict 매처: 파라미터 이름의 모든 토큰이 알려진 HUNT 키워드여야
+// 함. isBackForward / open_graph / ping_second / operating_system
+// 같은 혼합 이름은 비-HUNT 토큰(is, back, graph, second, operating)
+// 이 다른 도메인을 시사 → 완전히 제외. redirect_uri / file_path는
+// 두 토큰 모두 어휘에 속하므로 여전히 매치.
 function _scanMatchHunt(name) {
   const tokens = _scanTokenize(name);
   if (tokens.length === 0) return null;
@@ -5214,9 +5142,9 @@ function _scanMatchHunt(name) {
   return firstHit;
 }
 
-// Whether any finding has already been recorded at this location, in
-// any category. Used to skip HUNT additions when IDOR/privilege/sensitive
-// already flagged the same parameter.
+// 어떤 카테고리든 이 location에 이미 finding이 기록됐는지 여부.
+// IDOR/privilege/sensitive가 이미 같은 파라미터를 플래그한 경우
+// HUNT 추가를 skip하는 데 사용.
 function _scanLocationHasFinding(seen, location) {
   for (const key of seen) {
     const sepIdx = key.indexOf('|');
@@ -5225,8 +5153,8 @@ function _scanLocationHasFinding(seen, location) {
   return false;
 }
 
-// Run HUNT match against a parameter name and add a finding if it hits
-// AND no prior finding exists at the same location.
+// 파라미터 이름에 HUNT 매치 실행 → hit이 있고 같은 location에 prior
+// finding이 없으면 finding 추가.
 function _scanAddHunt(findings, seen, location, paramName, value) {
   if (_scanLocationHasFinding(seen, location)) return;
   const hit = _scanMatchHunt(paramName);
@@ -5255,7 +5183,7 @@ function _scanCheckTokenKey(key) {
   return /^(api[_-]?key|access[_-]?token|secret)$/i.test(key);
 }
 
-// Walk a parsed object/array, applying field-name-based detectors.
+// 파싱된 object/array를 walk하면서 field-name 기반 탐지기 적용.
 function _scanWalkObject(obj, path, findings, seen) {
   if (typeof obj !== 'object' || obj === null) return;
   if (Array.isArray(obj)) {
@@ -5293,8 +5221,8 @@ function scanRequest(req) {
   const seen = new Set();
 
   // -------- Request URL: IDOR, privilege query params --------
-  // (URL path numeric-segment detection was dropped in 2026-04: build
-  // timestamps, version numbers, and ad creative IDs produced 100% FP.)
+  // (URL path 숫자 세그먼트 감지는 2026-04에 폐기: 빌드 timestamp,
+  // 버전 번호, 광고 creative ID가 100% FP를 생산함.)
   try {
     const url = new URL(req.url);
     for (const [k, v] of url.searchParams) {
@@ -5323,7 +5251,7 @@ function scanRequest(req) {
     }
   } catch { /* malformed url */ }
 
-  // -------- Request body: privilege + IDOR + sensitive params --------
+  // -------- Request body: privilege + IDOR + sensitive 파라미터 --------
   if (req.requestPostData && typeof req.requestPostData === 'string') {
     let parsed = null;
     try { parsed = JSON.parse(req.requestPostData); } catch {}
@@ -5402,13 +5330,13 @@ function scanRequest(req) {
           }
           _scanAddHunt(findings, seen, `request.body.${k}`, k, v);
         }
-      } catch { /* not form */ }
+      } catch { /* form 아님 */ }
     }
   }
 
-  // -------- Response status: 401/403 with large body --------
-  // Skip text/html — SPAs serve their app shell / login page on auth
-  // failures, which is normal behavior, not a finding.
+  // -------- Response status: 401/403 + 큰 body --------
+  // text/html은 skip — SPA는 auth 실패 시 app shell/login 페이지를
+  // 서빙. 정상 동작이지 finding이 아님.
   const isHtmlResp = (req.mimeType || '').toLowerCase().includes('text/html');
   if ((req.status === 401 || req.status === 403) &&
       req.responseBody && typeof req.responseBody === 'string' &&
@@ -5421,7 +5349,7 @@ function scanRequest(req) {
     });
   }
 
-  // -------- Response headers: Server / X-Powered-By version disclosure --------
+  // -------- Response headers: Server / X-Powered-By 버전 노출 --------
   if (req.responseHeaders) {
     for (const [name, value] of Object.entries(req.responseHeaders)) {
       const lname = name.toLowerCase();
@@ -5442,11 +5370,11 @@ function scanRequest(req) {
     let body = req.responseBody;
     if (body.length > SCAN_BODY_LIMIT) body = body.slice(0, SCAN_BODY_TRUNCATE);
 
-    // JWT pattern (starts with eyJ — base64url of `{"`)
+    // JWT 패턴 (eyJ로 시작 — `{"`의 base64url)
     const jwtMatches = body.match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/);
     if (jwtMatches) {
       const tok = jwtMatches[0];
-      // Validate via existing detectJWT to avoid false positives
+      // false positive 회피를 위해 기존 detectJWT로 검증
       if (detectJWT(tok)) {
         _scanAdd(findings, seen, {
           category: 'token', badge: '🔑 token', severity: 'high',
@@ -5456,9 +5384,9 @@ function scanRequest(req) {
       }
     }
 
-    // Email — skip @localhost, @<ipv4>, and TLDs that are really file
-    // extensions (e.g. "logo@2x.png" matches the regex but is just a
-    // Retina asset filename, not PII).
+    // 이메일 — @localhost, @<ipv4>, 그리고 사실 파일 확장자인 TLD는
+    // skip (예: "logo@2x.png"이 regex에 매치되지만 Retina 자산 파일명일
+    // 뿐 PII 아님).
     const emailMatch = body.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
     if (emailMatch) {
       const email = emailMatch[0];
@@ -5475,7 +5403,7 @@ function scanRequest(req) {
         });
       }
     }
-    // Korean phone numbers
+    // 한국 휴대폰 번호
     const phoneMatch = body.match(/01[016789]-\d{3,4}-\d{4}/);
     if (phoneMatch) {
       _scanAdd(findings, seen, {
@@ -5485,9 +5413,9 @@ function scanRequest(req) {
       });
     }
 
-    // Internal IPv4 — narrow to dotted-quad shape via regex, then
-    // validate octets ≤ 255 + private-range prefix in JS so a number
-    // sequence like 10.669.606.225 doesn't false-positive.
+    // 내부 IPv4 — regex로 dotted-quad 모양으로 좁히고, JS에서 octet
+    // ≤ 255 + private-range prefix 검증 → 10.669.606.225 같은 숫자
+    // 시퀀스가 false-positive 안 되도록.
     const ipCandidates = body.matchAll(/\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b/g);
     let internalIp = null;
     for (const m of ipCandidates) {
@@ -5506,7 +5434,7 @@ function scanRequest(req) {
         evidence: internalIp,
       });
     }
-    // Stack-trace keywords
+    // 스택트레이스 키워드
     const stackMatch = body.match(/\b(at Function|at Object|Traceback|NullPointerException|SQLException|stack trace)\b/i);
     if (stackMatch) {
       _scanAdd(findings, seen, {
@@ -5515,11 +5443,11 @@ function scanRequest(req) {
         evidence: stackMatch[0],
       });
     }
-    // Server paths.
-    // /home/ tightened: must start with a lowercase letter (drops
-    // /home/_next, /home/12345), and must NOT continue into a deeper
-    // path like /home/foo/bar — which is normally just a URL prefix,
-    // not a server-side filesystem reference.
+    // 서버 경로.
+    // /home/ 정밀화: lowercase 글자로 시작해야 함(/home/_next,
+    // /home/12345 제외), /home/foo/bar 같은 더 깊은 경로로 이어지면
+    // 안 됨 — 그건 보통 server-side 파일시스템 참조가 아닌 URL
+    // prefix.
     const pathMatch = body.match(/(\/var\/www|\/home\/[a-z][a-z0-9_-]*(?![\w\/])|C:\\Users|\/etc\/(?:passwd|shadow|hosts))/);
     if (pathMatch) {
       _scanAdd(findings, seen, {
@@ -5529,7 +5457,7 @@ function scanRequest(req) {
       });
     }
 
-    // AWS access key ID — fixed AKIA prefix + 16 uppercase alphanumerics
+    // AWS access key ID — 고정 AKIA prefix + 16개 대문자 영숫자
     const awsMatch = body.match(/\bAKIA[A-Z0-9]{16}\b/);
     if (awsMatch) {
       _scanAdd(findings, seen, {
@@ -5538,7 +5466,7 @@ function scanRequest(req) {
         evidence: awsMatch[0],
       });
     }
-    // GitHub PAT — ghp_ / gho_ / ghs_ prefix + 36+ alphanumerics
+    // GitHub PAT — ghp_ / gho_ / ghs_ prefix + 36+ 영숫자
     const ghMatch = body.match(/\b(ghp|gho|ghs)_[A-Za-z0-9]{36,}\b/);
     if (ghMatch) {
       _scanAdd(findings, seen, {
@@ -5548,20 +5476,20 @@ function scanRequest(req) {
       });
     }
 
-    // Field-name-based scan — only meaningful for JSON
+    // 필드명 기반 스캔 — JSON에만 의미 있음
     try {
       const parsed = JSON.parse(body);
       if (typeof parsed === 'object' && parsed !== null) {
         _scanWalkObject(parsed, '', findings, seen);
       }
-    } catch { /* not JSON */ }
+    } catch { /* JSON 아님 */ }
   }
 
   return findings;
 }
 
-// Render the small badge cluster shown in the network list. Dedupes
-// to one badge per category, with a tooltip listing all evidences.
+// network 리스트에 표시되는 작은 배지 cluster 렌더. 카테고리당 1개
+// 배지로 dedupe, 모든 evidence를 나열하는 툴팁 포함.
 function renderScanBadgesInline(scanResults) {
   if (!scanResults || scanResults.length === 0) return '';
   const byCat = {};
@@ -5574,118 +5502,115 @@ function renderScanBadgesInline(scanResults) {
   ).join(' ');
 }
 
-// Per-category guidance shown in the Detection tab. Click the group
-// header (or any finding inside it) to toggle visibility — kept
-// hidden by default to avoid drowning the findings themselves.
+// Detection 탭에 표시되는 카테고리별 안내. 그룹 헤더(또는 안의 finding)
+// 클릭으로 표시 토글 — finding 자체를 가리지 않도록 기본 숨김.
 const DETECTION_CATEGORY_DESCRIPTIONS = {
   token:
-    `An authentication token appears in the response body.
-Tokens returned in the body can leak through CDN
-caching, server logs, or shared HAR files.
-Use the Replay tab to retry other requests with this
-token and see what it can access.`,
+    `응답 본문에 인증 토큰이 등장합니다.
+본문으로 반환되는 토큰은 CDN 캐싱,
+서버 로그, 공유된 HAR 파일을 통해
+유출될 수 있습니다.
+Replay 탭에서 이 토큰으로 다른 요청을
+재전송하여 어떤 자원에 접근 가능한지
+확인하세요.`,
 
   sensitive:
-    `A password or sensitive credential was detected.
-In the response: the server is including a sensitive
-value in the body.
-In the request: the value may be reaching an endpoint
-that shouldn't receive it.
-Review the endpoint and how the value is transmitted.`,
+    `비밀번호 또는 민감 자격 증명이 검출되었습니다.
+응답: 서버가 민감한 값을 본문에 포함시키고 있습니다.
+요청: 받지 말아야 할 엔드포인트로 값이 전달되고
+있을 수 있습니다.
+엔드포인트와 값의 전송 경로를 검토하세요.`,
 
   pii:
-    `Likely personal information appears in the response.
-Check whether the data is accessible without
-authentication, or whether other users' data is
-returned alongside it.
-Use the Replay tab to retry with credentials removed
-or with a different account's identifiers.`,
+    `응답에 개인정보로 보이는 데이터가 등장합니다.
+인증 없이 접근 가능한지, 또는 다른 사용자의
+데이터가 함께 반환되는지 확인하세요.
+Replay 탭에서 자격 증명을 제거하거나 다른 계정
+식별자로 재전송하세요.`,
 
   leak:
-    `Internal information appears in the response.
-Internal IPs, server paths, stack traces, and similar
-data should not leak from a production environment.
-Try sending intentionally invalid input to see what
-additional details surface.`,
+    `응답에 내부 정보가 등장합니다.
+내부 IP, 서버 경로, 스택 트레이스 등은
+운영 환경에서 노출되어선 안 됩니다.
+의도적으로 유효하지 않은 입력을 보내
+어떤 추가 정보가 드러나는지 확인하세요.`,
 
   exposure:
-    `A server software version or a sensitive key was
-exposed in the response.
-Version disclosure helps attackers map known
-vulnerabilities to your stack.
-If an AWS key or GitHub PAT was detected, verify its
-validity and permission scope immediately.`,
+    `응답에 서버 소프트웨어 버전 또는 민감 키가
+노출되었습니다.
+버전 노출은 공격자가 알려진 취약점을 매핑하는 데
+활용됩니다.
+AWS 키 또는 GitHub PAT가 검출된 경우 즉시
+유효성과 권한 범위를 확인하세요.`,
 
   idor:
-    `An ID parameter looks like a direct object reference.
-Use the Replay tab to change the ID and resend the
-request to see whether another user's data comes
-back.`,
+    `ID 파라미터가 직접 객체 참조처럼 보입니다.
+Replay 탭에서 ID를 변경해 재전송하여 다른
+사용자의 데이터가 반환되는지 확인하세요.`,
 
   privilege:
-    `A role or privilege parameter is being sent.
-Check whether the server trusts the client-supplied
-value as-is.
-Use the Replay tab to change the value and resend.
-e.g. role=user → role=admin
-     isAdmin=false → isAdmin=true`,
+    `role 또는 privilege 파라미터가 전송되고 있습니다.
+서버가 클라이언트 제공 값을 그대로 신뢰하는지
+확인하세요.
+Replay 탭에서 값을 변경해 재전송하세요.
+예: role=user → role=admin
+    isAdmin=false → isAdmin=true`,
 
   session:
-    `A session or auth token is being sent as a request
-parameter.
-Session IDs in URLs or request bodies can be exposed
-through server logs or browser history.
-Try a different session value and resend to confirm
-that access control is enforced correctly.`,
+    `세션 또는 인증 토큰이 요청 파라미터로
+전송되고 있습니다.
+URL이나 요청 본문에 포함된 세션 ID는 서버 로그나
+브라우저 히스토리를 통해 노출될 수 있습니다.
+다른 세션 값으로 재전송하여 접근 통제가 올바르게
+적용되는지 확인하세요.`,
 
   tampering:
-    `A parameter that may influence server-side logic
-has been detected in this request.
+    `서버측 로직에 영향을 줄 수 있는 파라미터가
+이 요청에서 검출되었습니다.
 
-Modify the parameter value in the Replay tab
-and review how the server responds.
+Replay 탭에서 파라미터 값을 수정하고
+서버 응답을 검토하세요.
 
-Suggested tests:
-- Special characters: ' " ; -- (SQL Injection)
-- Path patterns: ../../../etc/passwd (Path Traversal)
-- External URLs: https://169.254.169.254/ (SSRF)
-- Command patterns: ; ls , | whoami (Command Injection)
-- Template syntax: {{7*7}} \${7*7} (SSTI)`,
+테스트 패턴:
+- 특수문자: ' " ; -- (SQL Injection)
+- 경로 패턴: ../../../etc/passwd (Path Traversal)
+- 외부 URL: https://169.254.169.254/ (SSRF)
+- 명령 패턴: ; ls , | whoami (Command Injection)
+- 템플릿 문법: {{7*7}} \${7*7} (SSTI)`,
 
   check:
-    `The response is 401/403 but the body is larger than
-expected.
-A normal auth-failure response should carry only a
-short error message.
-Inspect the body directly to see whether sensitive
-information or data leaks alongside the failure.`,
+    `응답 코드는 401/403인데 본문 크기가 예상보다
+큽니다.
+정상적인 인증 실패 응답은 짧은 에러 메시지만
+담아야 합니다.
+본문을 직접 확인하여 실패 응답에 민감 정보나
+데이터가 함께 노출되는지 검사하세요.`,
 };
 
 // ============================================================
-// Auth — login-request detection + safety inspection (MVP)
+// Auth — login 요청 감지 + 안전성 검사 (MVP)
 // ============================================================
-// Heuristic detection: a request looks like a login when at least 2 of
-// {URL pattern, password-shaped field in body, auth-flavored response}
-// match. Per-req `_authMarked` overrides the auto-detect (user can
-// mark anything as a login or unmark a false positive).
+// 휴리스틱 감지: {URL 패턴, body의 password 모양 필드, auth 색채 응답}
+// 중 최소 2개 매치 시 login으로 보임. per-req `_authMarked`가 자동
+// 감지를 override (사용자가 무엇이든 login으로 마킹하거나 false
+// positive를 해제 가능).
 
-// Path-only keyword set for "this looks like a login request". Each
-// alternative is anchored on a leading slash and constrained by a
-// trailing word boundary (or specific extension/suffix) to avoid
-// matching unrelated tokens like /loginEvent or /authority. New
-// frameworks: extend this list, no other code change needed.
+// "이건 login 요청처럼 보임"용 path 전용 키워드 셋. 각 대안은
+// leading slash로 anchor되고 trailing word boundary(또는 특정 확장자/
+// suffix)로 제한 → /loginEvent나 /authority 같은 무관 토큰 매칭 회피.
+// 새 프레임워크: 이 리스트만 확장, 다른 코드 변경 불필요.
 const _AUTH_LOGIN_URL_RE = new RegExp([
-  // login / signin / signon — with optional `_word` suffix to cover
-  // Symfony's `/login_check`, `/login_submit` etc.
+  // login / signin / signon — Symfony의 `/login_check`, `/login_submit`
+  // 등을 커버하기 위한 옵션 `_word` suffix.
   '\\/(?:login|signin|signon)(?:_\\w+)?\\b',
-  // Hyphen / underscore separators
+  // 하이픈/언더스코어 구분자
   '\\/sign[-_](?:in|on)\\b',
-  // Plain auth + authenticate
+  // plain auth + authenticate
   '\\/auth\\b',
   '\\/authenticate\\b',
-  // Session(s) — REST style
+  // Session(s) — REST 스타일
   '\\/sessions?\\b',
-  // OAuth2 / OIDC token + authorize endpoints
+  // OAuth2 / OIDC token + authorize 엔드포인트
   '\\/oauth\\/(?:token|authorize)\\b',
   '\\/connect\\/(?:token|authorize)\\b',
   // SSO / SAML
@@ -5693,35 +5618,34 @@ const _AUTH_LOGIN_URL_RE = new RegExp([
   '\\/saml\\b',
   // WordPress
   '\\/wp-login\\.php',
-  // Explicit token issue paths
+  // 명시적 token issue 경로
   '\\/token\\/issue\\b',
 ].join('|'), 'i');
 
-// Multiple shapes of password-field declarations across body formats.
-// First match wins. Covers form-urlencoded, JSON, XML attributes (e.g.
-// `<Col id="userPw">…`), XML elements, HTML form `name=`. Catches the
-// common typed variants too (passwd / pwd / userPw / user_password).
+// body 포맷에 걸친 password 필드 선언의 다양한 모양. 첫 매치 승리.
+// form-urlencoded, JSON, XML 속성(예: `<Col id="userPw">…`), XML
+// element, HTML form `name=` 커버. 흔한 타입 변종도 잡음
+// (passwd / pwd / userPw / user_password).
 const _AUTH_PASSWORD_FIELD_NAME = '(password|passwd|pwd|user_?password|user_?pw|userpw)';
 const _AUTH_PASSWORD_PATTERNS = [
   // form-urlencoded: password=value
   new RegExp(`(?:^|[&\\n])${_AUTH_PASSWORD_FIELD_NAME}\\s*=`, 'i'),
   // JSON: "password": "value"
   new RegExp(`["']${_AUTH_PASSWORD_FIELD_NAME}["']\\s*:`, 'i'),
-  // XML attribute: id="password" / name="userPw"
+  // XML 속성: id="password" / name="userPw"
   new RegExp(`\\b(?:id|name)\\s*=\\s*["']${_AUTH_PASSWORD_FIELD_NAME}["']`, 'i'),
-  // XML element: <password> or <userPw>
+  // XML 요소: <password> 또는 <userPw>
   new RegExp(`<${_AUTH_PASSWORD_FIELD_NAME}[\\s>]`, 'i'),
 ];
 
-// Static asset extensions — paths ending in these are never login
-// requests, even when the filename contains "login" (e.g.
-// /static/login.css). Server-side execution extensions like .do /
-// .aspx / .php are explicitly NOT in this list.
+// 정적 자산 확장자 — 이걸로 끝나는 경로는 파일명에 "login"이 들어있어도
+// (예: /static/login.css) 절대 login 요청 아님. .do/.aspx/.php 같은
+// 서버 측 실행 확장자는 명시적으로 이 리스트에 없음.
 const _AUTH_STATIC_ASSET_RE = /\.(?:css|js|map|json|xml|html?|png|jpe?g|gif|svg|webp|woff2?|ttf|otf|eot|ico|mp[34]|webm|wav|ogg|pdf|zip|gz|br)$/i;
 
 function _detectAuthSignals(req) {
   const signals = { url: false, body: false, response: false, signalsHit: [] };
-  // 1) URL pattern (skip static-asset extensions)
+  // 1) URL 패턴 (정적 자산 확장자는 skip)
   try {
     const u = new URL(req.url);
     if (!_AUTH_STATIC_ASSET_RE.test(u.pathname) && _AUTH_LOGIN_URL_RE.test(u.pathname)) {
@@ -5729,7 +5653,7 @@ function _detectAuthSignals(req) {
       signals.signalsHit.push(`URL path matches login pattern (${u.pathname})`);
     }
   } catch {}
-  // 2) Body has password-like field (form / JSON / XML)
+  // 2) body에 password-like 필드 (form / JSON / XML)
   const body = req.requestPostData || '';
   if (body) {
     for (const re of _AUTH_PASSWORD_PATTERNS) {
@@ -5740,7 +5664,7 @@ function _detectAuthSignals(req) {
       }
     }
   }
-  // 3) Response sets auth-looking artifacts
+  // 3) 응답이 auth-looking artifact 설정
   const respHeaders = req.responseHeaders || {};
   for (const [k, v] of Object.entries(respHeaders)) {
     if (k.toLowerCase() === 'set-cookie') {
@@ -5754,7 +5678,7 @@ function _detectAuthSignals(req) {
   }
   if (!signals.response) {
     const respBody = req.responseBody || '';
-    // JWT pattern
+    // JWT 패턴
     if (/eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}/.test(respBody)) {
       signals.response = true;
       signals.signalsHit.push('Response body contains a JWT');
@@ -5764,11 +5688,11 @@ function _detectAuthSignals(req) {
     }
   }
   const score = (signals.url ? 1 : 0) + (signals.body ? 1 : 0) + (signals.response ? 1 : 0);
-  // Either signal alone is high-confidence:
-  //   * URL `/login` is rarely a coincidence
-  //   * a password field in the request body always means an auth attempt
-  // Failed logins won't show response artifacts, so we don't require
-  // them — they just bump the score.
+  // 어느 한 시그널만 있어도 high-confidence:
+  //   * URL `/login`은 우연인 경우가 드뭄
+  //   * request body의 password 필드는 항상 auth 시도를 의미
+  // 로그인 실패는 응답 artifact를 안 보여주므로 그건 요구하지 않음 —
+  // 점수만 올림.
   const isLogin = signals.url || signals.body;
   return { isLogin, signals, score };
 }
@@ -5779,14 +5703,14 @@ function _isReqAuth(req) {
   return _detectAuthSignals(req).isLogin;
 }
 
-// Parse Set-Cookie header into { name, value, attrs:{Secure, HttpOnly, SameSite} }
+// Set-Cookie 헤더를 { name, value, attrs:{Secure, HttpOnly, SameSite} }로 파싱
 function _parseSetCookies(req) {
   const headers = req.responseHeaders || {};
   const out = [];
   for (const [k, v] of Object.entries(headers)) {
     if (k.toLowerCase() !== 'set-cookie') continue;
-    // multi-cookie: split by newline (Chrome HAR may collapse to one, we
-    // also accept a single value containing only one cookie)
+    // 다중 쿠키: 줄바꿈으로 split (Chrome HAR이 하나로 collapse할 수
+    // 있고, 쿠키 하나만 담은 단일 값도 수용)
     const lines = Array.isArray(v) ? v : String(v).split('\n');
     for (const line of lines) {
       if (!line) continue;
@@ -5808,8 +5732,8 @@ function _parseSetCookies(req) {
   return out;
 }
 
-// Look for a CSRF-ish token in the request: header or body field name
-// commonly used by frameworks. Returns the location string when found.
+// 요청에서 CSRF-ish 토큰 찾기: 프레임워크가 흔히 쓰는 헤더 또는 body
+// 필드 이름. 발견 시 location 문자열 반환.
 function _findCsrfToken(req) {
   const headers = req.requestHeaders || {};
   for (const k of Object.keys(headers)) {
@@ -5820,7 +5744,7 @@ function _findCsrfToken(req) {
     }
   }
   const body = req.requestPostData || '';
-  // form / json field
+  // form / json 필드
   const m = body.match(/(?:^|[&"'])([a-zA-Z_-]*csrf[a-zA-Z_-]*|authenticity_token)["']?[=:]\s*["']?([^&"'\s,}]*)/i);
   if (m) {
     return { where: 'body', name: m[1], value: m[2] };
@@ -5828,17 +5752,16 @@ function _findCsrfToken(req) {
   return null;
 }
 
-// Decode the JWT payload (best-effort) for display in the Auth tab.
-// Scans the response body AND every response header value (so JWTs
-// delivered via Set-Cookie or custom auth headers like X-Auth-Token
-// also surface here, matching what the auth detector counts as a
-// signal). Returns null when no JWT-shaped string is found anywhere.
-// JWT shape: header + payload are JSON objects, both base64url-encoded
-// to start with `eyJ`. Signature can be empty for `alg: none`. Length
-// minimums kept loose because realistic tokens vary widely (small
-// headers like `{"alg":"HS256"}` decode to only 20 chars); the
-// downstream JSON decoder filters out random eyJ-prefixed text by
-// rejecting unparseable header/payload.
+// Auth 탭 표시용 JWT payload 디코드 (best-effort).
+// 응답 body와 모든 응답 header 값을 스캔(Set-Cookie나 X-Auth-Token
+// 같은 커스텀 auth 헤더로 전달된 JWT도 여기 노출 → auth 탐지기가
+// 시그널로 세는 것과 일치). 어디에도 JWT 모양 문자열이 없으면 null.
+// JWT 모양: header + payload는 JSON 객체, 둘 다 `eyJ`로 시작하는
+// base64url-encoded. Signature는 `alg: none`이면 비어있을 수 있음.
+// 길이 최소값은 느슨하게 유지 — 실제 토큰은 폭이 넓음(`{"alg":"HS256"}`
+// 같은 작은 헤더는 20자만 디코드); 다운스트림 JSON 디코더가 파싱
+// 안 되는 header/payload를 reject해서 random eyJ-prefixed 텍스트를
+// 필터링.
 const _AUTH_JWT_RE = /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/;
 
 function _extractJwtFromResponse(req) {
@@ -5848,14 +5771,14 @@ function _extractJwtFromResponse(req) {
   for (const [k, v] of Object.entries(headers)) {
     if (!v) continue;
     const lower = k.toLowerCase();
-    // Set-Cookie often arrives joined as one string with newlines —
-    // split so each cookie is scanned individually for clearer
-    // source labelling.
+    // Set-Cookie는 종종 줄바꿈으로 join된 단일 문자열로 도착 —
+    // 각 쿠키를 개별 스캔하도록 split해서 source labelling을
+    // 명확하게.
     const lines = lower === 'set-cookie' && typeof v === 'string'
       ? v.split('\n').filter(Boolean)
       : [Array.isArray(v) ? v.join(', ') : String(v)];
     for (const line of lines) {
-      // For Set-Cookie, label with the cookie name when we can.
+      // Set-Cookie에는 가능한 경우 쿠키 이름으로 라벨.
       let label = `response header: ${k}`;
       if (lower === 'set-cookie') {
         const eq = line.indexOf('=');
@@ -5879,8 +5802,8 @@ function _extractJwtFromResponse(req) {
     if (parts.length !== 3) continue;
     const header = decode(parts[0]);
     const payload = decode(parts[1]);
-    // Need at least one parseable segment to consider it a real JWT —
-    // a random `eyJ`-prefixed string in plain text shouldn't slip in.
+    // 진짜 JWT로 간주하려면 최소 하나의 파싱 가능 segment 필요 —
+    // plain text의 random `eyJ`-prefixed 문자열이 끼어들면 안 됨.
     if (!header && !payload) continue;
     const issues = [];
     if (header && header.alg === 'none') issues.push('alg: none — token is unsigned');
@@ -5890,9 +5813,9 @@ function _extractJwtFromResponse(req) {
   return null;
 }
 
-// Per-request store of auth test results (empty-pw / wrong-pw replays).
-// Keyed by requestId; persists for the session so re-opening the tab
-// doesn't lose results the user just generated.
+// per-request 단위 auth 테스트 결과 저장 (empty-pw / wrong-pw replay).
+// requestId 키; 세션 동안 지속 → 탭을 다시 열어도 사용자가 방금
+// 생성한 결과를 잃지 않음.
 const _authTestResults = new Map();
 
 function renderAuth(req) {
@@ -5913,27 +5836,27 @@ function renderAuth(req) {
 
   let html = '';
 
-  // ---- Header card: detection state + manual mark toggle ----
+  // ---- Header 카드: 감지 상태 + 수동 마크 토글 ----
   html += `<div class="auth-card">`;
   if (isLogin) {
-    html += `<div class="auth-state auth-state-on">🔐 Login request${isMarked ? ' (marked)' : ` (auto, score ${detect.score}/3)`}</div>`;
+    html += `<div class="auth-state auth-state-on">🔐 로그인 요청${isMarked ? ' (수동 표시)' : ` (자동 감지, 점수 ${detect.score}/3)`}</div>`;
   } else {
-    html += `<div class="auth-state auth-state-off">Not a login request${isUnmarked ? ' (unmarked)' : ` (auto, score ${detect.score}/3)`}</div>`;
+    html += `<div class="auth-state auth-state-off">로그인 요청 아님${isUnmarked ? ' (수동 해제)' : ` (자동 감지, 점수 ${detect.score}/3)`}</div>`;
   }
   if (detect.signals.signalsHit.length > 0) {
     html += `<ul class="auth-signal-list">`;
     for (const s of detect.signals.signalsHit) html += `<li>${escapeHtml(s)}</li>`;
     html += `</ul>`;
   }
-  html += `<button id="auth-mark-toggle" class="btn btn-xs">${isLogin ? 'Unmark as login' : 'Mark as login'}</button>`;
+  html += `<button id="auth-mark-toggle" class="btn btn-xs">${isLogin ? '로그인 표시 해제' : '로그인으로 표시'}</button>`;
   html += `</div>`;
 
   if (isLogin) {
-    // ---- JWT analysis ----
+    // ---- JWT 분석 ----
     const jwt = _extractJwtFromResponse(req);
     html += `<div class="auth-card"><div class="auth-card-title">JWT</div>`;
     if (!jwt) {
-      html += `<div class="auth-empty">No JWT found in the response body or headers.</div>`;
+      html += `<div class="auth-empty">응답 본문 또는 헤더에서 JWT를 찾지 못했습니다.</div>`;
     } else {
       html += `<div class="auth-kv"><b>source</b>: ${escapeHtml(jwt.source)}</div>`;
       html += `<pre class="auth-jwt-block">${escapeHtml(jwt.token.slice(0, 60))}…</pre>`;
@@ -5951,25 +5874,24 @@ function renderAuth(req) {
         for (const i of jwt.issues) html += `<li>⚠️ ${escapeHtml(i)}</li>`;
         html += `</ul>`;
       } else {
-        html += `<div class="auth-ok">No obvious JWT issues found.</div>`;
+        html += `<div class="auth-ok">눈에 띄는 JWT 문제 없음.</div>`;
       }
     }
     html += `</div>`;
 
-    // ---- Cookie flags ----
+    // ---- Cookie 플래그 ----
     const cookies = _parseSetCookies(req);
     html += `<div class="auth-card"><div class="auth-card-title">Set-Cookie flags</div>`;
     if (cookies.length === 0) {
-      html += `<div class="auth-empty">Response did not set any cookies.</div>`;
+      html += `<div class="auth-empty">응답에서 설정된 쿠키가 없습니다.</div>`;
     } else {
       html += `<table class="auth-cookie-table"><thead><tr><th>Name</th><th>Secure</th><th>HttpOnly</th><th>SameSite</th></tr></thead><tbody>`;
       for (const c of cookies) {
         const sec = c.flags.Secure ? '<span class="auth-ok-tag">✓</span>' : '<span class="auth-bad-tag">✗</span>';
         const httpOnly = c.flags.HttpOnly ? '<span class="auth-ok-tag">✓</span>' : '<span class="auth-bad-tag">✗</span>';
-        // SameSite cell: when set, render the value as escaped text;
-        // when missing, render the styled "none" tag. Previously the
-        // fallback HTML went through escapeHtml and surfaced as literal
-        // markup in the table.
+        // SameSite 셀: 설정 시 값을 escaped 텍스트로 렌더; 누락 시
+        // styled "none" 태그 렌더. 이전에는 fallback HTML이 escapeHtml
+        // 을 거쳐 테이블에 리터럴 마크업으로 노출됐음.
         const ss = c.flags.SameSite
           ? escapeHtml(c.flags.SameSite)
           : '<span class="auth-bad-tag">none</span>';
@@ -5979,46 +5901,46 @@ function renderAuth(req) {
     }
     html += `</div>`;
 
-    // ---- CSRF token ----
+    // ---- CSRF 토큰 ----
     const csrf = _findCsrfToken(req);
     html += `<div class="auth-card"><div class="auth-card-title">CSRF token</div>`;
     if (csrf) {
-      html += `<div class="auth-ok">Found in <b>${escapeHtml(csrf.where)}</b> — <code>${escapeHtml(csrf.name)}</code> = <code>${escapeHtml(String(csrf.value).slice(0, 24))}…</code></div>`;
+      html += `<div class="auth-ok"><b>${escapeHtml(csrf.where)}</b>에서 발견 — <code>${escapeHtml(csrf.name)}</code> = <code>${escapeHtml(String(csrf.value).slice(0, 24))}…</code></div>`;
     } else {
-      html += `<div class="auth-warn">No CSRF token detected. State-changing endpoints without CSRF protection should be reviewed for SameSite cookie reliance and origin checks.</div>`;
+      html += `<div class="auth-warn">CSRF 토큰이 검출되지 않았습니다. CSRF 보호가 없는 상태 변경 엔드포인트는 SameSite 쿠키 의존성과 origin 검증을 함께 검토해야 합니다.</div>`;
     }
     html += `</div>`;
 
-    // ---- Test buttons + results ----
+    // ---- Test 버튼 + 결과 ----
     html += `<div class="auth-card"><div class="auth-card-title">Tests</div>`;
     html += `<div class="auth-test-row">
-      <button id="auth-test-empty-pw" class="btn btn-xs">Test: empty password</button>
-      <button id="auth-test-wrong-pw" class="btn btn-xs">Test: wrong password</button>
+      <button id="auth-test-empty-pw" class="btn btn-xs">테스트: 빈 비밀번호</button>
+      <button id="auth-test-wrong-pw" class="btn btn-xs">테스트: 잘못된 비밀번호</button>
     </div>`;
     html += `<div id="auth-test-result" class="auth-test-result"></div>`;
-    html += `<div class="auth-warn-small">Tests fire one replay each. Run only against systems you're authorized to test — repeated wrong passwords may trigger account lockout on strict systems.</div>`;
+    html += `<div class="auth-warn-small">각 테스트는 1회 replay를 발사합니다. 권한이 있는 시스템에서만 실행하세요 — 엄격한 시스템에서는 반복된 비밀번호 오류가 계정 잠금을 유발할 수 있습니다.</div>`;
     html += `</div>`;
 
-    // Restore previous test result if any
+    // 이전 테스트 결과가 있으면 복원
     const prev = _authTestResults.get(req.requestId);
     if (prev) {
-      // Render after setting innerHTML
+      // innerHTML 설정 후 렌더
     }
   }
 
   container.innerHTML = html;
 
-  // Wire button handlers
+  // 버튼 핸들러 wire up
   const markBtn = document.getElementById('auth-mark-toggle');
   if (markBtn) {
     markBtn.addEventListener('click', () => {
-      // Toggle: marked → unmarked, unmarked → marked, undefined → opposite of auto
+      // 토글: marked → unmarked, unmarked → marked, undefined → 자동의 반대
       if (req._authMarked === true) req._authMarked = false;
       else if (req._authMarked === false) req._authMarked = true;
       else req._authMarked = !detect.isLogin;
       renderAuth(req);
-      // Refresh the row's URL cell so the 🔐 badge appears/disappears
-      // immediately without waiting for a full table re-render.
+      // row의 URL 셀 갱신 → 전체 테이블 재렌더 대기 없이 🔐 배지가
+      // 즉시 나타나거나 사라지도록.
       updateNetworkRowAuth(req);
     });
   }
@@ -6036,9 +5958,9 @@ function renderAuth(req) {
   }
 }
 
-// Mutate the password field in the request body — handles JSON,
-// form-urlencoded, and XML (incl. XML attributes like id="userPw").
-// Falls back to no-op when the body shape isn't recognized.
+// 요청 body의 password 필드 변형 — JSON, form-urlencoded, XML
+// (id="userPw" 같은 XML 속성 포함) 처리. body 모양이 인식되지 않으면
+// no-op으로 fallback.
 function _mutatePasswordField(body, mode) {
   if (!body) return body;
   const replacement = mode === 'empty' ? '' : '__dtpp_wrong_' + Math.random().toString(36).slice(2, 10);
@@ -6064,12 +5986,12 @@ function _mutatePasswordField(body, mode) {
   } catch {}
 
   // XML (Nexacro <Col id="userPw">…</Col>, generic <password>…</password>,
-  // or <Col name="password">…</Col>). Element-by-attribute and naked
-  // element forms covered.
+  // 또는 <Col name="password">…</Col>). Element-by-attribute와 naked
+  // element 형태 둘 다 커버.
   if (/<\?xml|<\s*\w+[^>]*xmlns/i.test(body)) {
     let out = body;
     let touched = false;
-    // <Tag id|name="userPw">value</Tag> → replace value
+    // <Tag id|name="userPw">value</Tag> → value 교체
     out = out.replace(
       /(<\w+[^>]*\b(?:id|name)\s*=\s*["'])([^"']+)(["'][^>]*>)([^<]*)(<\/\w+>)/gi,
       (full, openStart, attrName, openEnd, inner, close) => {
@@ -6123,13 +6045,13 @@ function _runAuthTest(originalReq, mode) {
     headers,
     body: mutatedBody || null,
   };
-  // Tag this fire so processNetworkRequest can drop the matching
-  // capture from the Monitor list — auth tests are internal probes,
-  // not user traffic, and shouldn't pollute the timeline.
+  // 이 발화를 태그 → processNetworkRequest가 매칭 캡처를 Monitor
+  // 리스트에서 드롭하도록. auth 테스트는 내부 probe라 사용자
+  // 트래픽이 아니고 타임라인을 오염시키면 안 됨.
   _markAuthTestFired(payload.url, payload.method);
-  // Reuse the page-context fetch path used by Replay. The result goes
-  // through the message-tab response slot, which is fine here too —
-  // we capture it ourselves via the polling expression.
+  // Replay가 쓰는 page-context fetch 경로 재사용. 결과는 message-tab
+  // response slot으로 가지만 여기서도 괜찮음 — polling 표현식으로
+  // 직접 캡처.
   const callbackId = '__authtest_' + Date.now() + '_' + Math.random().toString(36).slice(2);
   const expr = `(function() {
     window['${callbackId}'] = null;
@@ -6175,10 +6097,10 @@ function _runAuthTest(originalReq, mode) {
           bodyLen: (parsed.body || '').length,
           bodyPreview: (parsed.body || '').slice(0, 200),
           originalStatus: originalReq.status,
-          // Snapshot the captured original body so the result render can
-          // diff body content against the test response. Many APIs reply
-          // with HTTP 200 even on auth failure (RESTful "200 + error in
-          // body"), so status-only compare miss-flags those as success.
+          // 캡처된 원본 body를 스냅샷 → 결과 렌더가 body 내용을
+          // 테스트 응답과 diff할 수 있도록. 많은 API가 auth 실패에도
+          // HTTP 200으로 응답(RESTful "200 + body의 error")하므로
+          // status만 비교하면 그것들을 성공으로 잘못 플래그함.
           originalBody: originalReq.responseBodyLoaded ? (originalReq.responseBody || '') : null,
           testBody: parsed.body || '',
           error: parsed.error,
@@ -6192,30 +6114,30 @@ function _runAuthTest(originalReq, mode) {
 
 function _renderAuthTestResult(r) {
   if (!r.ok) {
-    return `<div class="auth-test-fail">Test (${escapeHtml(r.mode)}) failed: ${escapeHtml(r.error || 'unknown')}</div>`;
+    return `<div class="auth-test-fail">테스트 (${escapeHtml(r.mode)}) 실패: ${escapeHtml(r.error || 'unknown')}</div>`;
   }
-  // Verdict: server distinguished the bad attempt from the original
-  // success when EITHER the status differs OR the body differs.
-  // Pure status-only compare misses APIs that reply HTTP 200 with a
-  // RESTful error envelope in the body (e.g. {"resType":"RES_ERROR"}).
+  // 서버가 잘못된 시도와 원본 성공 응답을 구분했다면 status 또는 body 중
+  // 어느 하나라도 달라야 함. status만 비교하면 HTTP 200으로 응답하면서
+  // 본문에 RESTful 에러 봉투를 담는 API({"resType":"RES_ERROR"} 등)를
+  // 놓치게 됨.
   const sameStatus = r.status === r.originalStatus;
   let verdict;
   if (!sameStatus) {
-    verdict = '<span class="auth-ok-tag">✓ different (status changed)</span>';
+    verdict = '<span class="auth-ok-tag">✓ 응답 다름 (status 변경)</span>';
   } else if (r.originalBody == null) {
-    // Status matches and we never loaded the original body — can't
-    // make a body-level call. Report ambiguity rather than guessing.
-    verdict = '<span class="auth-warn-tag">⚠ status same · original body unavailable for compare</span>';
+    // status는 같지만 원본 본문을 로드한 적이 없음 → body 레벨 비교 불가.
+    // 추측 대신 모호성 그대로 보고.
+    verdict = '<span class="auth-warn-tag">⚠ status 동일 · 비교용 원본 body 없음</span>';
   } else if (r.testBody === r.originalBody) {
-    verdict = '<span class="auth-warn-tag">⚠ identical response — server didn\'t distinguish</span>';
+    verdict = '<span class="auth-warn-tag">⚠ 응답 동일 — 서버가 구분하지 못함</span>';
   } else {
-    verdict = '<span class="auth-ok-tag">✓ different (body changed)</span>';
+    verdict = '<span class="auth-ok-tag">✓ 응답 다름 (body 변경)</span>';
   }
   return `<div class="auth-test-ok">
-    <div><b>Test:</b> ${escapeHtml(r.mode === 'empty' ? 'empty password' : 'wrong password')}</div>
-    <div><b>Original status:</b> ${escapeHtml(String(r.originalStatus))} → <b>Test status:</b> ${escapeHtml(String(r.status))} ${escapeHtml(r.statusText || '')} ${verdict}</div>
-    <div><b>Time:</b> ${escapeHtml(String(r.time))}ms · <b>Body:</b> ${escapeHtml(String(r.bodyLen))} bytes</div>
-    <div class="auth-body-preview"><b>Body preview:</b> ${escapeHtml(r.bodyPreview)}${r.bodyLen > 200 ? '…' : ''}</div>
+    <div><b>테스트:</b> ${escapeHtml(r.mode === 'empty' ? '빈 비밀번호' : '잘못된 비밀번호')}</div>
+    <div><b>원본 status:</b> ${escapeHtml(String(r.originalStatus))} → <b>테스트 status:</b> ${escapeHtml(String(r.status))} ${escapeHtml(r.statusText || '')} ${verdict}</div>
+    <div><b>소요 시간:</b> ${escapeHtml(String(r.time))}ms · <b>본문:</b> ${escapeHtml(String(r.bodyLen))} bytes</div>
+    <div class="auth-body-preview"><b>본문 미리보기:</b> ${escapeHtml(r.bodyPreview)}${r.bodyLen > 200 ? '…' : ''}</div>
   </div>`;
 }
 
@@ -6236,7 +6158,7 @@ function renderDetection(req) {
     tabBtn.classList.add('has-findings');
     tabBtn.dataset.count = results.length;
   }
-  // Group by category, then sort categories by max severity within
+  // 카테고리별 그룹, 그 다음 그룹 내 최대 severity로 카테고리 정렬
   const sevOrder = { high: 0, medium: 1, low: 2, info: 3 };
   const groups = {};
   results.forEach(f => {
@@ -6275,9 +6197,9 @@ function renderDetection(req) {
   }
   container.innerHTML = html;
 
-  // Click on group header OR any finding toggles the category
-  // description for that group. Clicks inside the description itself
-  // are ignored so users can copy text from the guidance.
+  // 그룹 헤더 또는 안의 finding 클릭 → 그 그룹의 카테고리 description
+  // 토글. description 자체 안의 클릭은 무시 → 사용자가 안내에서 텍스트
+  // 복사 가능하도록.
   container.addEventListener('click', _onDetectionGroupClick, { once: false });
 }
 
@@ -6292,17 +6214,16 @@ function _onDetectionGroupClick(e) {
   if (toggle) toggle.textContent = desc.classList.contains('hidden') ? '▾' : '▴';
 }
 
-// Attribute-safe HTML escape (over and above escapeHtml since attrs
-// also need to handle the quote character).
+// 속성에 안전한 HTML escape (escapeHtml 이상 — 속성은 quote 문자도
+// 처리해야 함).
 function escapeAttr(str) {
   if (str == null) return '';
   return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// Recursive JSON diff used by the Message tab's replay-result diff.
-// Walks both trees in lock-step and emits add / remove / changed
-// rows. Reused from the older Replay tab — same structure renders
-// inside the new replay diff badge.
+// Message 탭의 replay 결과 diff가 사용하는 재귀 JSON diff. 두 트리를
+// 동기적으로 walk하면서 add/remove/changed 행 emit. 예전 Replay 탭에서
+// 재사용 — 같은 구조가 새 replay diff 배지 안에 렌더.
 function generateJsonDiff(orig, curr, path) {
   path = path || '';
   const lines = [];
@@ -6333,7 +6254,7 @@ function generateJsonDiff(orig, curr, path) {
 
 
 // ============================================================
-// 1c. Intercept (Proxy Mode via Native Messaging + local MITM)
+// 1c. Intercept (Native Messaging + 로컬 MITM 통한 Proxy 모드)
 // ============================================================
 
 let interceptActive = false;
@@ -6342,12 +6263,11 @@ const respQueue = [];
 const interceptLog = [];
 let selectedReqId = null;
 let selectedRespId = null;
-let activeSide = 'req'; // 'req' or 'resp' — shortcut target
+let activeSide = 'req'; // 'req' 또는 'resp' — 단축키 대상
 
-// Request IDs that the user forwarded from the request side and is
-// now waiting on a response for. When the matching response intercept
-// fires we auto-switch to the response side so the user can act on it
-// without manually clicking the title.
+// 사용자가 request side에서 forward하고 응답을 기다리는 중인 request
+// ID. 매칭 response intercept가 발화하면 자동으로 response side로
+// 전환 → 사용자가 제목을 수동 클릭하지 않고도 처리 가능.
 const _icptExpectingResp = new Set();
 let interceptBypassRegex = null;
 
@@ -6364,11 +6284,10 @@ const respPlaceholder = document.getElementById('icpt-resp-placeholder');
 const interceptTabBtn = document.querySelector('.intercept-tab');
 const icptProxyStatus = document.getElementById('icpt-proxy-status');
 
-// Switch activeSide via the side header only — clicking inside the
-// editor body would otherwise activate the side AND focus the
-// textarea, so a follow-up shortcut key (F / G / D / R / A / Q) gets
-// typed into the body instead of triggering the action. Limiting the
-// trigger to the header keeps activation a deliberate gesture.
+// activeSide 전환은 side header로만 — 에디터 본체 안 클릭은 side를
+// 활성화하면서 동시에 textarea에 focus되어 후속 단축키(F/G/D/R/A/Q)가
+// action 트리거 대신 본체에 타이핑됨. 트리거를 header로 제한하면
+// 활성화가 의도적인 제스처로 유지됨.
 function setActiveIcptSide(side) {
   if (side !== 'req' && side !== 'resp') return;
   activeSide = side;
@@ -6382,16 +6301,16 @@ document.querySelectorAll('.icpt-side-header').forEach(header => {
     if (side) setActiveIcptSide(side);
   });
 });
-// Initial active side
+// 초기 active side
 setActiveIcptSide('req');
 
-// Background Service Worker port connection (auto-reconnect)
+// Background Service Worker port 연결 (자동 재연결)
 let bgPort = null;
-// One-shot kill switch. When the extension is reloaded/updated/disabled
-// while this DevTools panel is still open, every chrome.runtime.* call
-// from the now-orphaned panel throws "Extension context invalidated".
-// Retrying would spin forever and flood the extension error log; close
-// + reopen DevTools is the only way to recover the panel.
+// 일회성 kill switch. 이 DevTools 패널이 열린 채로 확장이
+// reload/update/disable되면, orphaned 패널의 모든 chrome.runtime.*
+// 호출이 "Extension context invalidated"를 throw. 재시도하면 무한히
+// 돌면서 확장 에러 로그를 flood; 패널 복구 유일한 방법은 DevTools
+// 닫고 다시 열기.
 let bgReconnectStopped = false;
 
 function isContextInvalidated(err) {
@@ -6399,11 +6318,10 @@ function isContextInvalidated(err) {
   return /Extension context invalidated|context.*invalidated/i.test(msg);
 }
 
-// Storage writes from the panel after the extension has been reloaded
-// throw the same "Extension context invalidated" as chrome.runtime.*.
-// Wrap them so they no-op silently in that state (and flip the kill
-// switch if they ever do throw, just in case the runtime detector
-// hasn't caught it yet).
+// 확장이 reload된 뒤 패널에서의 storage write도 chrome.runtime.*
+// 와 같은 "Extension context invalidated"를 throw. 그 상태에서 silently
+// no-op하도록 wrap (그리고 throw하면 kill switch도 뒤집어서 runtime
+// 탐지기가 아직 못 잡은 경우에도 대비).
 function safeStorageSet(obj) {
   if (bgReconnectStopped) return;
   if (!chrome.storage || !chrome.storage.local) return;
@@ -6431,15 +6349,14 @@ function connectBgPort() {
   } catch (err) {
     if (isContextInvalidated(err)) {
       bgReconnectStopped = true;
-      // Use console.log (not warn/error) so it doesn't surface on the
-      // chrome://extensions error page — context invalidation is a
-      // routine consequence of reloading the extension while DevTools
-      // is open, and the user's only recovery is close + reopen
-      // DevTools, which they're about to do anyway.
+      // console.log 사용(warn/error 아님) → chrome://extensions 에러
+      // 페이지에 노출 안 됨. context invalidation은 DevTools가 열린
+      // 채로 확장 reload 시의 일상적 결과고, 사용자 복구는 DevTools
+      // 닫고 다시 열기뿐 — 어차피 그렇게 할 거라.
       console.log('[DevTools++] Extension context invalidated. Close and reopen DevTools to reconnect.');
       return;
     }
-    // Unknown error — back off and try once more.
+    // 알 수 없는 에러 — back off 후 한 번 더 시도.
     bgPort = null;
     setTimeout(connectBgPort, 500);
     return;
@@ -6454,8 +6371,7 @@ function connectBgPort() {
       bgReconnectStopped = true;
       return;
     }
-    // Service Worker idle-restart is the common case — wait briefly
-    // and reconnect.
+    // Service Worker idle-restart이 흔한 케이스 — 잠깐 기다렸다 재연결.
     setTimeout(connectBgPort, 500);
   });
 }
@@ -6531,8 +6447,8 @@ function handleBgMessage(msg) {
       break;
 
     case 'request_timeout': {
-      // Pull method/url from the captured snapshot so the log row
-      // shows what timed out instead of an empty / / time string.
+      // 캡처된 스냅샷에서 method/url 가져오기 → log 행이 빈
+      // / / time 문자열 대신 timeout된 항목을 표시.
       const cap = capturedRequests.get(msg.id);
       upsertInterceptLog(msg.id, {
         action: 'timeout',
@@ -6561,8 +6477,8 @@ function handleBgMessage(msg) {
 connectBgPort();
 
 function updateProxyStatus(state, text) {
-  // Strip the redundant "Proxy: " prefix used by callers — the pill already
-  // sits next to the Intercept toggle, so its context is clear.
+  // caller가 쓰는 중복된 "Proxy: " prefix 제거 — pill이 이미 Intercept
+  // 토글 옆에 있어서 맥락이 분명함.
   icptProxyStatus.textContent = text.replace(/^Proxy:\s*/, '') || text;
   icptProxyStatus.classList.remove('status-active', 'status-warn', 'status-error');
   if (state === 'active') icptProxyStatus.classList.add('status-active');
@@ -6585,35 +6501,35 @@ function showSetupHint() {
   if (respPlaceholder) respPlaceholder.innerHTML = hint;
 }
 
-// Convert wildcard URL filter to regex.
-// Patterns are matched against host+pathname only (no protocol, no query/hash),
-// so query-string contents (e.g. tracker payloads carrying the page URL) cannot
-// pollute the match.
-// Input:  "*.site.com, api.example.com/v1/*"
-// Output: "(^[^/]*\.site\.com)|(api\.example\.com/v1/.*)" (regex string)
+// 와일드카드 URL 필터를 regex로 변환.
+// 패턴은 host+pathname에 대해서만 매칭(프로토콜 없음, query/hash 없음)
+// → 쿼리 스트링 내용(예: 페이지 URL을 담은 tracker 페이로드)이 매치를
+// 오염시킬 수 없음.
+// 입력:  "*.site.com, api.example.com/v1/*"
+// 출력:  "(^[^/]*\.site\.com)|(api\.example\.com/v1/.*)" (regex 문자열)
 function urlFilterToRegex(input) {
   if (!input) return '';
   const patterns = input.split(',').map(p => p.trim()).filter(Boolean);
   if (patterns.length === 0) return '';
   const regexParts = patterns.map(p => {
-    // Wildcard(*) → placeholder substitution, escape special chars, restore
+    // 와일드카드(*) → 플레이스홀더 치환, 특수문자 escape, 복원
     const PH = '\x00WILD\x00';
     let r = p.replace(/\*/g, PH);
-    r = r.replace(/[.+?^${}()|[\]\\]/g, '\\$&'); // Escape regex special chars
-    r = r.replace(new RegExp(PH.replace(/\x00/g, '\\x00'), 'g'), '.*'); // Placeholder → .*
-    // *.domain pattern: anchor to start of host (no protocol — we strip it before matching)
+    r = r.replace(/[.+?^${}()|[\]\\]/g, '\\$&'); // regex 특수문자 escape
+    r = r.replace(new RegExp(PH.replace(/\x00/g, '\\x00'), 'g'), '.*'); // 플레이스홀더 → .*
+    // *.domain 패턴: host 시작에 anchor (프로토콜 없음 — 매칭 전에 제거함)
     if (p.startsWith('*.')) {
-      r = '^[^/]*' + r.slice(2); // Remove leading .* and replace with [^/]*
+      r = '^[^/]*' + r.slice(2); // leading .* 제거 후 [^/]*로 교체
     }
     return '(' + r + ')';
   });
   return regexParts.join('|');
 }
 
-// Strip protocol/query/hash so the filter only sees host + pathname.
-// host includes the port when one is present; the noPort variant
-// drops it. Both forms feed inGlobalScope so a port-less pattern can
-// still match URLs that carry a non-standard port.
+// protocol/query/hash 제거 → 필터가 host + pathname만 보도록.
+// host는 port가 있으면 포함; noPort 변종은 port 제거. 두 형태 모두
+// inGlobalScope에 공급되어 port 없는 패턴도 비표준 port를 가진 URL에
+// 매칭 가능.
 function _filterTarget(url) {
   try {
     const u = new URL(url);
@@ -6632,27 +6548,26 @@ function _filterTargetNoPort(url) {
   }
 }
 
-// Global scope — single source of truth for URL filtering across Site Map,
-// Network monitoring, and Intercept. Applied at collection time: out-of-scope
-// requests never enter Site Map / Network lists, and the proxy bypasses them
-// for Intercept. Empty scope = everything in scope.
-// Only updated via applyGlobalScope() (Apply button / Enter / startIntercept).
+// Global scope — Site Map, Network 모니터링, Intercept 전반에 걸친
+// URL 필터링의 single source of truth. 수집 시점에 적용: 스코프 밖
+// 요청은 Site Map/Network 리스트에 들어가지 않고, 프록시는 Intercept
+// 용으로 bypass. 빈 스코프 = 전 범위 in scope.
+// applyGlobalScope()(Apply 버튼/Enter/startIntercept)로만 업데이트.
 let globalScope = { input: '', regex: null };
 
 function inGlobalScope(url) {
   if (!globalScope.regex) return true;
   const withPort = _filterTarget(url);
   if (globalScope.regex.test(withPort)) return true;
-  // Retry without the port so a pattern like "*.site.com/*" can match
-  // URLs that happen to carry a non-standard port (site.com:48081).
-  // Patterns that explicitly include ":<port>" still match through the
-  // first pass on the with-port form.
+  // port 없이 재시도 → "*.site.com/*" 같은 패턴이 비표준 port를 가진
+  // URL(site.com:48081)에도 매칭. ":<port>"를 명시적으로 포함하는
+  // 패턴은 with-port 형태에서 첫 번째 패스로 여전히 매칭.
   const noPort = _filterTargetNoPort(url);
   return noPort !== withPort && globalScope.regex.test(noPort);
 }
 
-// Build regex from input, update the scope, push to proxy (if intercepting),
-// and refresh any views that depend on the scope.
+// 입력에서 regex 빌드, scope 업데이트, (intercept 중이면) proxy에
+// push, 그리고 scope에 의존하는 뷰들 refresh.
 function applyGlobalScope() {
   const input = document.getElementById('global-scope-input').value.trim();
   const pattern = urlFilterToRegex(input);
@@ -6672,27 +6587,27 @@ function applyGlobalScope() {
   }
   refreshGlobalScopeButtonState();
   flashGlobalScopeApply();
-  // Scope is also a view filter — re-render Network list + tree so
-  // already-captured data reflects the new pattern immediately.
-  // matchesSitemapFilters consults inGlobalScope via the same path.
+  // Scope는 view 필터이기도 함 — Network 리스트와 트리 재렌더해서
+  // 이미 캡처된 데이터가 새 패턴을 즉시 반영하도록.
+  // matchesSitemapFilters는 같은 경로로 inGlobalScope를 참조.
   renderNetworkTable();
-  // Selection persists across Scope changes, but the master checkbox's
-  // visible-vs-selected ratio depends on which rows are visible now.
+  // selection은 Scope 변경 사이에 지속되지만 master 체크박스의
+  // visible-vs-selected 비율은 지금 보이는 행에 따라 달라짐.
   updateSelectionUI();
   renderSitemapTree();
-  // Search ANDs with Scope, so a Scope change can flip requests in or
-  // out of the matched set.
+  // 검색은 Scope와 AND, 따라서 Scope 변경이 매칭 집합에서 요청을 in/out
+  // 으로 뒤집을 수 있음.
   if (searchTerm) {
     recomputeSearchMatches();
     refreshAllRowDots();
     refreshSearchUI();
   }
-  // Persist the last-applied pattern so the action popup can show it
-  // even when DevTools is closed.
+  // 마지막 적용 패턴을 persist → DevTools가 닫혀 있어도 action popup이
+  // 표시할 수 있도록.
   safeStorageSet({ globalScopeInput: input });
 }
 
-// Toggle dirty highlight on the Apply button when input != applied value.
+// 입력값과 적용값이 다르면 Apply 버튼에 dirty 강조 토글.
 function refreshGlobalScopeButtonState() {
   const current = document.getElementById('global-scope-input').value.trim();
   const btn = document.getElementById('global-scope-apply');
@@ -6703,14 +6618,14 @@ function refreshGlobalScopeButtonState() {
   }
 }
 
-// Brief green flash to confirm Apply succeeded.
+// Apply 성공 확인용 짧은 초록 flash.
 function flashGlobalScopeApply() {
   const btn = document.getElementById('global-scope-apply');
   btn.classList.add('scope-apply-flash');
   setTimeout(() => btn.classList.remove('scope-apply-flash'), 350);
 }
 
-// Global scope bar event wiring
+// Global scope 바 이벤트 wire up
 document.getElementById('global-scope-apply').addEventListener('click', applyGlobalScope);
 document.getElementById('global-scope-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); applyGlobalScope(); }
@@ -6721,15 +6636,15 @@ document.getElementById('global-scope-clear').addEventListener('click', () => {
   applyGlobalScope();
 });
 
-// Apply an arbitrary scope pattern (used by the tree's Set Scope dropdown).
+// 임의의 scope 패턴 적용 (트리의 Set Scope 드롭다운이 사용).
 function applyScopePattern(pattern) {
   document.getElementById('global-scope-input').value = pattern;
   applyGlobalScope();
 }
 
-// Wildcard form of a host: drop the leftmost label for 3+ part hosts
-// (www.site.com -> *.site.com), or prepend *. for 2-part hosts
-// (site.com -> *.site.com). Returns null for IPs / single-label / IPv6.
+// host의 와일드카드 형태: 3+ part host는 가장 왼쪽 label 제거
+// (www.site.com → *.site.com), 또는 2-part host는 *. prepend
+// (site.com → *.site.com). IP/single-label/IPv6는 null 반환.
 function wildcardHost(host) {
   if (!host) return null;
   if (/^[\d.]+$/.test(host)) return null;
@@ -6740,12 +6655,11 @@ function wildcardHost(host) {
   return `*.${parts.slice(1).join('.')}`;
 }
 
-// Handle intercepted request from the proxy
+// 프록시에서 인터셉트된 요청 처리
 function handleProxyInterceptedRequest(msg) {
-  // Snapshot the request the moment it arrives, before any bypass
-  // logic. Stored so the log strip can re-display the request / pair
-  // after it's been resolved. Even bypassed requests get captured so
-  // a "bypassed" log row stays inspectable.
+  // 도착 즉시 어떤 bypass 로직 전에 요청 스냅샷. log strip이 resolve된
+  // 후에 요청/페어를 재표시할 수 있도록 저장. bypass된 요청도 캡처되어
+  // "bypassed" log 행이 inspectable 유지.
   capturedRequests.set(msg.id, {
     method: msg.method,
     url: msg.url,
@@ -6756,35 +6670,34 @@ function handleProxyInterceptedRequest(msg) {
     const oldest = capturedRequests.keys().next().value;
     capturedRequests.delete(oldest);
   }
-  // A new live intercept means whatever captured pair was on display
-  // is now stale — drop the viewing flag so the editor's action
-  // buttons re-enable.
+  // 새 live intercept = 표시 중이던 captured pair는 이제 stale —
+  // viewing 플래그를 drop해서 에디터의 action 버튼이 재활성화되도록.
   if (viewingCapturedId) _clearCapturedViewing();
 
   const methodFilter = document.getElementById('icpt-method-filter').value;
 
-  // Method filter
+  // Method 필터
   if (methodFilter && msg.method !== methodFilter) {
     sendInterceptDecision(msg.id, { action: 'forward' });
     upsertInterceptLog(msg.id, { action: 'bypassed', method: msg.method, url: msg.url });
     return;
   }
-  // Global scope gate (defense in depth — the proxy already filters server-side
-  // via update_config, but catches any races where a request is dispatched
-  // before the config update lands)
+  // Global scope 게이트 (defense in depth — 프록시가 update_config를
+  // 통해 서버 측에서 이미 필터링하지만, config 업데이트가 도착하기
+  // 전에 dispatch된 race는 여기서 잡음)
   if (!inGlobalScope(msg.url)) {
     sendInterceptDecision(msg.id, { action: 'forward' });
     upsertInterceptLog(msg.id, { action: 'bypassed', method: msg.method, url: msg.url });
     return;
   }
-  // Bypass rules
+  // Bypass 룰
   if (interceptBypassRegex && interceptBypassRegex.test(msg.url)) {
     sendInterceptDecision(msg.id, { action: 'forward' });
     upsertInterceptLog(msg.id, { action: 'bypassed', method: msg.method, url: msg.url });
     return;
   }
 
-  // Add to request queue
+  // request 큐에 추가
   const newItem = {
     id: msg.id,
     reqType: 'proxy',
@@ -6808,13 +6721,13 @@ function handleResponseIntercepted(msg) {
     body = JSON.stringify(parsed, null, 2);
   } catch {}
 
-  // Same reasoning as the request side: a new live intercept means
-  // any captured-pair view is now stale.
+  // request side와 같은 이유: 새 live intercept = captured-pair 뷰는
+  // 이제 stale.
   if (viewingCapturedId) _clearCapturedViewing();
 
-  // Add to response queue. requestId is the original request id (no
-  // _resp suffix) — we keep it on the item so the response decision
-  // can update the right log row that the request side opened.
+  // response 큐에 추가. requestId는 원본 request id (_resp suffix
+  // 없음) — item에 보관해서 response decision이 request side가 연
+  // 올바른 log 행을 업데이트할 수 있도록.
   const newItem = {
     id: msg.id,
     requestId: msg.requestId || msg.id.replace(/_resp$/, ''),
@@ -6826,12 +6739,11 @@ function handleResponseIntercepted(msg) {
     bodyTruncated: msg.bodyTruncated,
   };
   respQueue.push(newItem);
-  // Auto-activate the response side and select this item when the
-  // user just forwarded the matching request — they pressed F (or G)
-  // on the request side and the response is what they want to act on
-  // next, so pulling focus here saves a click. Otherwise (response
-  // for a request someone else forwarded, or a different selection)
-  // honor whatever the user is currently doing.
+  // 사용자가 방금 매칭 요청을 forward한 경우 response side를 자동
+  // 활성화하고 이 item 선택 — request side에서 F(또는 G)를 눌렀고
+  // 다음에 작업하고 싶은 게 응답이라 여기로 focus 끌어당기면 클릭
+  // 한 번 절약. 그 외(다른 누군가 forward한 요청의 응답, 또는 다른
+  // selection)에서는 사용자가 현재 하는 것을 존중.
   const expected = _icptExpectingResp.has(newItem.requestId);
   if (expected) {
     _icptExpectingResp.delete(newItem.requestId);
@@ -6845,7 +6757,7 @@ function handleResponseIntercepted(msg) {
   renderRespQueue();
 }
 
-// Editor tab switching (scoped by side)
+// Editor 탭 전환 (side로 scope)
 document.querySelectorAll('.icpt-editor-tabs').forEach(tabBar => {
   tabBar.querySelectorAll('.icpt-ed-tab').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -6863,21 +6775,20 @@ icptToggleBtn.addEventListener('click', () => {
   if (interceptActive) stopIntercept(); else startIntercept();
 });
 
-// Request side buttons
+// Request side 버튼
 document.getElementById('icpt-req-forward').addEventListener('click', () => { activeSide = 'req'; forwardSelected(false); });
 document.getElementById('icpt-req-forward-modified').addEventListener('click', () => { activeSide = 'req'; forwardSelected(true); });
 document.getElementById('icpt-req-drop').addEventListener('click', () => { activeSide = 'req'; dropSelected(); });
 document.getElementById('icpt-req-mock').addEventListener('click', () => { activeSide = 'req'; mockResponseSelected(); });
 
-// Response side buttons
+// Response side 버튼
 document.getElementById('icpt-resp-forward').addEventListener('click', () => { activeSide = 'resp'; forwardSelected(false); });
 document.getElementById('icpt-resp-forward-modified').addEventListener('click', () => { activeSide = 'resp'; forwardSelected(true); });
 document.getElementById('icpt-resp-drop').addEventListener('click', () => { activeSide = 'resp'; dropSelected(); });
 
-// Format toggle (Raw / Pretty) — reformats the body portion of the
-// raw textarea in place. Headers stay unchanged. Switching after the
-// user has edited the body is OK; if the body isn't valid JSON the
-// toggle is a no-op rather than a destructive parse error.
+// Format 토글 (Raw / Pretty) — raw textarea의 body 부분을 in-place
+// 재포맷. headers는 그대로. 사용자가 body를 편집한 뒤 전환해도 괜찮음;
+// body가 유효 JSON이 아니면 destructive parse error 대신 no-op.
 document.querySelectorAll('.icpt-format-toggle').forEach(group => {
   const target = group.dataset.target; // 'req' | 'resp'
   group.querySelectorAll('.icpt-fmt-btn').forEach(btn => {
@@ -6886,15 +6797,14 @@ document.querySelectorAll('.icpt-format-toggle').forEach(group => {
         b.classList.toggle('active', b === btn);
       });
       const fmt = btn.dataset.fmt;
-      // Apply to whichever editable raw textarea is on this side.
-      // Request side has Edit + Mock — toggle whichever pane is
-      // active (the user only sees one at a time).
+      // 이 side의 편집 가능 raw textarea에 적용. Request side는 Edit
+      // + Mock — 활성화된 pane을 토글(사용자는 한 번에 하나만 봄).
       if (target === 'req') {
         const activePane = reqEditorContent.querySelector('.icpt-ed-pane.active');
         const ta = activePane ? activePane.querySelector('textarea') : null;
         if (ta) {
           ta.value = _formatIcptRaw(ta.value, fmt);
-          // ta.id is icpt-{req|mock}-raw → derive sync key from it.
+          // ta.id는 icpt-{req|mock}-raw → 거기서 sync key 도출.
           _syncIcptRawDisplay(ta.id.replace(/^icpt-(.+)-raw$/, '$1'));
         }
       } else {
@@ -6908,7 +6818,7 @@ document.querySelectorAll('.icpt-format-toggle').forEach(group => {
   });
 });
 
-// Common buttons
+// 공통 버튼
 document.getElementById('icpt-forward-all').addEventListener('click', forwardAll);
 document.getElementById('icpt-drop-all').addEventListener('click', dropAll);
 document.getElementById('icpt-clear-log').addEventListener('click', () => {
@@ -6920,13 +6830,13 @@ document.getElementById('icpt-clear-log').addEventListener('click', () => {
 });
 document.getElementById('icpt-bypass-apply').addEventListener('click', applyBypassRule);
 
-// Toggle the auto-forward / bypass rules row (collapsed by default).
+// auto-forward / bypass rules 행 토글 (기본 접힘).
 document.getElementById('icpt-rules-toggle').addEventListener('click', () => {
   const bar = document.querySelector('.icpt-rules-bar');
   bar.classList.toggle('hidden');
 });
 
-// Intercept keyboard shortcuts (F/G/D/R/A/Q) — activeSide based
+// Intercept 키보드 단축키 (F/G/D/R/A/Q) — activeSide 기반
 document.addEventListener('keydown', (e) => {
   const interceptSection = document.getElementById('intercept');
   if (!interceptSection || !interceptSection.classList.contains('active')) return;
@@ -6944,23 +6854,23 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// Auto-apply on extension checkbox change
+// 확장자 체크박스 변경 시 자동 적용
 document.querySelectorAll('.icpt-ext-check input[data-ext]').forEach(cb => {
   cb.addEventListener('change', applyBypassRule);
 });
 
 function buildBypassPattern() {
-  // Collect checked extensions
+  // 체크된 확장자 수집
   const exts = [];
   document.querySelectorAll('.icpt-ext-check input[data-ext]:checked').forEach(cb => {
     exts.push(cb.dataset.ext);
   });
-  // Additional user regex
+  // 사용자 추가 regex
   const userVal = document.getElementById('icpt-bypass-input').value.trim();
 
   const parts = [];
   if (exts.length > 0) {
-    // woff → woff|woff2 conversion
+    // woff → woff|woff2 변환
     const extPatterns = exts.map(e => e === 'woff' ? 'woff2?' : e === 'jpg' ? 'jpe?g' : e);
     parts.push('\\.(' + extPatterns.join('|') + ')(\\?|$)');
   }
@@ -6986,9 +6896,9 @@ function applyBypassRule() {
 }
 
 function startIntercept() {
-  // Apply global scope before setting interceptActive — applyGlobalScope()
-  // skips the update_config push when interceptActive is false, which is
-  // correct here because we send the scope in the intercept_on config below.
+  // interceptActive 설정 전에 global scope 적용 — applyGlobalScope()는
+  // interceptActive가 false면 update_config push를 skip하는데, 아래
+  // intercept_on config로 scope를 보내므로 여기서는 그 동작이 맞음.
   applyGlobalScope();
   applyBypassRule();
 
@@ -7013,7 +6923,7 @@ function startIntercept() {
   });
 }
 
-// Real-time update when Response checkbox changes
+// Response 체크박스 변경 시 실시간 업데이트
 document.getElementById('icpt-resp').addEventListener('change', (e) => {
   if (interceptActive) {
     sendToBg({
@@ -7023,8 +6933,8 @@ document.getElementById('icpt-resp').addEventListener('change', (e) => {
   }
 });
 
-// Method filter syncs to proxy immediately on change. Global scope requires
-// explicit Apply (button or Enter) so the user always knows what's active.
+// Method 필터는 변경 즉시 프록시와 동기화. Global scope는 명시적 Apply
+// (버튼 또는 Enter)가 필요 → 사용자가 무엇이 활성인지 항상 인지하도록.
 document.getElementById('icpt-method-filter').addEventListener('change', () => {
   if (interceptActive) {
     sendToBg({
@@ -7043,7 +6953,7 @@ function stopIntercept() {
   icptToggleBtn.className = 'btn btn-intercept-off';
   interceptTabBtn.classList.remove('intercepting');
 
-  // Forward all remaining queue items
+  // 남은 모든 큐 아이템 forward
   forwardAll();
 
   sendToBg({ type: 'intercept_off' });
@@ -7054,7 +6964,7 @@ function sendInterceptDecision(id, decision) {
   sendToBg({ type: 'decision', id, ...decision });
 }
 
-// ---- Queue Rendering ----
+// ---- 큐 렌더링 ----
 function updateBadges() {
   reqBadge.textContent = reqQueue.length;
   respBadge.textContent = respQueue.length;
@@ -7074,8 +6984,8 @@ function renderQueueItems(queue, el, selectedId, side) {
 
   el.querySelectorAll('.icpt-queue-item').forEach(el2 => {
     el2.addEventListener('click', () => {
-      // User picked a live queue item — drop any captured-view state
-      // so the action buttons re-enable for the live intercept.
+      // 사용자가 live 큐 아이템 선택 — 모든 captured-view 상태를
+      // 드롭해서 action 버튼이 live intercept용으로 재활성화되도록.
       if (viewingCapturedId) _clearCapturedViewing();
       const idx = parseInt(el2.dataset.icptIdx);
       if (side === 'req') {
@@ -7109,9 +7019,9 @@ function renderRespQueue() {
   renderQueueItems(respQueue, respQueueEl, selectedRespId, 'resp');
 }
 
-// ---- Editor Display ----
-// Build a raw HTTP request string from a queue item. Uses HTTP/1.1 since
-// browser→proxy is always h1.1 regardless of origin's wire protocol.
+// ---- Editor 표시 ----
+// 큐 item에서 raw HTTP request 문자열 빌드. HTTP/1.1 사용 — origin의
+// wire 프로토콜과 무관하게 browser→proxy는 항상 h1.1.
 function _buildIcptRawRequest(item) {
   const method = item.method || 'GET';
   let path = '/';
@@ -7142,8 +7052,8 @@ function _buildIcptRawResponse(item) {
   return lines.join('\n') + '\n\n' + (item.body || '');
 }
 
-// Parse raw HTTP request text → { method, url, headers, body }. URL is
-// resolved against `fallbackUrl` so users only need to edit the path.
+// raw HTTP request 텍스트 → { method, url, headers, body } 파싱.
+// URL은 `fallbackUrl`에 대해 resolve → 사용자는 path만 편집.
 function _parseIcptRawRequest(text, fallbackUrl) {
   if (!text) return null;
   const blank = text.indexOf('\n\n');
@@ -7168,7 +7078,7 @@ function _parseIcptRawRequest(text, fallbackUrl) {
   return { method, url, headers, body };
 }
 
-// Parse raw HTTP response text → { statusCode, headers, body }.
+// raw HTTP response 텍스트 → { statusCode, headers, body } 파싱.
 function _parseIcptRawResponse(text) {
   if (!text) return null;
   const blank = text.indexOf('\n\n');
@@ -7189,9 +7099,8 @@ function _parseIcptRawResponse(text) {
   return { statusCode, headers, body };
 }
 
-// Apply pretty / raw formatting to the body portion of an HTTP message,
-// leaving headers untouched. JSON is the only target — anything else
-// passes through.
+// HTTP 메시지의 body 부분에 pretty/raw 포매팅 적용, headers는 그대로.
+// JSON만 대상 — 다른 건 통과.
 function _formatIcptRaw(text, mode) {
   if (!text) return text;
   const blank = text.indexOf('\n\n');
@@ -7208,30 +7117,28 @@ function _formatIcptRaw(text, mode) {
   } catch { return text; }
 }
 
-// Push the textarea's current value into the colored <pre> overlay so
-// the user sees the syntax-highlighted render. Reuses _renderRawHtml
-// (the same colorizer Monitor's Message tab uses), keeping the visual
-// language consistent across the two surfaces.
+// textarea의 현재 값을 컬러 <pre> 오버레이로 push → 사용자가 syntax
+// highlighted 렌더를 봄. _renderRawHtml(Monitor의 Message 탭이 쓰는
+// 동일 colorizer) 재사용 → 두 surface 사이에 시각 언어 일관성 유지.
 function _syncIcptRawDisplay(name) {
   const ta = document.getElementById(`icpt-${name}-raw`);
   const pre = document.getElementById(`icpt-${name}-raw-display`);
   if (!ta || !pre) return;
-  // Append a trailing space when the text ends with a newline so the
-  // pre allocates a line for it — keeps the textarea's last-line
-  // height aligned with the pre below it.
+  // 텍스트가 newline으로 끝날 때 trailing space 추가 → pre가 그 줄
+  // 자리를 할당하도록. textarea의 마지막 줄 높이가 아래 pre와 정렬
+  // 유지되게 함.
   const v = ta.value;
   const display = v.endsWith('\n') ? v + ' ' : v;
   pre.innerHTML = _renderRawHtml(display);
-  // Keep the colored render aligned with the textarea's scroll
-  // position so the visible character at any offset overlaps with
-  // its colored counterpart.
+  // 컬러 렌더를 textarea의 스크롤 위치와 정렬 유지 → 어떤 offset의
+  // 보이는 문자도 컬러 카운터파트와 겹치도록.
   pre.scrollTop = ta.scrollTop;
   pre.scrollLeft = ta.scrollLeft;
 }
 
-// Attached once at script init. Each Intercept raw editor wraps a
-// transparent textarea over a colored <pre>; input + scroll on the
-// textarea drive the pre to mirror it.
+// 스크립트 init 시 한 번만 attach. 각 Intercept raw 에디터는 컬러
+// <pre> 위에 투명 textarea를 wrap; textarea의 input + scroll이 pre를
+// 미러하도록 드라이브.
 ['req', 'resp', 'mock'].forEach(name => {
   const ta = document.getElementById(`icpt-${name}-raw`);
   const pre = document.getElementById(`icpt-${name}-raw-display`);
@@ -7248,17 +7155,17 @@ function showReqEditor(item) {
   reqEditorContent.classList.remove('hidden');
   document.getElementById('icpt-req-raw').value = _buildIcptRawRequest(item);
   _syncIcptRawDisplay('req');
-  // Reset format toggle to Raw on each new item.
+  // 새 아이템마다 Format 토글을 Raw로 reset.
   reqEditorContent.querySelectorAll('.icpt-format-toggle .icpt-fmt-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.fmt === 'raw');
   });
-  // Default Mock textarea — user-editable starting point.
+  // Mock textarea 기본값 — 사용자 편집 가능 시작점.
   const mockTa = document.getElementById('icpt-mock-raw');
   if (!mockTa.value) {
     mockTa.value = 'HTTP/1.1 200 OK\nContent-Type: application/json\n\n{}';
   }
   _syncIcptRawDisplay('mock');
-  // Switch to Edit tab
+  // Edit 탭으로 전환
   reqEditorContent.querySelectorAll('.icpt-ed-tab').forEach(t => {
     t.classList.toggle('active', t.dataset.ictab === 'req-edit');
   });
@@ -7281,7 +7188,7 @@ function hideReqEditor() {
   selectedReqId = null;
   reqEditorContent.classList.add('hidden');
   reqPlaceholder.style.display = '';
-  // Wipe Mock so the next selection gets the default seed
+  // Mock wipe → 다음 선택이 기본 seed를 받도록
   const mockTa = document.getElementById('icpt-mock-raw');
   if (mockTa) mockTa.value = '';
   _syncIcptRawDisplay('mock');
@@ -7293,7 +7200,7 @@ function hideRespEditor() {
   respPlaceholder.style.display = '';
 }
 
-// ---- Queue Operations ----
+// ---- 큐 연산 ----
 function removeFromReqQueue(id) {
   const idx = reqQueue.findIndex(q => q.id === id);
   if (idx >= 0) reqQueue.splice(idx, 1);
@@ -7314,7 +7221,7 @@ function removeFromRespQueue(id) {
   renderRespQueue();
 }
 
-// ---- Actions (based on activeSide) ----
+// ---- Action (activeSide 기반) ----
 function forwardSelected(modified) {
   if (activeSide === 'req') {
     const item = reqQueue.find(q => q.id === selectedReqId);
@@ -7338,10 +7245,9 @@ function forwardSelected(modified) {
       sendInterceptDecision(item.id, { action: 'forward' });
       upsertInterceptLog(item.id, { action: 'forwarded', method: item.method, url: item.url });
     }
-    // Mark this request so that when the response intercept fires we
-    // can auto-switch the active side. Both Forward and Forward
-    // Modified produce a wire-level request we expect a response for;
-    // Drop / Mock don't, so they skip this.
+    // 이 요청을 마킹 → response intercept가 발화할 때 active side를
+    // 자동 전환 가능. Forward와 Forward Modified 둘 다 응답을 기대하는
+    // wire-level 요청을 만들어냄; Drop/Mock은 그렇지 않으므로 skip.
     _icptExpectingResp.add(item.id);
     removeFromReqQueue(item.id);
   } else {
@@ -7372,11 +7278,10 @@ function forwardSelected(modified) {
       upsertInterceptLog(reqId, { responseAction: 'forwarded', responseStatus: item.statusCode });
     }
     removeFromRespQueue(item.id);
-    // After resolving a response, swing focus back to the request side
-    // when something's waiting there — completes the alternating
-    // request ↔ response loop. If the request queue is empty we leave
-    // the active side alone so the next response (if any was queued)
-    // can stay in focus.
+    // response를 resolve한 후, request side에 대기 중인 게 있으면
+    // 그쪽으로 focus 전환 — 교대하는 request ↔ response 루프 완성.
+    // request 큐가 비어 있으면 active side를 그대로 두고, 다음 response
+    // (큐에 있다면)가 focus 유지하도록.
     if (reqQueue.length > 0) {
       setActiveIcptSide('req');
     }
@@ -7409,14 +7314,14 @@ function mockResponseSelected() {
     showToast('Could not parse the mock response — check the status line and headers');
     return;
   }
-  // Default Content-Type if user omitted one — JSON if body parses,
-  // text/plain otherwise.
+  // 사용자가 Content-Type을 안 넣었으면 기본값 — body가 파싱되면 JSON,
+  // 아니면 text/plain.
   const hasCT = Object.keys(parsed.headers).some(k => k.toLowerCase() === 'content-type');
   if (!hasCT) {
     try { JSON.parse(parsed.body); parsed.headers['Content-Type'] = 'application/json'; }
     catch { parsed.headers['Content-Type'] = 'text/plain'; }
   }
-  // Convert headers map to the array shape proxy expects for mock.
+  // headers map을 mock용 프록시가 기대하는 배열 모양으로 변환.
   const headersArr = Object.entries(parsed.headers).map(([name, value]) => ({ name, value }));
   sendInterceptDecision(item.id, {
     action: 'mock',
@@ -7468,17 +7373,16 @@ function dropAll() {
   renderRespQueue();
 }
 
-// Response + request capture history (id → captured payload). Used by
-// the log strip — clicking a log row replays both into the editors so
-// the user can re-inspect a request/response pair after it's been
-// resolved (forwarded / dropped / etc.). Both maps are bounded at 200
-// entries so a long monitoring session doesn't accumulate unbounded
-// data.
+// Response + request 캡처 히스토리 (id → 캡처된 페이로드). log strip
+// 이 사용 — log 행 클릭 시 둘 다 에디터에 재생해서 사용자가 resolved
+// 된 (forwarded/dropped 등) request/response 페어를 재검토 가능. 두
+// map은 200 항목 제한이라 긴 모니터링 세션이 unbounded 데이터를 누적
+// 하지 않음.
 const capturedResponses = new Map();
 const capturedRequests = new Map();
-// While a captured pair is on display in the editors (not a live
-// pending intercept) this holds the log id. Auto-cleared when a new
-// pending intercept arrives or when the user clicks a queue item.
+// captured pair가 에디터에 표시 중일 때(live pending intercept가 아님)
+// 이게 log id를 보관. 새 pending intercept가 도착하거나 사용자가 큐
+// 아이템을 클릭하면 자동 clear.
 let viewingCapturedId = null;
 
 function handleResponseCaptured(msg) {
@@ -7489,27 +7393,25 @@ function handleResponseCaptured(msg) {
     bodyLength: msg.bodyLength,
     bodyTruncated: msg.bodyTruncated,
   });
-  // Record response in log
+  // log에 응답 기록
   const logEntry = interceptLog.find(l => l.id === msg.id);
   if (logEntry) {
     logEntry.responseStatus = msg.statusCode;
     renderInterceptLog();
   }
-  // Keep max 200 entries
+  // 최대 200 항목 유지
   if (capturedResponses.size > 200) {
     const oldest = capturedResponses.keys().next().value;
     capturedResponses.delete(oldest);
   }
 }
 
-// Upsert a log entry keyed by request id. Each captured request /
-// response cycle owns ONE log row — `action` records the request-side
-// decision (forwarded / modified / dropped / mocked / bypassed), and
-// later events (response intercept decision, response capture) update
-// `responseAction` / `responseStatus` on the same row instead of
-// adding a duplicate. A request without an id (shouldn't happen in
-// practice) still gets a one-shot row by falling back to a synthetic
-// key.
+// request id 키로 log 항목 upsert. 캡처된 request/response 사이클마다
+// log 행 1개 — `action`은 request-side 결정(forwarded/modified/dropped/
+// mocked/bypassed) 기록, 이후 이벤트(response intercept 결정, response
+// 캡처)는 중복 추가 대신 같은 행의 `responseAction`/`responseStatus`를
+// 업데이트. id가 없는 요청(실제로는 발생하지 않음)도 합성 key로
+// fallback해서 일회성 행 받음.
 function upsertInterceptLog(id, fields) {
   if (!id) {
     interceptLog.unshift({ id: null, time: new Date(), ...fields });
@@ -7533,10 +7435,9 @@ function renderInterceptLog() {
     const time = l.time.toLocaleTimeString(undefined, { hour12: false });
     const hasReq = l.id && capturedRequests.has(l.id);
     const hasResp = l.id && capturedResponses.has(l.id);
-    // Status column: shows the response decision in priority order —
-    // explicit "DROP" if the response was dropped, the response code
-    // (with ✎ prefix if the response was modified) if known, "—"
-    // otherwise (request dropped, or response not yet captured).
+    // Status 컬럼: 우선순위 순으로 응답 결정 표시 — 응답 dropped면
+    // 명시적 "DROP", 응답 코드 알려져 있으면 코드(modified면 ✎ prefix),
+    // 그 외는 "—" (request dropped, 또는 응답 아직 미캡처).
     let statusCell;
     if (l.responseAction === 'dropped') {
       statusCell = `<span class="log-resp-drop">DROP</span>`;
@@ -7548,8 +7449,8 @@ function renderInterceptLog() {
     } else {
       statusCell = `<span class="log-resp-status log-resp-none">—</span>`;
     }
-    // Any log row with a captured request OR response is clickable;
-    // the click handler populates whichever sides have data.
+    // 캡처된 request 또는 response가 있는 모든 log 행이 클릭 가능;
+    // 클릭 핸들러가 데이터가 있는 사이드 모두 채움.
     const clickAttr = (hasReq || hasResp)
       ? `data-log-id="${escapeAttr(l.id)}" style="cursor:pointer"`
       : '';
@@ -7564,11 +7465,10 @@ function renderInterceptLog() {
   }).join('');
 }
 
-// Click on a log row → re-display the captured request + response in
-// their respective editors. Blocked while there's an unresolved live
-// intercept queued so the user doesn't lose in-progress edits or
-// accidentally drop a held connection by switching what the editor
-// shows.
+// log 행 클릭 → 캡처된 request + response를 각 에디터에 재표시.
+// 미해결 live intercept가 큐에 있으면 차단 → 사용자가 진행 중 편집을
+// 잃지 않고, 에디터 표시 전환으로 held connection을 실수로 드롭하지
+// 않도록.
 icptLogEl.addEventListener('click', (e) => {
   const item = e.target.closest('[data-log-id]');
   if (!item) return;
@@ -7584,8 +7484,8 @@ function _viewCapturedById(id) {
   const resp = capturedResponses.get(id);
   if (!req && !resp) return;
   viewingCapturedId = id;
-  // Mark editors as read-only (CSS hides action buttons + banner +
-  // resp topbar/status in this mode).
+  // 에디터를 read-only로 마킹 (CSS가 이 모드에서 action 버튼 + banner
+  // + resp topbar/status 숨김).
   reqEditorContent.classList.add('icpt-viewing-captured');
   respEditorContent.classList.add('icpt-viewing-captured');
   if (req) {
@@ -7605,11 +7505,11 @@ function _viewCapturedById(id) {
   } else {
     hideRespEditor();
   }
-  // After populating the editors, lock the inputs. CSS readonly/
-  // disabled visuals + JS attribute set together so users can't
-  // accidentally edit fields they're only meant to inspect.
+  // 에디터를 채운 후 입력 잠금. CSS readonly/disabled visual + JS
+  // 속성을 함께 설정 → 사용자가 inspection만 의도한 필드를 실수로
+  // 편집하지 않도록.
   _setIcptEditorsReadonly(true);
-  // Re-render so the active log row gets the .viewing highlight.
+  // 재렌더 → active log 행이 .viewing 하이라이트를 받도록.
   renderInterceptLog();
 }
 
@@ -7621,23 +7521,21 @@ function _clearCapturedViewing() {
   renderInterceptLog();
 }
 
-// User clicked X on the viewing banner → exit viewing mode AND wipe
-// the captured-view content from both editors so they fall back to
-// their normal placeholder state. (If a queue item was selected
-// before viewing, the natural next action is to live-intercept
-// again, not to re-show whatever was left over.)
+// 사용자가 viewing 배너의 X 클릭 → viewing 모드 종료 + 두 에디터의
+// captured-view 내용 wipe → 정상 placeholder 상태로 fallback.
+// (viewing 전에 큐 아이템이 선택돼 있었어도 자연스러운 다음 액션은
+// 다시 live-intercept지 남은 것 재표시가 아님.)
 function _exitViewingExplicit() {
   _clearCapturedViewing();
   hideReqEditor();
   hideRespEditor();
 }
 
-// Walk the textareas inside the Intercept editors and toggle their
-// inert state. readOnly keeps the textarea selectable (so the user
-// can copy text out) but blocks edits. Format toggle buttons stay
-// active so they can still switch between raw / pretty views even
-// in read-only mode. Action buttons (Forward / Drop / etc.) are
-// hidden via CSS already.
+// Intercept 에디터 안의 textarea를 walk하면서 inert 상태 토글.
+// readOnly는 textarea를 selectable 유지(텍스트 복사 가능)하되 편집
+// 차단. Format 토글 버튼은 활성 유지 → read-only 모드에서도 raw/
+// pretty 뷰 전환 가능. Action 버튼(Forward/Drop 등)은 이미 CSS로
+// 숨김.
 function _setIcptEditorsReadonly(on) {
   [reqEditorContent, respEditorContent].forEach(ed => {
     if (!ed) return;
@@ -7645,14 +7543,14 @@ function _setIcptEditorsReadonly(on) {
   });
 }
 
-// Close (X) on the viewing banner — delegated so it works for both
-// banners (request and response side) without per-element listeners.
+// viewing 배너의 Close (X) — 두 배너(request/response side)에서 모두
+// 동작하도록 위임 → element별 listener 불필요.
 document.querySelectorAll('.icpt-viewing-close').forEach(btn => {
   btn.addEventListener('click', _exitViewingExplicit);
 });
 
 // ============================================================
-// Utility Functions
+// 유틸리티 함수
 // ============================================================
 
 function escapeHtml(str) {
@@ -7673,8 +7571,8 @@ function formatBytes(bytes) {
 }
 
 function truncateUrl(url) {
-  // data: URIs — strip the payload and just label by mime type so the
-  // table doesn't try to render a 100KB base64 string in one cell.
+  // data: URI — 페이로드 제거 후 mime type으로만 라벨 → 테이블이
+  // 100KB base64 문자열을 한 셀에 렌더링하지 않도록.
   if (typeof url === 'string' && url.startsWith('data:')) {
     const m = url.match(/^data:([^;,]+)/);
     return m ? `[data URI] ${m[1]}` : '[data URI]';
@@ -7692,14 +7590,13 @@ function truncate(str, max) {
   return str.length > max ? str.substring(0, max) + '...' : str;
 }
 
-// Resizable split gutters: drag to resize the next sibling pane.
+// 리사이즈 가능 split gutter: 드래그로 next sibling pane 크기 조정.
 function setupSplitGutter(gutter) {
   const isVertical = gutter.classList.contains('split-gutter-v');
-  // Direction: by default the gutter resizes the *next* sibling, with
-  // the previous sibling absorbing leftover space via flex-grow. Some
-  // layouts (e.g. the Network tree pane on the left) need the
-  // opposite — set data-resize="prev" to flip which side gets sized
-  // and which side absorbs.
+  // 방향: 기본은 gutter가 *next* sibling을 리사이즈, previous sibling은
+  // flex-grow로 남는 공간 흡수. 일부 레이아웃(예: 좌측 Network 트리
+  // pane)은 반대가 필요 — data-resize="prev"로 어느 쪽이 sized되고
+  // 어느 쪽이 흡수할지 뒤집음.
   const resizesPrev = gutter.dataset.resize === 'prev';
   gutter.addEventListener('mousedown', (e) => {
     const target = resizesPrev ? gutter.previousElementSibling : gutter.nextElementSibling;
@@ -7714,9 +7611,9 @@ function setupSplitGutter(gutter) {
 
     function onMove(ev) {
       const cur = isVertical ? ev.clientY : ev.clientX;
-      // Default direction: dragging away from the target shrinks it.
-      // Prev mode reverses the sign so dragging toward the target's
-      // side (right, when target is the left pane) grows it.
+      // 기본 방향: target에서 멀어지는 드래그 = 줄어듦. Prev 모드는
+      // 부호 반전 → target side(좌측 pane이 target일 때 오른쪽으로)로
+      // 드래그 = 커짐.
       const delta = cur - startPos;
       const newSize = Math.max(80, resizesPrev ? startSize + delta : startSize - delta);
       target.style.flex = `0 0 ${newSize}px`;
@@ -7737,9 +7634,8 @@ function setupSplitGutter(gutter) {
 }
 document.querySelectorAll('.split-gutter').forEach(setupSplitGutter);
 
-// Persisted "Auto-start" toggle — when checked, Network monitoring
-// flips on as soon as this panel opens. Default off, so existing
-// users see no behavior change.
+// 영속화된 "Auto-start" 토글 — 체크되면 이 패널이 열리는 즉시 Network
+// 모니터링 활성화. 기본 off라 기존 사용자에게 동작 변화 없음.
 (function initAutoStartMonitoring() {
   const checkbox = document.getElementById('auto-start-monitoring');
   if (!checkbox) return;
@@ -7748,9 +7644,9 @@ document.querySelectorAll('.split-gutter').forEach(setupSplitGutter);
     checkbox.checked = enabled;
     if (enabled && !networkMonitoring) {
       startNetworkMonitoring();
-      // The page may already be loaded — without HAR replay the table
-      // would stay empty until the next request fires. getHAR backfills
-      // everything Chrome already captured.
+      // 페이지가 이미 로드되어 있을 수 있음 — HAR replay 없이는 다음
+      // 요청 발화까지 테이블이 비어 있음. getHAR이 Chrome이 이미
+      // 캡처한 모든 것을 backfill.
       replayExistingNetworkHAR();
     }
   });

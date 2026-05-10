@@ -42,10 +42,9 @@ header h1 {
 .title-plus1 { color: #EA4335; }
 .title-plus2 { color: #FBBC04; }
 
-/* Tagline next to the logo — same row, muted color so the brand
-   wordmark stays the dominant element in the strip. flex:1 lets it
-   eat any leftover horizontal space and pushes Auto-start to the
-   far right. */
+/* 로고 옆 태그라인 — 같은 행, muted 색상이라 브랜드 워드마크가
+   strip의 dominant 요소로 유지. flex:1로 남는 가로 공간을 흡수하고
+   Auto-start를 가장 오른쪽으로 밀어냄. */
 .header-tagline {
   flex: 1;
   font-size: 11px;
@@ -62,9 +61,8 @@ header h1 {
   flex-shrink: 0;
 }
 
-/* Sub-toolbar at the top of the right content column — hosts the
-   Monitor / Intercept tab buttons and the global Scope bar. Sits
-   above whichever tab section is active. */
+/* 우측 content 컬럼 상단의 서브 툴바 — Monitor/Intercept 탭 버튼과
+   글로벌 Scope 바를 호스팅. 어느 탭 섹션이 활성이든 그 위에 위치. */
 .content-toolbar {
   display: flex;
   align-items: center;
@@ -121,7 +119,7 @@ header h1 {
   min-width: 0;
 }
 
-/* Compact preference toggle that lives at the right end of the header. */
+/* 헤더 우측 끝에 위치하는 컴팩트 환경설정 토글. */
 .header-pref {
   display: flex;
   align-items: center;
@@ -277,10 +275,9 @@ tr:hover {
   background: #f0f4ff;
 }
 
-/* Replay-originated rows in the Network list — subtle yellow tint
-   on the row + a small ↻ badge prefix in the URL cell so the user
-   can tell at a glance which entries were Sent via Replay vs picked
-   up from the browser. */
+/* Network 리스트의 Replay 발생 행 — 행에 옅은 노란 tint + URL 셀에
+   작은 ↻ 배지 prefix → Replay로 Send된 항목과 브라우저에서 잡힌
+   항목을 한눈에 구분 가능. */
 #network-table tbody tr.row-replay td {
   background: #fffdf2;
 }
@@ -297,9 +294,9 @@ tr:hover {
   font-weight: 600;
   margin-right: 4px;
 }
-/* Login-detected URL prefix — small lock emoji at the leading edge of
-   the URL cell. Sized one notch below the cell font so it reads as a
-   marker rather than competing with the URL text itself. */
+/* Login 감지 URL prefix — URL 셀의 leading edge에 작은 lock emoji.
+   셀 폰트보다 한 단계 작게 → URL 텍스트와 경쟁하지 않고 marker로
+   읽힘. */
 .row-auth-badge {
   display: inline-block;
   font-size: 10px;
@@ -311,7 +308,7 @@ tr:hover {
 .status-redirect { color: #8a6d00; }
 .status-error { color: #d32f2f; }
 
-/* Resizable split gutter (shared across tabs) */
+/* 리사이즈 가능 split gutter (탭 간 공유) */
 .split-gutter {
   flex-shrink: 0;
   background: #d4d4d4;
@@ -335,10 +332,10 @@ tr:hover {
   display: none;
 }
 
-/* Network split view — top-level layout is [tree | gutter | main].
-   The right side wraps tabs + (list | detail) so the tree spans full
-   height under the toolbar (it's a global navigation surface), and
-   tabs sit only above the list/detail row to its right. */
+/* Network split 뷰 — top-level 레이아웃은 [tree | gutter | main].
+   우측은 tabs + (list | detail)을 wrap → 트리가 툴바 아래 full height
+   를 차지(global navigation surface), 탭은 그 우측 list/detail 행
+   위에만 위치. */
 .network-split {
   flex: 1;
   display: flex;
@@ -365,10 +362,9 @@ tr:hover {
   min-width: 0;
 }
 
-/* JS still toggles `has-detail` on the outer .network-split when the
-   detail pane opens — descendant selector still hits the inner
-   table-wrapper through the new .network-main / .network-list-detail
-   wrappers. */
+/* JS는 detail pane 오픈 시 외부 .network-split에 `has-detail` 토글 —
+   새 .network-main / .network-list-detail wrapper를 통해 descendant
+   selector가 여전히 내부 table-wrapper에 hit. */
 .network-split.has-detail .table-wrapper {
   flex: 1;
   border-right: 1px solid #d4d4d4;
@@ -422,8 +418,8 @@ tr:hover {
   border-bottom-color: #0078d4;
 }
 
-/* Source-mapped indicator on the Initiator tab — appears once async
-   enrichment finds at least one mapped frame. */
+/* Initiator 탭의 Source-mapped 인디케이터 — async enrichment가 매핑된
+   프레임을 최소 1개 발견하면 표시. */
 .detail-tab.has-mapped::after {
   content: '↑';
   margin-left: 5px;
@@ -444,8 +440,8 @@ tr:hover {
   flex-shrink: 0;
 }
 
-/* Send-to-Browser action — sits between the detail tabs and the close
-   button. Disabled state covers methods/bodies we can't navigate. */
+/* Send-to-Browser 액션 — detail 탭과 close 버튼 사이에 위치.
+   navigate 불가능한 method/body는 disabled 상태로 커버. */
 .detail-action-btn {
   padding: 3px 10px;
   font-size: 11.5px;
@@ -474,11 +470,10 @@ tr:hover {
 }
 
 /* ============================================================
-   Message tab — vertical Request / Response split rendering raw
-   HTTP. The differentiator vs native DevTools is showing the
-   on-the-wire message form (status line + headers + body) instead
-   of a key-value table. Replay edits happen in-place in the same
-   request pane via the textarea overlay.
+   Message 탭 — raw HTTP를 렌더링하는 수직 Request / Response split.
+   native DevTools 대비 차별점은 key-value 테이블 대신 on-the-wire
+   메시지 형태(status line + headers + body)를 보여주는 것. Replay
+   편집은 textarea 오버레이로 같은 request pane에서 in-place.
    ============================================================ */
 .msg-split {
   flex: 1;
@@ -520,7 +515,7 @@ tr:hover {
 .msg-pane-meta .s-5xx { color: #d32f2f; font-weight: 600; }
 .msg-pane-spacer { flex: 1; }
 
-/* Raw / Pretty segmented toggle */
+/* Raw / Pretty 세그먼트 토글 */
 .msg-format-toggle {
   display: inline-flex;
   border: 1px solid #c4c4c4;
@@ -544,10 +539,10 @@ tr:hover {
   font-weight: 500;
 }
 
-/* Decode toggle — independent of Raw/Pretty. When active, the pane
-   renderer rewrites encoded substrings (JWT / Base64 / URL-enc /
-   Unix timestamps) inline as <span class="decode-replaced"> with the
-   original kept in the title attribute. */
+/* Decode 토글 — Raw/Pretty와 독립. 활성 시 pane 렌더러가 인코딩된
+   substring(JWT/Base64/URL-enc/Unix timestamp)을 인라인으로
+   <span class="decode-replaced">로 rewrite하고 원본은 title 속성에
+   보관. */
 .msg-decode-btn.hidden { display: none; }
 .msg-decode-btn.active,
 .msg-wrap-btn.active {
@@ -563,9 +558,9 @@ tr:hover {
   padding: 0 1px;
 }
 
-/* Standardize action-button vertical metrics across the detail panel
-   so Replay / Preview / Decode / Wrap / Send to Browser all share the
-   same height. Horizontal width still varies with text length. */
+/* detail 패널 전반의 action 버튼 수직 메트릭 표준화 → Replay/Preview/
+   Decode/Wrap/Send to Browser가 모두 같은 높이 공유. 가로 폭은 여전히
+   텍스트 길이에 따라 달라짐. */
 #msg-replay-toggle,
 #msg-preview-toggle,
 .msg-decode-btn,
@@ -578,11 +573,11 @@ tr:hover {
   box-sizing: border-box;
 }
 
-/* Body area — monospace raw HTTP message. Outer wrapper is a flex
-   column so its inner <pre> (read mode) or <textarea> (replay edit
-   mode) can both fill the available height via flex:1 instead of
-   relying on `height: 100%`, which falls back to 0 inside an
-   overflow:auto parent in some browsers. */
+/* Body 영역 — monospace raw HTTP 메시지. 외부 wrapper가 flex column
+   이라 내부 <pre>(read 모드)나 <textarea>(replay edit 모드) 모두
+   flex:1로 사용 가능 높이를 채울 수 있음. `height: 100%`는 일부
+   브라우저에서 overflow:auto parent 안에서 0으로 fallback돼 의존
+   불가. */
 .msg-pane-body {
   flex: 1;
   display: flex;
@@ -603,16 +598,16 @@ tr:hover {
   tab-size: 2;
   overflow: auto;
 }
-/* Wrap toggle — keep the indent (pre-wrap) but allow long unbroken
-   tokens (cookies, JWTs, query strings) to break anywhere so the
-   horizontal scrollbar disappears. */
+/* Wrap 토글 — 들여쓰기는 유지(pre-wrap)하되 길고 끊을 수 없는 토큰
+   (쿠키, JWT, query string)이 어디서든 break 가능 → 가로 스크롤바
+   사라짐. */
 .msg-raw.wrap {
   white-space: pre-wrap;
   word-break: break-all;
   overflow-wrap: anywhere;
 }
-/* Header line + status / request line styling — color cue without
-   pulling out a full token tokenizer. */
+/* Header line + status/request line 스타일링 — 풀 토큰 tokenizer 없이
+   색상 큐만. */
 .msg-raw .msg-line-status {
   color: #1a73e8;
   font-weight: 600;
@@ -621,14 +616,13 @@ tr:hover {
   color: #8a3324;
   font-weight: 600;
 }
-/* Subtle color cue: the request/status line stays inline with the
-   header block so it reads like a real HTTP message, but a thin
-   left border on the body section visually separates headers from
-   body the way the blank line does on the wire. */
+/* 미묘한 색상 큐: request/status line은 header block과 inline 유지
+   → 진짜 HTTP 메시지처럼 읽힘, body 섹션의 얇은 left border가 wire
+   상의 blank line이 하는 것처럼 시각적으로 헤더와 body 분리. */
 .msg-headers-block { display: block; }
 .msg-body-block {
   display: block;
-  margin-top: 0; /* the blank line itself produces the spacing */
+  margin-top: 0; /* 빈 줄 자체가 간격을 만들어줌 */
 }
 .msg-empty {
   padding: 16px;
@@ -637,8 +631,8 @@ tr:hover {
   font-family: -apple-system, sans-serif;
 }
 
-/* Replay edit mode: KV editor takes over the request body slot, and
-   the bar of Send / Original / hint shows below the body. */
+/* Replay edit 모드: KV 에디터가 request body 자리를 차지하고, body
+   아래에 Send/Original/hint 바 표시. */
 .replay-editor {
   display: flex;
   flex-direction: column;
@@ -676,11 +670,10 @@ tr:hover {
   min-width: 0;
 }
 .replay-editor-url:focus { border-color: #0078d4; }
-/* HTTP version box at the end of the topbar — editable so security
-   testers can record a tampered version on the request line. fetch()
-   ignores it on the wire (always sends as HTTP/1.1 or whatever the
-   server negotiates), but the field is part of the snapshot for
-   Original/Modified tracking. */
+/* topbar 끝의 HTTP version 박스 — 편집 가능 → 보안 테스터가 request
+   line에 변조된 버전 기록 가능. fetch()는 wire 상에서 무시(항상
+   HTTP/1.1 또는 서버가 negotiate한 것을 보냄)하지만, 이 필드는
+   Original/Modified 추적용 스냅샷의 일부. */
 .replay-editor-version {
   flex-shrink: 0;
   width: 80px;
@@ -744,9 +737,9 @@ tr:hover {
 }
 .replay-body-editor.hidden { display: none; }
 
-/* Body pane toolbar — hosts the Form/Raw toggle + the form-only
-   "+ Add Field" button. Toggle hides itself when the body isn't
-   form-shaped (no point offering a view that can't represent it). */
+/* Body pane 툴바 — Form/Raw 토글 + form 전용 "+ Add Field" 버튼
+   호스팅. body가 form 모양이 아니면 토글은 자체 숨김(표현 불가능한
+   뷰를 제공할 의미 없음). */
 .replay-body-toolbar {
   display: flex;
   align-items: center;
@@ -779,8 +772,8 @@ tr:hover {
 }
 .replay-body-fmt-btn + .replay-body-fmt-btn { border-left: 1px solid #d4d4d4; }
 
-/* Form view list — same KV row as headers but stacks fill space and
-   stays scrollable independent of the rest of the body pane. */
+/* Form 뷰 리스트 — headers와 동일한 KV 행이지만 stack은 공간을 채우고
+   body pane 나머지와 독립적으로 스크롤 가능. */
 .replay-body-form {
   flex: 1;
   overflow: auto;
@@ -814,8 +807,8 @@ tr:hover {
   color: #856404;
 }
 
-/* Preview overlay — when Preview button is on, the response body
-   area shows rendered content (iframe/img/json tree) instead of raw. */
+/* Preview 오버레이 — Preview 버튼이 켜지면 response body 영역이 raw
+   대신 렌더된 콘텐츠(iframe/img/json tree) 표시. */
 .msg-preview-iframe {
   width: 100%;
   height: 100%;
@@ -838,7 +831,7 @@ tr:hover {
   line-height: 1.55;
 }
 
-/* Diff badge after a Replay Send — appended below the response body. */
+/* Replay Send 후의 diff 배지 — response body 아래에 추가됨. */
 .msg-diff-badge {
   margin: 12px 14px;
   padding: 10px 12px;
@@ -851,15 +844,15 @@ tr:hover {
   color: #8a6d00;
   margin-bottom: 6px;
 }
-/* "Status unchanged" / "Body identical" — same as a normal diff title
-   shape but de-emphasized in green/grey to telegraph "this dimension
-   matched, nothing to act on". */
+/* "Status unchanged" / "Body identical" — 일반 diff title과 같은 모양
+   이지만 green/grey로 de-emphasize → "이 차원은 매치, 액션 없음"을
+   전달. */
 .msg-diff-badge .diff-title.diff-unchanged {
   color: #5f6368;
   font-weight: 500;
 }
-/* "Original body not available" — yellow-orange so it reads as a
-   notice, not a delta or a clean match. */
+/* "Original body not available" — yellow-orange로 표시 → delta나 깨끗한
+   매치가 아닌 notice로 읽힘. */
 .msg-diff-badge .diff-title.diff-unavailable {
   color: #b06000;
   font-weight: 500;
@@ -869,15 +862,15 @@ tr:hover {
   font-size: 12px;
   margin-bottom: 6px;
 }
-/* Stack any subsequent section after the first with a small gap so
-   Status / Body sections read as separate dimensions. */
+/* 첫 번째 이후의 섹션은 작은 gap으로 stack → Status/Body 섹션이
+   별도 차원으로 읽히도록. */
 .msg-diff-badge > * + * {
   margin-top: 8px;
 }
 
-/* Initiator tab */
-/* Initiator-tab type / pattern badges. Reuses .scan-badge baseline
-   styling from Detection so the same shape/padding/font apply. */
+/* Initiator 탭 */
+/* Initiator 탭 type/pattern 배지. Detection의 .scan-badge baseline
+   스타일 재사용 → 같은 shape/padding/font 적용. */
 .scan-badge-init-script   { background: #f1f3f4; color: #5f6368; border-color: #c8cad0; }
 .scan-badge-init-parser   { background: #fef7e0; color: #b06000; border-color: #f4dca0; }
 .scan-badge-init-mapped   { background: #E8F0FE; color: #1A73E8; border-color: #C5D9FB; }
@@ -957,8 +950,8 @@ tr:hover {
   text-decoration: underline;
 }
 
-/* When the script's source map decodes successfully, the link shows
-   the original location followed by the bundled one in muted text. */
+/* 스크립트의 source map 디코드 성공 시, 링크는 원본 위치를 표시하고
+   그 뒤에 muted 텍스트로 번들 위치 표시. */
 .source-link.mapped {
   color: #1a73e8;
   display: inline-flex;
@@ -980,7 +973,7 @@ tr:hover {
   margin-left: 4px;
 }
 
-/* Header tag shown in the inline viewer when displaying mapped source */
+/* 매핑된 소스 표시 시 인라인 뷰어에 보이는 헤더 태그 */
 .source-viewer-mapped-tag {
   display: inline-block;
   margin-left: 8px;
@@ -1005,7 +998,7 @@ tr:hover {
   padding-left: 9px;
 }
 
-/* Inline source viewer */
+/* 인라인 소스 뷰어 */
 .source-viewer-header {
   padding: 6px 12px;
   font-size: 12px;
@@ -1066,7 +1059,7 @@ tr:hover {
 }
 
 /* ============================================================
-   Auto-decode panel ("🔍 Decoded") at the bottom of detail tabs
+   detail 탭 하단의 Auto-decode 패널 ("🔍 Decoded")
    ============================================================ */
 .decoded-section {
   margin-top: 12px;
@@ -1190,14 +1183,13 @@ tr:hover {
 }
 
 /* ============================================================
-   Response Pattern Detection — list badges + Detection detail tab
+   Response Pattern Detection — 리스트 배지 + Detection detail 탭
    ============================================================ */
 
-/* Host column — fixed-width hostname slot at the start of each row.
-   Same-origin (target) hosts read normally; cross-origin hosts get a
-   subtle italic + lighter color so the eye can pick out third-party
-   traffic at a glance. Full URL stays accessible via the title
-   tooltip. */
+/* Host 컬럼 — 각 행 시작의 고정폭 hostname slot. Same-origin(target)
+   호스트는 일반 표시; cross-origin 호스트는 옅은 italic + 더 밝은 색
+   → 눈이 third-party 트래픽을 한눈에 식별. Full URL은 title 툴팁으로
+   접근 가능. */
 .host-cell {
   width: 150px;
   max-width: 150px;
@@ -1209,8 +1201,8 @@ tr:hover {
   font-style: italic;
 }
 
-/* Initiator column — single-badge cell mirroring the Detection-cell
-   styling. Click to jump straight to the Initiator detail tab. */
+/* Initiator 컬럼 — Detection 셀 스타일링을 미러링하는 단일 배지 셀.
+   클릭 시 Initiator detail 탭으로 바로 점프. */
 .initiator-cell {
   font-size: 10px;
   white-space: nowrap;
@@ -1240,7 +1232,7 @@ tr:hover {
   border-color: #f4dca0;
 }
 
-/* Inline badge cluster shown in the network list "Scan" column */
+/* network 리스트 "Scan" 컬럼에 표시되는 인라인 배지 클러스터 */
 .scan-badges-cell {
   font-size: 10px;
   white-space: nowrap;
@@ -1267,7 +1259,7 @@ tr:hover {
 .scan-badge-tampering { background: #fde7c0; color: #8a4b00; border-color: #f0c47e; }
 .scan-badge-session   { background: #d2f0ed; color: #00695c; border-color: #80cbc4; }
 
-/* Detection tab indicator (count badge) */
+/* Detection 탭 인디케이터 (카운트 배지) */
 .detail-tab.has-findings {
   font-weight: 600;
 }
@@ -1283,7 +1275,7 @@ tr:hover {
   line-height: 1.4;
 }
 
-/* Detection detail tab content */
+/* Detection detail 탭 콘텐츠 */
 .detection-group {
   margin-bottom: 14px;
   border: 1px solid #e0e0e0;
@@ -1410,19 +1402,18 @@ tr:hover {
   font-weight: 600;
 }
 
-/* JSON token colors used by syntaxHighlightJson + Json tree preview. */
+/* syntaxHighlightJson + Json tree preview가 사용하는 JSON 토큰 색상. */
 .json-key { color: #0451a5; }
 .json-string { color: #a31515; }
 .json-number { color: #098658; }
 .json-boolean { color: #0451a5; }
 .json-null { color: #0451a5; }
 
-/* Key/Value row styling — used by the Intercept editor (request /
-   response / mock headers) for inline name+value+enable+remove rows.
-   The class name carries the legacy `replay-` prefix because it was
-   originally introduced for the Replay tab; the Replay tab is gone
-   but Intercept still relies on this layout. Renaming would require
-   coordinated HTML+JS updates with no functional benefit. */
+/* Key/Value 행 스타일링 — Intercept 에디터(request/response/mock
+   headers)가 인라인 name+value+enable+remove 행에 사용. 클래스명에
+   legacy `replay-` prefix가 있는 이유: 원래 Replay 탭에 도입됐기 때문;
+   Replay 탭은 사라졌지만 Intercept가 여전히 이 레이아웃에 의존. 리네임
+   하면 HTML+JS 함께 업데이트 필요한데 기능적 이득은 없음. */
 .replay-kv-list {
   font-size: 12px;
 }
@@ -1509,10 +1500,10 @@ tr:hover {
   text-decoration: line-through;
 }
 
-/* Forbidden header rows — fetch() silently drops user edits so we
-   visually mark them locked. Keep the name editable (user can rename
-   to a non-forbidden header) but read-only the value + checkbox. The
-   subtle background telegraphs "browser-managed" without screaming. */
+/* Forbidden 헤더 행 — fetch()가 사용자 편집을 silently drop하므로
+   시각적으로 lock 마킹. name은 편집 가능 유지(사용자가 non-forbidden
+   헤더로 rename 가능)하되 value + checkbox는 read-only. 옅은 배경이
+   화려하지 않게 "browser-managed"를 전달. */
 .replay-kv-row.kv-forbidden {
   background: #fafafa;
 }
@@ -1525,8 +1516,8 @@ tr:hover {
   background: #f0f0f0;
   cursor: not-allowed;
 }
-/* Lock glyph in the toggle slot — replaces the disabled checkbox with
-   a clearer "this is locked" cue. Keep clickable area inert. */
+/* 토글 자리의 lock 아이콘 — disabled 체크박스를 더 명확한 "잠김"
+   큐로 대체. 클릭 가능 영역은 inert 유지. */
 .replay-kv-row.kv-forbidden .kv-toggle {
   position: relative;
   pointer-events: none;
@@ -1582,7 +1573,7 @@ tr.selected td {
   flex: 1;
 }
 
-/* Diff highlight */
+/* Diff 하이라이트 */
 .diff-added {
   background: #e6f4ea;
   border-left: 3px solid #0b7a3e;
@@ -1601,10 +1592,9 @@ tr.selected td {
 }
 
 /* ============================================================
-   Network tabs — one tab per captured host. Each tab acts as a host
-   filter on the global Network list / detail; the underlying data
-   stays in a single networkRequests array, the active tab just
-   scopes which rows the table renders.
+   Network 탭 — 캡처된 host당 탭 1개. 각 탭은 글로벌 Network 리스트/
+   detail에 host 필터로 작동; 기저 데이터는 단일 networkRequests 배열에
+   머물고, 활성 탭은 테이블이 렌더링할 행을 scope할 뿐.
    ============================================================ */
 .network-tabs {
   display: flex;
@@ -1616,7 +1606,7 @@ tr.selected td {
   flex-shrink: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  /* Hidden until the first capture creates a tab. */
+  /* 첫 캡처가 탭을 만들 때까지 hidden. */
 }
 .network-tabs.hidden { display: none; }
 
@@ -1680,12 +1670,12 @@ tr.selected td {
 }
 
 /* ============================================================
-   Tree pane (host / path tree, lives in the Network split)
+   Tree pane (host / path 트리, Network split에 위치)
    ============================================================ */
 
-/* Global tree pane — sits to the left of all tab content (Monitor +
-   Intercept share it as a navigation surface). Resizable via the
-   gutter that follows it. min-width keeps the tree from collapsing
+/* 글로벌 트리 pane — 모든 탭 콘텐츠의 좌측에 위치(Monitor + Intercept가
+   navigation surface로 공유). 뒤따르는 gutter로 리사이즈 가능.
+   min-width로 트리가 너무 좁게 줄어들지 않도록
    past readability when the user drags the gutter all the way left. */
 .main-split {
   flex: 1;
@@ -1742,8 +1732,8 @@ tr.selected td {
   text-align: center;
 }
 
-/* External-host group (per-main-host nested folder of cross-origin
-   captures). The header sits on the main host's child row. */
+/* External-host 그룹 (per-main-host 단위 cross-origin 캡처의 중첩
+   폴더). 헤더는 main host의 자식 행에 위치. */
 .sitemap-external-header {
   color: #888;
   border-top: 1px solid #e0e0e0;
@@ -1778,8 +1768,8 @@ tr.selected td {
   color: #1e1e1e;
 }
 
-/* Currently-active inspected page host — distinguishes it from
-   previously-visited hosts that now sit in the External group. */
+/* 현재 활성 inspected 페이지 host — 이제 External 그룹에 있는
+   이전 방문 host들과 구별. */
 .sitemap-node.sitemap-node-target > .sitemap-node-label {
   font-weight: 600;
   color: #1a73e8;
@@ -1811,9 +1801,8 @@ tr.selected td {
   visibility: visible;
 }
 
-/* Children are indented under their parent — the rule that visually
-   conveys hierarchy. Without this, every node would look like a peer
-   of its parent. */
+/* 자식은 부모 아래 들여쓰기 — 시각적으로 계층 구조 전달하는 룰.
+   이게 없으면 모든 노드가 부모의 peer처럼 보임. */
 .sitemap-children {
   padding-left: 16px;
 }
@@ -1826,8 +1815,8 @@ tr.selected td {
    Intercept Proxy
    ============================================================ */
 
-/* When intercept is ON, show a small pulsing red dot before the tab label
-   without overriding the tab's font color. */
+/* intercept ON일 때 탭 라벨 앞에 작은 펄싱 빨간 점 표시 — 탭의 폰트
+   색상을 override하지 않으면서. */
 .intercept-tab.intercepting::before {
   content: '';
   display: inline-block;
@@ -1870,7 +1859,7 @@ tr.selected td {
   animation: icpt-pulse 1.5s ease-in-out infinite;
 }
 
-/* Global scope Apply button — dirty (unapplied) state */
+/* Global scope Apply 버튼 — dirty(미적용) 상태 */
 #global-scope-apply.scope-apply-dirty {
   background: #0078d4;
   border-color: #005a9e;
@@ -1878,7 +1867,7 @@ tr.selected td {
   font-weight: 600;
 }
 
-/* Global scope Apply button — brief flash on successful apply */
+/* Global scope Apply 버튼 — apply 성공 시 잠깐 flash */
 #global-scope-apply.scope-apply-flash {
   background: #0b7a3e;
   border-color: #0b7a3e;
@@ -1953,12 +1942,12 @@ tr.selected td {
   margin-left: 4px;
 }
 
-/* Push the secondary actions (Forward All / Drop All / ⚙ / ?) to the right */
+/* 보조 액션(Forward All / Drop All / ⚙ / ?)을 오른쪽으로 push */
 .icpt-toolbar-spacer {
   flex: 1;
 }
 
-/* Compact proxy status pill (replaces inline-styled badge) */
+/* 컴팩트 proxy status pill (인라인 스타일 배지 대체) */
 .icpt-status-pill {
   font-size: 11px;
   padding: 1px 8px;
@@ -1983,7 +1972,7 @@ tr.selected td {
   border-color: #f3b9b3;
 }
 
-/* Split layout */
+/* Split 레이아웃 */
 .icpt-main-area {
   flex: 1;
   display: flex;
@@ -2029,10 +2018,9 @@ tr.selected td {
   background: #ddd;
 }
 
-/* Active side cues — stronger than just header background. The whole
-   side gets a top accent bar and a soft outline so the user can tell
-   at a glance which one will receive the next F / G / D / R / A / Q
-   shortcut, without having to inspect the header. */
+/* Active side 큐 — 헤더 배경만보다 강함. 전체 side에 top accent bar
+   와 soft outline → 사용자가 헤더를 inspect하지 않아도 다음
+   F/G/D/R/A/Q 단축키를 받을 side를 한눈에 식별. */
 .icpt-side.active-side > .icpt-side-header {
   background: #1a73e8;
   color: #fff;
@@ -2146,7 +2134,7 @@ tr.selected td {
   flex-shrink: 0;
 }
 
-/* Log items */
+/* Log 항목 */
 .icpt-log-item {
   display: flex;
   align-items: center;
@@ -2201,10 +2189,9 @@ tr.selected td {
   color: #999;
 }
 
-/* Hover cursor only on rows that have captured data (data-log-id is
-   on the element). And the row currently re-displayed in the editors
-   gets a subtle highlight so the user can tell which log entry is
-   "active". */
+/* 캡처된 데이터가 있는 행에만 hover 커서 (data-log-id가 element에
+   있음). 그리고 현재 에디터에 재표시 중인 행에는 옅은 하이라이트 →
+   사용자가 어느 log 항목이 "active"인지 식별 가능. */
 .icpt-log-item[data-log-id]:hover {
   background: #f0f4ff;
 }
@@ -2212,11 +2199,10 @@ tr.selected td {
   background: #e8f0fe;
 }
 
-/* Captured-view mode — re-displaying a resolved request/response in
-   the editors. Action buttons (Forward / Drop / Mock / etc.) hide
-   because the intercept is already settled; the user is just
-   inspecting. A small left-border + tinted backdrop + dismissible
-   top banner make the read-only state obvious. */
+/* Captured-view 모드 — resolved 된 request/response를 에디터에 재표시.
+   Action 버튼(Forward/Drop/Mock 등)은 숨김 — intercept가 이미 settled,
+   사용자는 inspection만. 작은 left-border + tinted backdrop +
+   dismissible top banner가 read-only 상태를 분명하게 표시. */
 .icpt-editor-content.icpt-viewing-captured {
   background: #fafbff;
   border-left: 3px solid #1A73E8;
@@ -2225,9 +2211,9 @@ tr.selected td {
   display: none;
 }
 
-/* Banner is rendered as a real DOM element (not ::before) so its
-   close button can carry a click listener. Hidden by default; shown
-   only when the parent enters viewing mode. */
+/* Banner는 실제 DOM 요소로 렌더링 (::before 아님) → close 버튼이
+   클릭 리스너를 가질 수 있도록. 기본 숨김; 부모가 viewing 모드에
+   진입할 때만 표시. */
 .icpt-viewing-banner {
   display: none;
 }
@@ -2257,12 +2243,11 @@ tr.selected td {
   background: #d4e4fc;
 }
 
-/* Visual cue that inputs / textareas / checkboxes are inactive in
-   viewing mode. JS also sets readOnly / disabled so the styling
-   matches behavior. The .icpt-raw-input textarea is excluded — it
-   needs to stay transparent so the colored <pre> overlay underneath
-   shows through. The grey backdrop is applied to .icpt-raw-wrap
-   instead so the same visual cue lands on the right surface. */
+/* viewing 모드에서 input/textarea/checkbox가 비활성임을 시각적으로
+   알리는 큐. JS도 readOnly/disabled를 설정해서 스타일링과 동작이
+   일치. .icpt-raw-input textarea는 제외 — 아래 컬러 <pre> 오버레이가
+   비치도록 transparent 유지 필요. 대신 .icpt-raw-wrap에 grey backdrop
+   적용 → 같은 시각 큐가 올바른 surface에 떨어지도록. */
 .icpt-editor-content.icpt-viewing-captured input[readonly],
 .icpt-editor-content.icpt-viewing-captured textarea[readonly]:not(.icpt-raw-input),
 .icpt-editor-content.icpt-viewing-captured select:disabled,
@@ -2338,12 +2323,11 @@ tr.selected td {
   flex-shrink: 0;
 }
 
-/* Raw HTTP editor for the Intercept Edit / Mock / Response panes.
-   Overlay technique: a transparent <textarea> takes input on top of a
-   styled <pre> that shows the colored, syntax-highlighted text. Both
-   share the exact same font / line-height / padding so each character
-   in the textarea sits over its colored counterpart in the pre. The
-   user types in plain text; what they see is the colored render. */
+/* Intercept Edit/Mock/Response pane의 Raw HTTP 에디터. 오버레이 기법:
+   투명 <textarea>가 컬러 syntax-highlighted 텍스트를 표시하는 styled
+   <pre> 위에서 입력을 받음. 둘 다 정확히 같은 font/line-height/padding
+   공유 → textarea의 각 문자가 pre의 컬러 카운터파트 위에 위치.
+   사용자는 plain text로 타이핑하지만 보는 건 컬러 렌더. */
 .icpt-raw-wrap {
   position: relative;
   flex: 1;
@@ -2377,18 +2361,16 @@ tr.selected td {
 .icpt-raw-input {
   z-index: 1;
   resize: none;
-  /* Transparent text — the pre underneath supplies the colored render.
-     caret-color keeps the typing cursor visible against the white
-     background; the textarea's selection highlight stays opaque so
-     selection still reads naturally. */
+  /* Transparent 텍스트 — 아래 pre가 컬러 렌더 공급. caret-color로
+     흰 배경에서도 타이핑 커서를 보이게; textarea의 selection 하이라이트
+     는 opaque 유지해서 selection이 자연스럽게 읽힘. */
   color: transparent;
   caret-color: #1e1e1e;
 }
 .icpt-raw-input::selection { background: rgba(180, 213, 254, 0.7); color: transparent; }
-/* Reuse the Message-tab color tokens — same coloring rules apply
-   whether the pre is in Monitor's read-only view or Intercept's
-   overlay editor. Drop the .msg-raw scoping so .icpt-raw-display
-   gets them too. */
+/* Message 탭의 색상 토큰 재사용 — pre가 Monitor의 read-only 뷰에
+   있든 Intercept의 오버레이 에디터에 있든 같은 컬러링 룰 적용.
+   .msg-raw 스코핑을 제거해서 .icpt-raw-display도 받도록. */
 .msg-line-status,
 .icpt-raw-display .msg-line-status {
   color: #1a73e8;
@@ -2400,8 +2382,8 @@ tr.selected td {
   font-weight: 600;
 }
 
-/* Pretty/Raw toggle, sits inside the editor-tabs row (request side) or
-   in its own bar (response side). Same look as the Message tab. */
+/* Pretty/Raw 토글, editor-tabs 행 안(request side) 또는 자체 바
+   (response side)에 위치. Message 탭과 같은 look. */
 .icpt-ed-tabs-spacer { flex: 1; }
 .icpt-format-bar {
   display: flex;
@@ -2436,7 +2418,7 @@ tr.selected td {
 .icpt-fmt-btn + .icpt-fmt-btn { border-left: 1px solid #d4d4d4; }
 
 
-/* Action buttons */
+/* Action 버튼 */
 .icpt-actions {
   display: flex;
   gap: 6px;
@@ -2472,8 +2454,8 @@ tr.selected td {
   background: #6a1b9a;
 }
 
-/* Import notice — shown above the network table when data was loaded
-   from a file rather than captured live. */
+/* Import notice — 데이터가 라이브 캡처가 아닌 파일에서 로드됐을 때
+   network 테이블 위에 표시. */
 .import-notice {
   display: flex;
   align-items: center;
@@ -2491,7 +2473,7 @@ tr.selected td {
   font-weight: 500;
 }
 
-/* Export dropdown — picker for Detection-only vs All-requests JSON */
+/* Export 드롭다운 — Detection-only vs All-requests JSON picker */
 .export-dropdown {
   position: relative;
   display: inline-block;
@@ -2527,7 +2509,7 @@ tr.selected td {
 }
 
 /* ============================================================
-   Network search (request/response detail keyword search)
+   Network 검색 (request/response detail 키워드 검색)
    ============================================================ */
 .network-search-group {
   display: flex;
@@ -2568,8 +2550,8 @@ tr.selected td {
   box-shadow: inset 3px 0 0 #fbbf24;
 }
 
-/* Selection column — narrow, checkbox hidden until row hover or
-   when the row is checked. Header checkbox is always visible. */
+/* Selection 컬럼 — 좁고, 체크박스는 row hover 또는 체크된 상태일
+   때까지 숨김. Header 체크박스는 항상 보임. */
 #network-table th.select-cell,
 #network-table td.select-cell {
   width: 28px;
@@ -2589,7 +2571,7 @@ tr.selected td {
   cursor: pointer;
   margin: 0;
 }
-/* Subtle highlight on checked rows so they stand out from unselected. */
+/* 체크된 행에 옅은 하이라이트 → 선택되지 않은 행과 구분. */
 #network-table tbody tr.row-checked td {
   background: #f4f8ff;
 }
@@ -2597,7 +2579,7 @@ tr.selected td {
   background: #cce6ff;
 }
 
-/* Selection counter pill in the Network toolbar */
+/* Network 툴바의 selection 카운터 pill */
 .network-selection {
   display: inline-flex;
   align-items: center;
@@ -2611,7 +2593,7 @@ tr.selected td {
 }
 .network-selection.hidden { display: none; }
 
-/* Export menu section labels and divider */
+/* Export 메뉴 섹션 라벨과 divider */
 .export-menu-section {
   padding: 4px 12px 2px;
   font-size: 10.5px;
@@ -2631,17 +2613,16 @@ tr.selected td {
   cursor: not-allowed;
   background: transparent;
 }
-/* "(N)" count next to "Selected requests" — muted so it reads as
-   metadata rather than part of the action label. */
+/* "Selected requests" 옆 "(N)" 카운트 — muted로 표시 → action label
+   의 일부가 아닌 메타데이터로 읽힘. */
 .export-selected-count {
   margin-left: 4px;
   color: #888;
   font-weight: 400;
 }
 
-/* Per-tab All / Host-only segmented toggle. Mirrors the look of the
-   Message-tab format toggle so the two toggle controls in the panel
-   stay visually consistent. */
+/* per-tab All / Host-only 세그먼트 토글. Message 탭 format 토글의
+   look을 미러링 → 패널의 두 토글 컨트롤이 시각적으로 일관됨. */
 .tab-mode-toggle {
   display: inline-flex;
   border: 1px solid #d4d4d4;
@@ -2670,14 +2651,14 @@ tr.selected td {
 .tab-mode-btn + .tab-mode-btn { border-left: 1px solid #d4d4d4; }
 
 /* ============================================================
-   Network Filter dropdown — multi-select Type / Status filtering
+   Network Filter 드롭다운 — 멀티 선택 Type/Status 필터링
    ============================================================ */
 .network-filter-dropdown {
   position: relative;
   display: inline-block;
 }
-/* Active state: button gets a subtle blue accent when any filter is on,
-   so users can spot at a glance that the visible set is reduced. */
+/* Active 상태: 필터가 켜진 경우 버튼이 옅은 파란 accent → 사용자가
+   visible set이 줄어들었음을 한눈에 식별. */
 #network-filter-btn.has-active {
   background: #E8F0FE;
   border-color: #C5D9FB;
@@ -2756,7 +2737,7 @@ mark.network-search-mark.current {
 }
 
 /* ============================================================
-   Auto Crawl modal + toast
+   Auto Crawl 모달 + toast
    ============================================================ */
 .crawl-modal {
   position: fixed;
@@ -2900,7 +2881,7 @@ mark.network-search-mark.current {
 }
 
 /* ============================================================
-   Auth tab — login-request inspection panel
+   Auth 탭 — login 요청 검사 패널
    ============================================================ */
 .auth-card {
   margin: 12px 14px;
@@ -2931,8 +2912,8 @@ mark.network-search-mark.current {
   overflow-wrap: anywhere;
 }
 .auth-signal-list li { margin-bottom: 2px; }
-/* Long token / cookie strings inside signal items shouldn't push the
-   card wider than its container — wrap aggressively at any character. */
+/* signal 항목 안의 긴 토큰/쿠키 문자열이 카드를 컨테이너보다 넓게
+   밀어서는 안 됨 — 어떤 문자에서든 적극적으로 wrap. */
 .auth-card { word-wrap: break-word; overflow-wrap: anywhere; }
 
 .auth-empty { color: #888; font-style: italic; }

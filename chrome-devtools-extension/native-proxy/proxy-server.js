@@ -9,13 +9,12 @@ const zlib = require('zlib');
 const { EventEmitter } = require('events');
 const certGenerator = require('./cert-generator');
 
-// Decompress an upstream response body based on Content-Encoding so
-// the panel sees text it can actually read. Returns the decoded buffer
-// (or the original on unknown encoding / decompression failure) plus
-// `hadEncoding` — true if the upstream claimed any non-identity encoding.
-// Forward Modified uses `hadEncoding` to know it must strip
-// Content-Encoding before writing the user-edited (plain) body back to
-// the browser, regardless of whether decompression actually succeeded.
+// Content-Encoding 기반으로 upstream 응답 body 압축 해제 → 패널이
+// 실제로 읽을 수 있는 텍스트 보도록. 디코드된 buffer(또는 미지의 인코딩/
+// 압축 해제 실패 시 원본) + `hadEncoding`(upstream이 non-identity 인코딩
+// 을 주장했으면 true) 반환. Forward Modified가 `hadEncoding`을 보고
+// 압축 해제 성공 여부와 무관하게 사용자가 편집한(plain) body를
+// 브라우저에 쓰기 전에 Content-Encoding을 제거해야 함을 인지.
 function _decodeResponseBody(buf, contentEncoding) {
   const enc = (contentEncoding || '').toLowerCase().trim();
   const hadEncoding = enc !== '' && enc !== 'identity';
@@ -27,8 +26,8 @@ function _decodeResponseBody(buf, contentEncoding) {
       return { body: zlib.gunzipSync(buf), hadEncoding: true };
     }
     if (enc === 'deflate') {
-      // Some servers send raw deflate (no zlib wrapper). Try inflate
-      // first; on failure, fall back to inflateRaw.
+      // 일부 서버는 raw deflate 전송(zlib wrapper 없음). 먼저 inflate
+      // 시도; 실패 시 inflateRaw로 fallback.
       try { return { body: zlib.inflateSync(buf), hadEncoding: true }; }
       catch { return { body: zlib.inflateRawSync(buf), hadEncoding: true }; }
     }
@@ -36,8 +35,8 @@ function _decodeResponseBody(buf, contentEncoding) {
       return { body: zlib.brotliDecompressSync(buf), hadEncoding: true };
     }
   } catch {
-    // Decompression failed — keep raw bytes but still report hadEncoding
-    // so Forward Modified strips the (now meaningless) header.
+    // 압축 해제 실패 — raw bytes 유지하되 hadEncoding은 보고해서
+    // Forward Modified가 (이제 의미 없는) 헤더를 strip하도록.
   }
   return { body: buf, hadEncoding: true };
 }
@@ -47,26 +46,25 @@ class ProxyServer extends EventEmitter {
     super();
     this.port = options.port || 8899;
     this.bypassPatterns = (options.bypassPatterns || []).map(p => new RegExp(p, 'i'));
-    this.urlFilter = null; // RegExp — if set, only intercept matching URLs
-    this.methodFilter = ''; // empty string = all
+    this.urlFilter = null; // RegExp — 설정 시 매칭 URL만 인터셉트
+    this.methodFilter = ''; // 빈 문자열 = all
     this.interceptActive = false;
     this.interceptResponse = options.interceptResponse || false;
     this.pendingRequests = new Map();
     this.pendingResponses = new Map();
-    // Header swaps registered ahead of a "Send to Browser" navigation in
-    // a new tab. Keyed by tabId; the next request from that tab to the
-    // matching URL gets the registered headers merged in, then the
-    // entry is consumed and a `header_swap_consumed` event fires so the
-    // extension can drop the tab's DNR tag rule (one-shot interception).
+    // 새 탭의 "Send to Browser" navigation 전에 등록된 header swap.
+    // tabId 키; 그 탭에서 매칭 URL로 가는 다음 요청은 등록된 헤더가
+    // 머지됨, 그 후 entry가 consume되고 `header_swap_consumed` 이벤트
+    // 발화 → 확장이 그 탭의 DNR tag 룰을 드롭(일회성 interception).
     this.pendingHeaderSwaps = new Map();
     this.headerSwapTtlMs = options.headerSwapTtlMs || 30000;
-    this.requestTimeout = options.requestTimeout || 60000; // 60s default
+    this.requestTimeout = options.requestTimeout || 60000; // 기본 60s
     this.server = null;
     this._idCounter = 0;
   }
 
-  // Lowercase header name used by the extension's declarativeNetRequest rule
-  // to mark requests that originated from the inspected DevTools tab.
+  // 확장의 declarativeNetRequest 룰이 inspected DevTools 탭에서 시작된
+  // 요청을 마킹하는 데 쓰는 lowercase 헤더 이름.
   static get TAG_HEADER() { return 'x-devtoolspp-tab'; }
 
   _makeId() {
@@ -74,22 +72,21 @@ class ProxyServer extends EventEmitter {
   }
 
   _shouldBypass(reqUrl, method) {
-    // Method filter: bypass if method doesn't match
+    // Method 필터: method 불일치면 bypass
     if (this.methodFilter && method && method.toUpperCase() !== this.methodFilter) return true;
-    // URL filter (include): match against host+pathname only — never against the
-    // query string. Trackers (Google Analytics, Doubleclick, etc.) embed the
-    // origin page URL as a query parameter, which would otherwise cause naive
-    // substring matching to incorrectly include them.
+    // URL 필터(include): host+pathname에 대해서만 매칭 — query string에 대해서는
+    // 절대 안 함. tracker(Google Analytics, Doubleclick 등)가 origin 페이지 URL을
+    // query 파라미터로 임베드 → 단순 substring 매칭이면 잘못 포함됨.
     if (this.urlFilter) {
       const target = this._filterTarget(reqUrl);
       if (!this.urlFilter.test(target)) return true;
     }
-    // Bypass pattern (exclude): bypass if matched (still tested against full URL
-    // because bypass patterns commonly target file extensions in the query)
+    // Bypass 패턴(exclude): 매치되면 bypass (full URL에 대해 테스트 — bypass
+    // 패턴은 흔히 query의 파일 확장자를 대상으로 하기 때문)
     return this.bypassPatterns.some(re => re.test(reqUrl));
   }
 
-  // Strip protocol/query/hash so the URL filter only sees host + pathname.
+  // protocol/query/hash 제거 → URL 필터가 host + pathname만 보도록.
   _filterTarget(reqUrl) {
     try {
       const u = new URL(reqUrl);
@@ -100,7 +97,7 @@ class ProxyServer extends EventEmitter {
   }
 
   // ============================================================
-  // Header swap registry — used by "Send to Browser (new tab)"
+  // Header swap 레지스트리 — "Send to Browser (새 탭)"이 사용
   // ============================================================
   registerHeaderSwap(payload) {
     if (!payload || payload.tabId == null || !payload.url) return;
@@ -121,8 +118,8 @@ class ProxyServer extends EventEmitter {
     }
     if (!ProxyServer._urlsMatchForSwap(entry.url, fullUrl)) return null;
     this.pendingHeaderSwaps.delete(key);
-    // Notify so the extension can remove the tab's DNR tag rule —
-    // subsequent navigations in that tab should not be intercepted.
+    // 알림 → 확장이 그 탭의 DNR tag 룰을 제거 가능. 그 탭의 후속
+    // navigation은 인터셉트되면 안 됨.
     this.emit('header_swap_consumed', { tabId: key, url: fullUrl });
     return entry;
   }
@@ -139,11 +136,11 @@ class ProxyServer extends EventEmitter {
     }
   }
 
-  // Lowercase swap header names overwrite same-named browser-set
-  // headers. Anything not in the swap (Cookie, Origin, etc.) passes
-  // through unchanged. HTTP/2 pseudo-headers (`:authority`, `:method`,
-  // etc.) are dropped — they're invalid in HTTP/1.1 and would throw
-  // ERR_INVALID_HTTP_TOKEN when handed to http.request().
+  // lowercase swap 헤더 이름은 같은 이름의 브라우저 설정 헤더를
+  // 덮어씀. swap에 없는 것(Cookie, Origin 등)은 그대로 통과. HTTP/2
+  // pseudo-headers(`:authority`, `:method` 등)는 drop — HTTP/1.1에서
+  // invalid이고 http.request()에 넘기면 ERR_INVALID_HTTP_TOKEN을
+  // 발생시킴.
   static _applyHeaderSwap(reqHeaders, swapHeaders) {
     const result = { ...reqHeaders };
     for (const [name, value] of Object.entries(swapHeaders || {})) {
@@ -153,10 +150,10 @@ class ProxyServer extends EventEmitter {
     return result;
   }
 
-  // Strip headers that http.request() would reject. Today this is
-  // HTTP/2 pseudo-headers (anything starting with ':') — they sneak in
-  // via captured request data on h2 origins. Invalid token characters
-  // would otherwise throw synchronously and unwind the message handler.
+  // http.request()가 reject할 헤더 제거. 현재는 HTTP/2 pseudo-headers
+  // (':'로 시작하는 모든 것) — h2 origin의 캡처 요청 데이터로 끼어듦.
+  // invalid 토큰 문자가 있으면 동기적으로 throw해서 메시지 핸들러를
+  // unwind함.
   static _stripInvalidH1Headers(headers) {
     const out = {};
     for (const [name, value] of Object.entries(headers || {})) {
@@ -167,7 +164,7 @@ class ProxyServer extends EventEmitter {
   }
 
   /**
-   * Read the full request body from an IncomingMessage
+   * IncomingMessage에서 full request body 읽기
    */
   _readBody(req) {
     return new Promise((resolve) => {
@@ -179,16 +176,16 @@ class ProxyServer extends EventEmitter {
   }
 
   /**
-   * Forward a request to the real server and pipe response back
+   * 실제 서버로 요청 forward + 응답 pipe back
    */
   _forwardRequest(method, targetUrl, headers, body, clientRes, requestId) {
     const parsed = new URL(targetUrl);
     const isHttps = parsed.protocol === 'https:';
     const transport = isHttps ? https : http;
 
-    // Remove proxy-specific headers + any HTTP/2 pseudo-headers that
-    // crept in from a captured-on-h2 request (those would throw
-    // ERR_INVALID_HTTP_TOKEN inside transport.request below).
+    // proxy-specific 헤더 제거 + h2 origin의 캡처 요청에서 끼어든
+    // HTTP/2 pseudo-header 제거(아래 transport.request 안에서
+    // ERR_INVALID_HTTP_TOKEN 발생시킴).
     const fwdHeaders = ProxyServer._stripInvalidH1Headers(headers);
     delete fwdHeaders['proxy-connection'];
     delete fwdHeaders['proxy-authorization'];
@@ -206,15 +203,15 @@ class ProxyServer extends EventEmitter {
     try {
       proxyReq = transport.request(options, (proxyRes) => {
       if (requestId) {
-        // Buffer response body
+        // 응답 body 버퍼링
         const chunks = [];
         proxyRes.on('data', chunk => chunks.push(chunk));
         proxyRes.on('end', () => {
           const respBuf = Buffer.concat(chunks);
-          // Decode based on Content-Encoding so the panel shows readable
-          // text instead of compressed garbage. We keep both the raw
-          // buffer (for plain Forward — browser decodes natively) and
-          // the decoded buffer (for the panel + Forward Modified).
+          // Content-Encoding 기반 디코드 → 패널이 압축된 garbage 대신
+          // 읽을 수 있는 텍스트 표시. raw buffer(plain Forward용 —
+          // 브라우저가 native 디코드)와 디코드된 buffer(panel + Forward
+          // Modified용) 양쪽 모두 보관.
           const contentEncoding = proxyRes.headers['content-encoding'] || '';
           const { body: decodedBuf, hadEncoding } = _decodeResponseBody(respBuf, contentEncoding);
           let respBody;
@@ -225,7 +222,7 @@ class ProxyServer extends EventEmitter {
           }
 
           if (this.interceptResponse) {
-            // Hold response for user decision
+            // 사용자 결정까지 응답 hold
             const respId = requestId + '_resp';
             const timer = setTimeout(() => {
               if (this.pendingResponses.has(respId)) {
@@ -240,9 +237,9 @@ class ProxyServer extends EventEmitter {
               id: respId,
               statusCode: proxyRes.statusCode,
               headers: { ...proxyRes.headers },
-              body: respBuf,           // raw (compressed) — for plain Forward
-              decodedBody: decodedBuf, // decompressed — for Forward Modified default
-              wasEncoded: hadEncoding, // true → strip Content-Encoding on modified
+              body: respBuf,           // raw (압축됨) — plain Forward용
+              decodedBody: decodedBuf, // 디코드됨 — Forward Modified 기본용
+              wasEncoded: hadEncoding, // true → modified 시 Content-Encoding 제거
               clientRes,
               timer,
             });
@@ -260,7 +257,7 @@ class ProxyServer extends EventEmitter {
               timestamp: Date.now(),
             });
           } else {
-            // Pass through and notify
+            // 그대로 통과하고 알림
             clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
             clientRes.end(respBuf);
             this.emit('response_captured', {
@@ -279,11 +276,11 @@ class ProxyServer extends EventEmitter {
       }
     });
     } catch (err) {
-      // transport.request() validates header tokens synchronously and
-      // throws TypeError on names like ":authority". Without this catch
-      // the throw becomes an unhandled rejection inside the async
-      // message handler and kills the host process — which manifests
-      // to the user as Intercept silently turning off mid-flight.
+      // transport.request()는 헤더 토큰을 동기적으로 검증하고
+      // ":authority" 같은 이름에서 TypeError throw. 이 catch가 없으면
+      // throw가 async 메시지 핸들러 안에서 unhandled rejection이 되어
+      // host 프로세스를 죽임 → 사용자에게는 Intercept가 도중에 silently
+      // 꺼지는 것으로 나타남.
       this.emit('error', new Error('Forward setup failed: ' + err.message));
       try {
         clientRes.writeHead(502, { 'Content-Type': 'text/plain' });
@@ -306,35 +303,34 @@ class ProxyServer extends EventEmitter {
   }
 
   /**
-   * Handle an intercepted HTTP request (both plain HTTP and decrypted HTTPS)
+   * 인터셉트된 HTTP 요청 처리 (plain HTTP와 복호화된 HTTPS 모두)
    */
   async _handleRequest(req, res, isHttps) {
     const body = await this._readBody(req);
 
-    // Build full URL
+    // full URL 구성
     let fullUrl;
     if (req.url.startsWith('http://') || req.url.startsWith('https://')) {
-      fullUrl = req.url; // Absolute URL (plain HTTP proxy)
+      fullUrl = req.url; // 절대 URL (plain HTTP proxy)
     } else {
       const proto = isHttps ? 'https' : 'http';
       const host = req.headers.host || 'localhost';
       fullUrl = `${proto}://${host}${req.url}`;
     }
 
-    // Tab scoping: the extension injects X-DevToolsPP-Tab on every request
-    // from the inspected tab via declarativeNetRequest. Requests without this
-    // header come from other tabs / service workers / extensions and must be
-    // forwarded untouched. Always strip the header so origin servers never
-    // see it.
+    // 탭 스코핑: 확장이 declarativeNetRequest로 inspected 탭의 모든
+    // 요청에 X-DevToolsPP-Tab 주입. 이 헤더가 없는 요청은 다른 탭/
+    // service worker/확장에서 온 것이므로 손대지 않고 forward. origin
+    // 서버에 절대 안 보이도록 헤더는 항상 strip.
     const tabIdTag = req.headers[ProxyServer.TAG_HEADER];
     const hasTabTag = tabIdTag != null;
     if (hasTabTag) {
       delete req.headers[ProxyServer.TAG_HEADER];
     }
 
-    // Header-swap consumption for Send-to-Browser. Runs before bypass
-    // and intercept-queue checks so the swap-merged headers show up in
-    // the queue editor exactly as they will go upstream.
+    // Send-to-Browser용 header-swap consume. bypass와 intercept-queue
+    // 체크 전에 실행 → swap이 머지된 헤더가 큐 에디터에 upstream에
+    // 갈 그대로 표시되도록.
     if (hasTabTag) {
       const swap = this._consumeHeaderSwap(tabIdTag, fullUrl);
       if (swap) {
@@ -342,8 +338,8 @@ class ProxyServer extends EventEmitter {
       }
     }
 
-    // Forward immediately if: intercept off, request not from inspected tab,
-    // or a bypass rule matches
+    // 즉시 forward 조건: intercept off, inspected 탭 외 요청, 또는
+    // bypass 룰 매치
     if (!this.interceptActive || !hasTabTag || this._shouldBypass(fullUrl, req.method)) {
       this._forwardRequest(req.method, fullUrl, req.headers, body, res);
       return;
@@ -351,7 +347,7 @@ class ProxyServer extends EventEmitter {
 
     const id = this._makeId();
 
-    // Set up timeout auto-forward
+    // timeout auto-forward 설정
     const timer = setTimeout(() => {
       if (this.pendingRequests.has(id)) {
         this.pendingRequests.delete(id);
@@ -360,7 +356,7 @@ class ProxyServer extends EventEmitter {
       }
     }, this.requestTimeout);
 
-    // Store pending request
+    // pending 요청 저장
     this.pendingRequests.set(id, {
       id,
       method: req.method,
@@ -371,7 +367,7 @@ class ProxyServer extends EventEmitter {
       timer,
     });
 
-    // Body as string for the extension (truncate large bodies)
+    // 확장용 body를 문자열로 (대용량 body는 truncate)
     let bodyStr = null;
     if (body.length > 0) {
       if (body.length > 512 * 1024) {
@@ -381,7 +377,7 @@ class ProxyServer extends EventEmitter {
       }
     }
 
-    // Emit to native messaging host
+    // native messaging host로 emit
     this.emit('request_intercepted', {
       id,
       method: req.method,
@@ -395,10 +391,10 @@ class ProxyServer extends EventEmitter {
   }
 
   /**
-   * Handle a decision from the extension for a pending request
+   * pending 요청에 대한 확장의 결정 처리
    */
   handleDecision(id, decision) {
-    // Check if this is a response decision
+    // response decision인지 확인
     if (id.endsWith('_resp')) {
       return this._handleResponseDecision(id, decision);
     }
@@ -458,7 +454,7 @@ class ProxyServer extends EventEmitter {
   }
 
   /**
-   * Handle a decision for a held response
+   * held response에 대한 결정 처리
    */
   _handleResponseDecision(id, decision) {
     const pending = this.pendingResponses.get(id);
@@ -471,8 +467,8 @@ class ProxyServer extends EventEmitter {
 
     switch (decision.action) {
       case 'forward':
-        // Send the raw (still-compressed) buffer — browser uses the
-        // upstream Content-Encoding header to decode natively.
+        // raw(여전히 압축된) buffer 전송 — 브라우저가 upstream의
+        // Content-Encoding 헤더로 native 디코드.
         try {
           clientRes.writeHead(statusCode, headers);
           clientRes.end(body);
@@ -481,11 +477,10 @@ class ProxyServer extends EventEmitter {
 
       case 'forward_modified': {
         const newStatus = decision.responseStatus || statusCode;
-        // The user edited a decoded body, so the bytes we're about to
-        // send are plain — strip Content-Encoding (and Content-Length,
-        // which Node will recompute) so the browser doesn't try to
-        // decompress plain bytes. Transfer-Encoding: chunked also
-        // becomes stale once we send a single buffer.
+        // 사용자가 디코드된 body를 편집했으므로 보낼 bytes는 plain —
+        // Content-Encoding 제거(Content-Length도; Node가 재계산) →
+        // 브라우저가 plain bytes를 압축 해제하려 하지 않도록.
+        // Transfer-Encoding: chunked도 단일 buffer 전송 시 stale.
         const newHeaders = { ...(decision.headers || headers) };
         if (wasEncoded) {
           delete newHeaders['content-encoding'];
@@ -525,7 +520,7 @@ class ProxyServer extends EventEmitter {
   }
 
   /**
-   * Forward all pending requests (used when stopping intercept)
+   * 모든 pending 요청 forward (intercept 중지 시 사용)
    */
   forwardAllPending() {
     for (const [id, pending] of this.pendingRequests) {
@@ -541,19 +536,19 @@ class ProxyServer extends EventEmitter {
       } catch {}
     }
     this.pendingResponses.clear();
-    // Drop swap entries with no navigation behind them so they can't
-    // leak into a later intercept session.
+    // navigation 없이 남은 swap 항목 드롭 → 이후 intercept 세션에
+    // leak되지 않도록.
     this.pendingHeaderSwaps.clear();
   }
 
   /**
-   * Handle CONNECT method for HTTPS tunneling with MITM
+   * MITM과 함께 HTTPS 터널링을 위한 CONNECT 메서드 처리
    */
   _handleConnect(req, clientSocket, head) {
     const [hostname, port] = req.url.split(':');
     const targetPort = parseInt(port) || 443;
 
-    // If intercept not active, just tunnel without MITM
+    // intercept 비활성이면 MITM 없이 그냥 tunnel
     if (!this.interceptActive) {
       const serverSocket = net.connect(targetPort, hostname, () => {
         clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
@@ -566,7 +561,7 @@ class ProxyServer extends EventEmitter {
       return;
     }
 
-    // MITM: generate cert for this hostname and terminate TLS
+    // MITM: 이 hostname용 cert 생성 + TLS 종료
     let hostCert;
     try {
       hostCert = certGenerator.generateHostCert(hostname);
@@ -584,19 +579,19 @@ class ProxyServer extends EventEmitter {
       return;
     }
 
-    // Tell browser the tunnel is established
+    // 브라우저에 tunnel established 알림
     clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
 
-    // Create a TLS server socket to decrypt browser's traffic
+    // 브라우저 트래픽 복호화용 TLS server socket 생성
     const tlsSocket = new tls.TLSSocket(clientSocket, {
       isServer: true,
       key: hostCert.key,
       cert: hostCert.cert,
     });
 
-    // Create a mini HTTP server to parse decrypted requests
+    // 복호화된 요청 파싱용 mini HTTP server 생성
     const miniServer = http.createServer((req, res) => {
-      // Store the target hostname/port for proper forwarding
+      // 적절한 forwarding을 위해 target hostname/port 보관
       if (!req.headers.host) {
         req.headers.host = hostname + (targetPort !== 443 ? ':' + targetPort : '');
       }
@@ -607,21 +602,21 @@ class ProxyServer extends EventEmitter {
       try { clientSocket.destroy(); } catch {}
     });
 
-    // Feed decrypted data into the mini server by emitting a connection event
+    // connection 이벤트 emit으로 복호화된 데이터를 mini server에 공급
     miniServer.emit('connection', tlsSocket);
 
-    // If there was any head data, push it into the TLS socket
+    // head 데이터가 있으면 TLS socket에 push
     if (head && head.length > 0) {
       tlsSocket.unshift(head);
     }
   }
 
   /**
-   * Start the proxy server
+   * proxy server 시작
    */
   start() {
     return new Promise((resolve, reject) => {
-      // Ensure CA is ready before starting
+      // 시작 전 CA 준비 보장
       try {
         certGenerator.ensureCA();
       } catch (err) {
@@ -653,7 +648,7 @@ class ProxyServer extends EventEmitter {
   }
 
   /**
-   * Stop the proxy server
+   * proxy server 중지
    */
   stop() {
     return new Promise((resolve) => {
@@ -678,7 +673,7 @@ class ProxyServer extends EventEmitter {
   }
 
   /**
-   * Update configuration at runtime
+   * 런타임 설정 업데이트
    */
   updateConfig(config) {
     if (config.bypassPatterns) {

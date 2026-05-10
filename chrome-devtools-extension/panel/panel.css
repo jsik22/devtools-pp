@@ -42,9 +42,36 @@ header h1 {
 .title-plus1 { color: #EA4335; }
 .title-plus2 { color: #FBBC04; }
 
+/* Tagline next to the logo — same row, muted color so the brand
+   wordmark stays the dominant element in the strip. flex:1 lets it
+   eat any leftover horizontal space and pushes Auto-start to the
+   far right. */
+.header-tagline {
+  flex: 1;
+  font-size: 11px;
+  color: #999;
+  margin-left: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .tabs {
   display: flex;
   gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Sub-toolbar at the top of the right content column — hosts the
+   Monitor / Intercept tab buttons and the global Scope bar. Sits
+   above whichever tab section is active. */
+.content-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 4px 12px;
+  background: #f3f3f3;
+  border-bottom: 1px solid #d4d4d4;
   flex-shrink: 0;
 }
 

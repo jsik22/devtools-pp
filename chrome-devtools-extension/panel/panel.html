@@ -9,16 +9,7 @@
   <div class="container">
     <header>
       <h1><span class="title-name">DevTools</span><span class="title-plus1">+</span><span class="title-plus2">+</span></h1>
-      <div class="tabs">
-        <button class="tab active" data-tab="network">Monitor</button>
-        <button class="tab intercept-tab" data-tab="intercept">Intercept</button>
-      </div>
-      <div class="global-scope-bar">
-        <label for="global-scope-input" class="global-scope-label" title="Host+path pattern. Wildcards: *. Multiple patterns: comma-separated. Empty = all in scope.">Scope</label>
-        <input type="text" id="global-scope-input" class="filter-input global-scope-input" placeholder="*.site.com, api.example.com — empty = show all">
-        <button id="global-scope-apply" class="btn btn-xs" title="Apply scope (Enter)">Apply</button>
-        <button id="global-scope-clear" class="btn btn-xs" title="Clear scope (show all)">Clear</button>
-      </div>
+      <span class="header-tagline">A lightweight web and API analysis</span>
       <label class="header-pref" title="Start monitoring automatically when this panel opens">
         <input type="checkbox" id="auto-start-monitoring">
         Auto-start
@@ -31,6 +22,18 @@
       </div>
       <div class="split-gutter split-gutter-h" data-resize="prev"></div>
       <div class="main-content">
+        <div class="content-toolbar">
+          <div class="tabs">
+            <button class="tab active" data-tab="network">Monitor</button>
+            <button class="tab intercept-tab" data-tab="intercept">Intercept</button>
+          </div>
+          <div class="global-scope-bar">
+            <label for="global-scope-input" class="global-scope-label" title="Host+path pattern. Wildcards: *. Multiple patterns: comma-separated. Empty = all in scope.">Scope</label>
+            <input type="text" id="global-scope-input" class="filter-input global-scope-input" placeholder="*.site.com, api.example.com — empty = show all">
+            <button id="global-scope-apply" class="btn btn-xs" title="Apply scope (Enter)">Apply</button>
+            <button id="global-scope-clear" class="btn btn-xs" title="Clear scope (show all)">Clear</button>
+          </div>
+        </div>
 
     <!-- Network tab -->
     <section id="network" class="tab-content active">

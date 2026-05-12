@@ -1366,8 +1366,42 @@ function _downloadJson(filename, data) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// 파일명용 timestamp — local time 기준 (UTC가 아닌 사용자 wall clock).
+// JSON 안의 metadata.exportedAt은 UTC ISO 그대로 유지 — 머신 파싱 용도.
 function _exportTimestamp() {
-  return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+// 파일명 안전 문자열로 변환 — 호스트명에 들어갈 수 있는 ':' / ',' 같은
+// 특수문자를 '_'로 치환. 60자로 잘라서 OS 파일명 한도를 안 넘게.
+function _sanitizeForFilename(s) {
+  return String(s || '').replace(/[^a-zA-Z0-9.-]/g, '_').slice(0, 60);
+}
+
+// Export 파일명 빌더. 규칙:
+//   devtoolspp-<full|selected>[-<host>][-<N>req]-<timestamp>.json
+//
+//   scope='tab' + 활성 host 있음 → host 포함
+//   selectedOnly=true            → '<N>req' 카운트 포함, 접두사 'selected'
+//   selectedOnly=false           → 접두사 'full'
+//
+// 예시:
+//   devtoolspp-full-2026-05-12T11-22-13.json
+//   devtoolspp-full-example.com-2026-05-12T11-22-13.json
+//   devtoolspp-selected-5req-2026-05-12T11-22-13.json
+//   devtoolspp-selected-example.com-5req-2026-05-12T11-22-13.json
+function _exportFilename(scope, selectedOnly, count) {
+  const parts = ['devtoolspp', selectedOnly ? 'selected' : 'full'];
+  if (scope === 'tab' && activeTabHost) {
+    parts.push(_sanitizeForFilename(activeTabHost));
+  }
+  if (selectedOnly) {
+    parts.push(count + 'req');
+  }
+  parts.push(_exportTimestamp());
+  return parts.join('-') + '.json';
 }
 
 function _exportMetadata() {
@@ -1407,13 +1441,20 @@ function exportAllRequests(scope, selectedOnly) {
     responseBase64: !!r.responseBase64,
     scanResults: r.scanResults || [],
     initiator: r.initiator || null,
+    // Auth — 수동 마크 + 실행한 테스트 결과까지 보존. 자동 감지는 import 후
+    // 동일 입력으로 다시 결정되니까 굳이 export 안 해도 되지만, 사용자가
+    // 분석 도중 만진 상태(mark / test verdict)는 라이브 상태에 종속되지
+    // 않게 같이 저장.
+    authMarked: r._authMarked,
+    authTestResults: _authTestResults.has(r.requestId)
+      ? _authTestResults.get(r.requestId) : null,
     // Session 귀속 보존 — 재임포트된 파일이 원본 캡처와 동일한
     // per-host 탭 그룹핑으로 들어가도록.
     mainHost: r._mainHost || null,
   }));
 
   _downloadJson(
-    `devtoolspp-full-requests-${_exportTimestamp()}.json`,
+    _exportFilename(scope, selectedOnly, source.length),
     Object.assign({}, _exportMetadata(), {
       totalRequests: source.length,
       items,
@@ -1461,7 +1502,7 @@ function _itemToReq(item) {
   if (!mainHost) {
     try { mainHost = new URL(meta.url || '').host || null; } catch {}
   }
-  return {
+  const req = {
     requestId: 'imp_' + (++_importIdCounter),
     method: meta.method || 'GET',
     url: meta.url || '',
@@ -1486,6 +1527,14 @@ function _itemToReq(item) {
     _harEntry: null,
     _imported: true,
   };
+  // Auth — 수동 마크 / 테스트 결과 복원 (legacy export엔 없음 → undefined로 무해)
+  if (item.authMarked === true || item.authMarked === false) {
+    req._authMarked = item.authMarked;
+  }
+  if (item.authTestResults) {
+    _authTestResults.set(req.requestId, item.authTestResults);
+  }
+  return req;
 }
 
 function _applyImport(reqs, mode, filename) {

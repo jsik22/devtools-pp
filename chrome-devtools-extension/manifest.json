@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "DevTools++",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "description": "A lightweight web and API analysis tool built into Chrome DevTools.",
   "permissions": [
     "activeTab",

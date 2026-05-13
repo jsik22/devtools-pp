@@ -11,10 +11,6 @@
     <header>
       <h1><span class="title-name">DevTools</span><span class="title-plus1">+</span><span class="title-plus2">+</span></h1>
       <span class="header-tagline">A lightweight web and API analysis</span>
-      <label class="header-pref" title="Start Monitor and JS Trace automatically when this panel opens">
-        <input type="checkbox" id="auto-start-monitoring">
-        Auto-start
-      </label>
     </header>
 
     <div class="main-split">
@@ -40,9 +36,7 @@
     <!-- Network 탭 -->
     <section id="network" class="tab-content active">
       <div class="toolbar">
-        <button id="network-reload" class="btn" title="Hard reload the inspected tab (bypasses cache so cached CSS/JS/images get re-captured)">Reload</button>
-        <button id="network-start" class="btn btn-primary">Start Monitoring</button>
-        <button id="network-stop" class="btn btn-danger" disabled>Stop</button>
+        <button id="network-toggle" class="btn btn-toggle-off">Monitor OFF</button>
         <button id="network-clear" class="btn">Clear</button>
         <input type="file" id="network-import-file" accept=".json" hidden>
         <button id="network-import" class="btn" title="Import previously exported JSON">Import</button>
@@ -201,7 +195,7 @@
     <section id="intercept" class="tab-content">
       <!-- Top: 컨트롤 바 (single row; 보조 컨트롤은 Rules popover로 collapse) -->
       <div class="toolbar icpt-toolbar">
-        <button id="icpt-toggle" class="btn btn-intercept-off">Intercept OFF</button>
+        <button id="icpt-toggle" class="btn btn-toggle-off">Intercept OFF</button>
         <span id="icpt-proxy-status" class="icpt-status-pill">Idle</span>
         <div class="icpt-scope-group">
           <label class="icpt-check"><input type="checkbox" id="icpt-req" checked> Request</label>
@@ -348,16 +342,34 @@
     <!-- JS Trace 탭 -->
     <section id="js-trace" class="tab-content">
       <div class="toolbar">
-        <button id="trace-start" class="btn btn-primary">Start Trace</button>
-        <button id="trace-stop" class="btn btn-danger" disabled>Stop</button>
+        <button id="trace-toggle" class="btn btn-toggle-off">Trace OFF</button>
         <button id="trace-clear" class="btn">Clear</button>
-        <button id="trace-export" class="btn" disabled>Export</button>
-        <label class="mask-toggle" title="다운로드 직전 password 필드 값을 [REDACTED]로 치환. 캡처 자체는 영향 없음.">
-          <input type="checkbox" id="mask-passwords"> mask pw
-        </label>
+        <input type="file" id="trace-import-file" accept=".json" hidden>
+        <button id="trace-import" class="btn" title="Import previously exported JS Trace JSON">Import</button>
+        <div class="export-dropdown">
+          <button id="trace-export" class="btn" disabled>Export ▾</button>
+          <div id="trace-export-menu" class="export-menu hidden">
+            <label class="export-menu-item">
+              <input type="checkbox" id="mask-passwords"> Masking
+            </label>
+            <div class="export-menu-divider"></div>
+            <div class="export-menu-section">Events</div>
+            <button class="export-menu-item" data-trace-export="all">Full events</button>
+            <button class="export-menu-item" data-trace-export="selected" disabled>Selected events <span class="export-selected-count" id="trace-export-selected-count"></span></button>
+          </div>
+        </div>
+        <span id="trace-selection" class="network-selection hidden">
+          <span id="trace-selection-count">0 selected</span>
+          <button id="trace-selection-clear" class="btn btn-xs" title="Clear selection">X</button>
+        </span>
 
-        <input type="search" id="trace-search" class="filter-input search-input-wide" placeholder="search events (substring, case-insensitive)" />
-        <span id="search-count" class="search-count"></span>
+        <div class="network-search-group">
+          <input type="text" id="trace-search" class="filter-input search-input-wide" placeholder="Search events...">
+          <button id="trace-search-clear" class="btn btn-xs network-search-btn hidden" title="Clear search (Esc)">X</button>
+          <button id="trace-search-prev" class="btn btn-xs network-search-btn" title="Previous match (Shift+Enter)" disabled>&#9650;</button>
+          <button id="trace-search-next" class="btn btn-xs network-search-btn" title="Next match (Enter)" disabled>&#9660;</button>
+          <span id="search-count" class="badge network-search-count hidden"></span>
+        </div>
 
         <div class="filters">
           <label><input type="checkbox" data-cat="random" checked><span class="cat-dot cat-random"></span>random</label>
@@ -372,6 +384,7 @@
       </div>
 
       <div class="timeline-header">
+        <span class="th-select"><input type="checkbox" id="trace-select-all" title="Select all visible (Cmd/Ctrl+A) · Shift+click for range"></span>
         <span class="th-time">Time</span>
         <span class="th-cat"></span>
         <span class="th-kind">Kind</span>

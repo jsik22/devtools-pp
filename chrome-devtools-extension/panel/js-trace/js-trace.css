@@ -6,36 +6,47 @@
   flex-direction: column;
   /* timeline-header와 .row가 공유하는 컬럼 템플릿. 컬럼 리사이즈 시 이 변수만
      갱신하면 동적으로 추가되는 row까지 일괄 반영됨.
-     순서: Time / Cat dot / Kind / Args / Result.
+     순서: Select / Time / Cat dot / Kind / Args / Result.
      Kind 170px — `form.submit (js-call)`처럼 긴 kind 텍스트도 한 줄 표시. */
-  --js-trace-cols: 70px 14px 170px 1fr 110px;
+  --js-trace-cols: 24px 70px 14px 170px 1fr 110px;
 }
 
-/* JS Trace toolbar는 절대 wrap되지 않도록 강제 — 좁아지면 가로 스크롤로 처리.
-   wrap 시 mask pw 체크박스와 status 텍스트가 어색하게 다음 줄로 떨어지는
-   레이아웃 깨짐 방지. */
+/* Row 좌측 체크박스 셀 — Monitor의 select-cell과 동일 정책:
+   master는 항상 표시, row checkbox는 hover 또는 checked 시만 표시. */
+#js-trace .th-select,
+#js-trace .row-select {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#js-trace .row-select input[type="checkbox"] {
+  cursor: pointer;
+  margin: 0;
+  visibility: hidden;
+}
+#js-trace .row:hover .row-select input[type="checkbox"],
+#js-trace .row.row-checked .row-select input[type="checkbox"] {
+  visibility: visible;
+}
+#js-trace .th-select input[type="checkbox"] {
+  cursor: pointer;
+  margin: 0;
+}
+#js-trace .row.row-checked {
+  background: #fffbe6;
+}
+#js-trace .row.row-checked:hover {
+  background: #fff5cc;
+}
+
+/* JS Trace toolbar wrap 방지 (status 텍스트가 다음 줄로 떨어지는 깨짐
+   방지). overflow-x는 visible 유지 — auto/hidden이면 export 드롭다운 메뉴가
+   toolbar 영역 밖으로 빠져나오지 못해 timeline에 가려짐. 좁은 폭에서는
+   우측 컨트롤이 화면 밖으로 잘릴 수 있으나 wrap 깨짐 + 메뉴 가려짐 둘 다
+   피하는 trade-off. */
 #js-trace > .toolbar {
   flex-wrap: nowrap;
-  overflow-x: auto;
 }
-
-#js-trace .mask-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  user-select: none;
-  font-size: 11px;
-  color: #555;
-  margin-left: 4px;
-}
-
-#js-trace .search-count {
-  font-size: 11px;
-  color: #777;
-  min-width: 50px;
-}
-#js-trace .search-count.zero { color: #d32f2f; }
 
 #js-trace .filters {
   display: flex;
@@ -80,9 +91,7 @@
 /* search input과 mask pw 체크박스도 좁은 폭에서 줄어들지 않도록 — 줄어들면
    라벨 텍스트가 wrap돼 보기 흉함. toolbar는 nowrap+overflow이므로 그냥
    가로 스크롤로 처리. */
-#js-trace .mask-toggle,
-#js-trace .filters,
-#js-trace .search-count {
+#js-trace .filters {
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -211,6 +220,12 @@
 #js-trace .row .details .label { color: #1a73e8; }
 
 #js-trace .row.hidden { display: none; }
+
+/* Prev/Next 네비로 활성화된 매치 row — 노란 좌측 막대 강조. row-checked의
+   배경 강조와 다른 시각 슬롯이라 겹쳐도 둘 다 인지 가능. */
+#js-trace .row.search-active {
+  box-shadow: inset 3px 0 0 #fbbf24;
+}
 
 #js-trace .search-input-wide {
   min-width: 240px;

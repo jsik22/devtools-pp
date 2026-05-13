@@ -119,25 +119,6 @@ header h1 {
   min-width: 0;
 }
 
-/* 헤더 우측 끝에 위치하는 컴팩트 환경설정 토글. */
-.header-pref {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: #666;
-  white-space: nowrap;
-  flex-shrink: 0;
-  cursor: pointer;
-  user-select: none;
-  padding-left: 14px;
-  border-left: 1px solid #bbb;
-}
-.header-pref input {
-  margin: 0;
-  cursor: pointer;
-}
-
 .tab-content {
   display: none;
   flex: 1;
@@ -1807,21 +1788,38 @@ tr.selected td {
   color: #999;
 }
 
+/* Scope select — 작은 아이콘 박스(🎯). count와 reload 사이 inline 배치.
+   appearance:none으로 native 드롭다운 화살표 제거, placeholder 아이콘만 노출.
+   클릭 시 native select 펼침으로 Exact/Wildcard 옵션 선택. */
 .sitemap-scope-select {
-  position: absolute;
-  right: 6px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 10px;
-  padding: 1px 4px;
-  width: 90px;
-  visibility: hidden;
+  appearance: none;
+  -webkit-appearance: none;
+  margin-left: 6px;
+  flex-shrink: 0;
+  width: 26px;
+  padding: 1px 0;
+  text-align: center;
+  text-align-last: center;
+  font-size: 12px;
+  line-height: 1.2;
   background: #fafafa;
-  z-index: 1;
+  border: 1px solid #c4c4c4;
+  border-radius: 3px;
+  cursor: pointer;
 }
-.sitemap-node:hover > .sitemap-scope-select,
-.sitemap-scope-select:focus {
-  visibility: visible;
+/* 펼친 옵션은 정상 텍스트 정렬 — placeholder만 가운데 정렬되면 됨. */
+.sitemap-scope-select option {
+  text-align: left;
+  font-size: 11px;
+}
+
+/* Target host에만 노출되는 Hard reload 버튼 — scope select 우측에 inline. */
+.sitemap-host-reload {
+  margin-left: 4px;
+  flex-shrink: 0;
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 1.2;
 }
 
 /* 자식은 부모 아래 들여쓰기 — 시각적으로 계층 구조 전달하는 룰.
@@ -1862,7 +1860,10 @@ tr.selected td {
   flex-wrap: wrap;
 }
 
-.btn-intercept-off {
+/* 세 기능 탭 (Monitor / Intercept / JS Trace) 공용 단일 토글 버튼.
+   OFF 상태 = 회색 (idle), ON 상태 = 빨강 + 펄싱 애니메이션 (탭의 빨간 dot과
+   동일한 tab-recording-pulse keyframes 공유). */
+.btn-toggle-off {
   background: #e8e8e8;
   border-color: #c4c4c4;
   color: #666;
@@ -1872,7 +1873,7 @@ tr.selected td {
   min-width: 130px;
 }
 
-.btn-intercept-on {
+.btn-toggle-on {
   background: #d32f2f;
   border-color: #c62828;
   color: #fff;
@@ -1880,7 +1881,7 @@ tr.selected td {
   padding: 5px 16px;
   font-size: 12px;
   min-width: 130px;
-  animation: icpt-pulse 1.5s ease-in-out infinite;
+  animation: tab-recording-pulse 1.5s ease-in-out infinite;
 }
 
 /* Global scope Apply 버튼 — dirty(미적용) 상태 */
@@ -2639,10 +2640,8 @@ tr.selected td {
 /* Export 메뉴 섹션 라벨과 divider */
 .export-menu-section {
   padding: 4px 12px 2px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   color: #5f6368;
   pointer-events: none;
 }

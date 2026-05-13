@@ -47,7 +47,7 @@ chrome.runtime.sendMessage({ type: 'check_native' }, (response) => {
 // ============================================================
 // Scope + monitoring — read from chrome.storage.local
 // ============================================================
-chrome.storage.local.get(['globalScopeInput', 'networkMonitoring'], (result) => {
+chrome.storage.local.get(['globalScopeInput', 'networkMonitoring', 'autoStartMonitoring'], (result) => {
   const scope = (result && result.globalScopeInput || '').trim();
   const scopeIcon = document.querySelector('#row-scope .row-icon');
   const scopeText = document.getElementById('scope-text');
@@ -72,4 +72,13 @@ chrome.storage.local.get(['globalScopeInput', 'networkMonitoring'], (result) => 
     monIcon.className = 'row-icon';
     monText.textContent = 'Monitoring stopped';
   }
+
+  document.getElementById('autostart-toggle').checked = !!(result && result.autoStartMonitoring);
+});
+
+// Auto-start 토글 — 사용자가 체크 변경 시 storage에 영속화. panel이 열릴 때
+// panel.js의 initAutoStartMonitoring과 js-trace.js의 부트스트랩이 이 값을 읽어
+// Monitor + JS Trace를 자동 시작.
+document.getElementById('autostart-toggle').addEventListener('change', (e) => {
+  chrome.storage.local.set({ autoStartMonitoring: e.target.checked });
 });

@@ -8,13 +8,23 @@
   const root = document.getElementById('js-trace');
   if (!root) return;
 
-  const startBtn = root.querySelector('#trace-start');
-  const stopBtn = root.querySelector('#trace-stop');
+  const toggleBtn = root.querySelector('#trace-toggle');
   const clearBtn = root.querySelector('#trace-clear');
+  const importBtn = root.querySelector('#trace-import');
+  const importFileEl = root.querySelector('#trace-import-file');
   const exportBtn = root.querySelector('#trace-export');
+  const exportMenu = root.querySelector('#trace-export-menu');
   const maskPwChk = root.querySelector('#mask-passwords');
+  const selectAllChk = root.querySelector('#trace-select-all');
+  const selectionPill = root.querySelector('#trace-selection');
+  const selectionCountEl = root.querySelector('#trace-selection-count');
+  const selectionClearBtn = root.querySelector('#trace-selection-clear');
+  const exportSelectedCountEl = root.querySelector('#trace-export-selected-count');
   const searchInput = root.querySelector('#trace-search');
   const searchCountEl = root.querySelector('#search-count');
+  const searchClearBtn = root.querySelector('#trace-search-clear');
+  const searchPrevBtn = root.querySelector('#trace-search-prev');
+  const searchNextBtn = root.querySelector('#trace-search-next');
   const statusEl = root.querySelector('#trace-status');
   const timelineEl = root.querySelector('#timeline');
   const filterInputs = root.querySelectorAll('.filters input[type=checkbox]');
@@ -34,6 +44,13 @@
     Array.from(filterInputs).filter(i => i.checked).map(i => i.dataset.cat)
   );
   let searchQuery = '';
+  let searchCurrentIdx = -1; // prev/next 네비 현재 위치 (visible match row 기준)
+  // 선택된 이벤트의 seq 집합. seq는 inject.js의 __authTraceSeq가 부여한 단조
+  // 증가 번호 (import된 events도 자체 seq를 가짐). row checkbox / master /
+  // Cmd-A / Shift-click이 이 set을 변경하면 export menu의 "Selected events"
+  // 항목이 활성화됨.
+  const selectedSeqs = new Set();
+  let lastToggledRow = null; // Shift+click range 시 시작 anchor
 
   // ── 부트스트랩: inject/restore 스크립트 텍스트를 미리 로드 ───────────────────
   Promise.all([
@@ -47,7 +64,7 @@
     try {
       chrome.storage.local.get(['autoStartMonitoring'], (result) => {
         if (result && result.autoStartMonitoring && !tracing) {
-          startBtn.click();
+          toggleBtn.click();
         }
       });
     } catch (e) { /* storage 접근 실패 시 silent */ }
@@ -104,7 +121,17 @@
     const row = document.createElement('div');
     row.className = 'row';
     row.dataset.cat = ev.cat;
+    row.dataset.seq = ev.seq;
     row._searchText = buildSearchText(ev);
+    if (selectedSeqs.has(ev.seq)) row.classList.add('row-checked');
+
+    const selectCell = document.createElement('span');
+    selectCell.className = 'row-select';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = selectedSeqs.has(ev.seq);
+    selectCell.appendChild(cb);
+    row.appendChild(selectCell);
 
     const time = document.createElement('span');
     time.className = 'time';
@@ -158,10 +185,92 @@
     row.addEventListener('click', (e) => {
       // details/stack 안의 텍스트 선택은 방해하지 않음
       if (e.target.closest('.details') || e.target.closest('.stack')) return;
+      // 체크박스 영역(select-cell) click은 selection 토글 — open/close 안 함
+      if (e.target.closest('.row-select')) {
+        handleRowCheckboxClick(row, e);
+        return;
+      }
       row.classList.toggle('open');
     });
 
     return row;
+  }
+
+  // Row checkbox / select-cell padding 클릭 처리. Shift+click이면 마지막 토글
+  // row와의 visible range 일괄 토글.
+  function handleRowCheckboxClick(row, e) {
+    const checkbox = row.querySelector('.row-select input');
+    if (e.shiftKey && lastToggledRow && lastToggledRow !== row) {
+      // Shift+click: 마지막 anchor와 현재 row 사이 visible row 일괄 선택
+      const allRows = Array.from(timelineEl.querySelectorAll('.row'));
+      const i1 = allRows.indexOf(lastToggledRow);
+      const i2 = allRows.indexOf(row);
+      if (i1 !== -1 && i2 !== -1) {
+        const [from, to] = i1 < i2 ? [i1, i2] : [i2, i1];
+        const targetState = !selectedSeqs.has(Number(row.dataset.seq));
+        for (let i = from; i <= to; i++) {
+          const r = allRows[i];
+          if (r.classList.contains('hidden')) continue;
+          setRowSelected(r, targetState);
+        }
+      }
+    } else {
+      // 단일 토글
+      const newState = !selectedSeqs.has(Number(row.dataset.seq));
+      setRowSelected(row, newState);
+      if (e.target.tagName !== 'INPUT') {
+        // padding 클릭 시 input checked 상태도 sync
+        checkbox.checked = newState;
+      }
+    }
+    lastToggledRow = row;
+    updateSelectionUI();
+  }
+
+  function setRowSelected(row, state) {
+    const seq = Number(row.dataset.seq);
+    if (state) selectedSeqs.add(seq);
+    else selectedSeqs.delete(seq);
+    row.classList.toggle('row-checked', state);
+    const cb = row.querySelector('.row-select input');
+    if (cb) cb.checked = state;
+  }
+
+  function getVisibleRows() {
+    return Array.from(timelineEl.querySelectorAll('.row:not(.hidden)'));
+  }
+
+  // Selection UI 갱신: master checkbox 상태(none/some/all), counter pill,
+  // export menu의 "Selected events" 항목 활성화 + 카운트 표시.
+  function updateSelectionUI() {
+    const visible = getVisibleRows();
+    const visibleSelected = visible.filter(r => selectedSeqs.has(Number(r.dataset.seq))).length;
+    if (visible.length === 0) {
+      selectAllChk.checked = false;
+      selectAllChk.indeterminate = false;
+    } else if (visibleSelected === 0) {
+      selectAllChk.checked = false;
+      selectAllChk.indeterminate = false;
+    } else if (visibleSelected === visible.length) {
+      selectAllChk.checked = true;
+      selectAllChk.indeterminate = false;
+    } else {
+      selectAllChk.checked = false;
+      selectAllChk.indeterminate = true;
+    }
+    const totalSelected = selectedSeqs.size;
+    if (totalSelected > 0) {
+      selectionPill.classList.remove('hidden');
+      selectionCountEl.textContent = totalSelected + ' selected';
+    } else {
+      selectionPill.classList.add('hidden');
+    }
+    // Export menu "Selected events" 항목
+    const selBtn = exportMenu.querySelector('[data-trace-export="selected"]');
+    if (selBtn) {
+      selBtn.disabled = totalSelected === 0;
+      exportSelectedCountEl.textContent = totalSelected > 0 ? `(${totalSelected})` : '';
+    }
   }
 
   function setPlaceholder(text) {
@@ -198,6 +307,8 @@
       rows.forEach(r => { if (!r.classList.contains('hidden')) shown++; });
       updateSearchCount(shown, rows.length);
     }
+    // 새 row 도착 시 master checkbox/indeterminate 상태 재계산
+    updateSelectionUI();
   }
 
   function isRowVisible(row) {
@@ -209,11 +320,49 @@
   function updateSearchCount(shown, total) {
     if (!searchQuery) {
       searchCountEl.textContent = '';
-      searchCountEl.classList.remove('zero');
+      searchCountEl.classList.remove('no-matches');
+      searchCountEl.classList.add('hidden');
+      searchClearBtn.classList.add('hidden');
+      searchPrevBtn.disabled = true;
+      searchNextBtn.disabled = true;
       return;
     }
-    searchCountEl.textContent = shown + ' / ' + total;
-    searchCountEl.classList.toggle('zero', shown === 0);
+    // shown = 매치 row 수 (현재 visible row 수와 동일 — 매치 안 된 row는 hidden)
+    searchClearBtn.classList.remove('hidden');
+    searchCountEl.classList.remove('hidden');
+    if (shown === 0) {
+      searchCountEl.textContent = 'No matches';
+      searchCountEl.classList.add('no-matches');
+      searchPrevBtn.disabled = true;
+      searchNextBtn.disabled = true;
+    } else {
+      const cur = searchCurrentIdx >= 0 ? (searchCurrentIdx + 1) + ' / ' + shown : shown;
+      searchCountEl.textContent = cur;
+      searchCountEl.classList.remove('no-matches');
+      searchPrevBtn.disabled = shown < 2;
+      searchNextBtn.disabled = shown < 2;
+    }
+  }
+
+  // visible row 목록 (= 검색 매치 row). prev/next 네비 대상.
+  function getMatchedRows() {
+    return Array.from(timelineEl.querySelectorAll('.row:not(.hidden)'));
+  }
+
+  function highlightMatch(idx) {
+    const rows = getMatchedRows();
+    if (rows.length === 0) {
+      searchCurrentIdx = -1;
+      return;
+    }
+    if (idx < 0) idx = rows.length - 1;
+    if (idx >= rows.length) idx = 0;
+    timelineEl.querySelectorAll('.row.search-active').forEach(r => r.classList.remove('search-active'));
+    const target = rows[idx];
+    target.classList.add('search-active');
+    target.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+    searchCurrentIdx = idx;
+    updateSearchCount(rows.length, rows.length);
   }
 
   function applyFilter() {
@@ -225,6 +374,7 @@
       if (visible) shown++;
     });
     updateSearchCount(shown, rows.length);
+    updateSelectionUI();
   }
 
   // ── 폴링 ────────────────────────────────────────────────────────────────────
@@ -253,7 +403,7 @@
 
   // ── 버튼 핸들러 ─────────────────────────────────────────────────────────────
 
-  startBtn.addEventListener('click', async () => {
+  async function startTrace() {
     if (!injectCode) {
       setStatus('inject script not loaded yet');
       return;
@@ -263,8 +413,8 @@
       tracing = true;
       traceStartedAt = Date.now();
       try { tracedPageURL = await evalInPage('location.href'); } catch (e) { tracedPageURL = null; }
-      startBtn.disabled = true;
-      stopBtn.disabled = false;
+      toggleBtn.textContent = 'Trace ON';
+      toggleBtn.className = 'btn btn-toggle-on';
       if (tabBtn) tabBtn.classList.add('recording');
       setStatus('recording…', true);
       setPlaceholder('Recording — interact with the page (login / submit / etc.) to capture trace events.<br><span style="opacity:.6">Tip: try <code>Math.random()</code> in the page console for a quick sanity check.</span>');
@@ -272,9 +422,9 @@
     } catch (err) {
       setStatus('inject failed: ' + err.message);
     }
-  });
+  }
 
-  stopBtn.addEventListener('click', async () => {
+  async function stopTrace() {
     tracing = false;
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     // 마지막으로 남은 이벤트 flush + filter stats 보관 후 wrapper 복원
@@ -288,22 +438,75 @@
     } catch (err) {
       console.warn('[js-trace] stop error:', err.message);
     }
-    startBtn.disabled = false;
-    stopBtn.disabled = true;
+    toggleBtn.textContent = 'Trace OFF';
+    toggleBtn.className = 'btn btn-toggle-off';
     if (tabBtn) tabBtn.classList.remove('recording');
     setStatus('stopped — ' + events.length + ' events');
     if (events.length === 0) {
       setPlaceholder('No events captured. The page may not use any of the hooked APIs (Math.random / crypto.* / fetch / XHR) during the recording window.');
     }
+  }
+
+  toggleBtn.addEventListener('click', () => {
+    if (tracing) stopTrace();
+    else startTrace();
   });
 
   clearBtn.addEventListener('click', () => {
     events.length = 0;
     lastFilterStats = null;
+    selectedSeqs.clear();
     timelineEl.innerHTML = '<div class="placeholder">No trace recorded yet.</div>';
     exportBtn.disabled = true;
     updateSearchCount(0, 0);
+    updateSelectionUI();
     if (!tracing) setStatus('idle');
+  });
+
+  // Import — 이전에 export한 JS Trace JSON 파일을 불러와 timeline 재구성.
+  // tracing 중에는 차단 (현재 세션과 충돌). 기존 events는 항상 덮어쓰기 —
+  // imported 데이터의 traceStartedAt이 fmtTime 기준이 되어야 시간 표시 정상.
+  importBtn.addEventListener('click', () => {
+    if (tracing) {
+      setStatus('Stop tracing before import');
+      return;
+    }
+    importFileEl.click();
+  });
+  importFileEl.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ''; // 같은 파일 재선택 가능하도록 reset
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        // tool 필드는 'js-trace' 또는 legacy 'js-auth-trace'
+        const validTool = data.tool === 'js-trace' || data.tool === 'js-auth-trace';
+        if (!validTool || !Array.isArray(data.events)) {
+          setStatus('Invalid JS Trace file');
+          return;
+        }
+        // 기존 timeline 클리어 후 imported 데이터로 채움
+        events.length = 0;
+        selectedSeqs.clear();
+        timelineEl.innerHTML = '';
+        traceStartedAt = data.startedAt ? new Date(data.startedAt).getTime() : Date.now();
+        tracedPageURL = data.pageURL || null;
+        lastFilterStats = data.filterStats || null;
+        renderNewEvents(data.events);
+        updateSelectionUI();
+        if (data.events.length === 0) {
+          setPlaceholder('Imported file contained 0 events.');
+        }
+        exportBtn.disabled = data.events.length === 0;
+        setStatus('imported — ' + data.events.length + ' events · ' + file.name);
+      } catch (err) {
+        setStatus('Import failed: ' + err.message);
+      }
+    };
+    reader.onerror = () => setStatus('File read failed');
+    reader.readAsText(file);
   });
 
   // password 필드 read 이벤트의 result(JSON-stringified 형태)에서 실제 값을 추출.
@@ -365,49 +568,111 @@
     });
   }
 
-  exportBtn.addEventListener('click', async () => {
-    if (events.length === 0) return;
-    const masked = maskPwChk.checked;
-    const exportEvents = masked ? maskExportEvents(events) : events;
+  // Export 버튼 click → 드롭다운 메뉴 toggle. 실제 다운로드는 메뉴 안의
+  // "Download JSON" 항목 click으로 트리거. Monitor의 export 메뉴와 동일 패턴.
+  exportBtn.addEventListener('click', (e) => {
+    if (exportBtn.disabled) return;
+    e.stopPropagation();
+    exportMenu.classList.toggle('hidden');
+  });
+  // outside click → menu close
+  document.addEventListener('click', (e) => {
+    if (exportMenu.classList.contains('hidden')) return;
+    if (e.target.closest('.export-dropdown')) return;
+    exportMenu.classList.add('hidden');
+  });
+  // Masking 체크박스 클릭 시 메뉴 닫지 않음 (label 안의 input)
+  exportMenu.querySelector('label').addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
 
-    // filter stats: tracing 중이면 live 조회, stopped면 Stop 시점 캐시 사용
-    let filterStats = lastFilterStats;
-    if (tracing) {
-      try {
-        const raw = await evalInPage('JSON.stringify(window.__authTraceFilterStats || null)');
-        if (raw && raw !== 'null') filterStats = JSON.parse(raw);
-      } catch (e) { /* ignore */ }
-    }
+  // Export 메뉴의 Full/Selected 항목 → 해당 source로 다운로드 트리거.
+  exportMenu.querySelectorAll('[data-trace-export]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (btn.disabled) return;
+      exportMenu.classList.add('hidden');
+      const onlySelected = btn.dataset.traceExport === 'selected';
+      const source = onlySelected
+        ? events.filter(ev => selectedSeqs.has(ev.seq))
+        : events;
+      if (source.length === 0) return;
+      const masked = maskPwChk.checked;
+      const exportEvents = masked ? maskExportEvents(source) : source;
 
-    const now = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    const stamp =
-      now.getFullYear() +
-      pad(now.getMonth() + 1) +
-      pad(now.getDate()) + '-' +
-      pad(now.getHours()) +
-      pad(now.getMinutes()) +
-      pad(now.getSeconds());
-    const payload = {
-      version: 1,
-      tool: 'js-trace',
-      exportedAt: now.toISOString(),
-      startedAt: traceStartedAt ? new Date(traceStartedAt).toISOString() : null,
-      pageURL: tracedPageURL,
-      eventCount: events.length,
-      masked: masked,
-      filterStats: filterStats,
-      events: exportEvents
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'js-trace-' + stamp + (masked ? '-masked' : '') + '.json';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+      // filter stats: tracing 중이면 live 조회, stopped면 Stop 시점 캐시 사용
+      let filterStats = lastFilterStats;
+      if (tracing) {
+        try {
+          const raw = await evalInPage('JSON.stringify(window.__authTraceFilterStats || null)');
+          if (raw && raw !== 'null') filterStats = JSON.parse(raw);
+        } catch (e) { /* ignore */ }
+      }
+
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      const stamp =
+        now.getFullYear() +
+        pad(now.getMonth() + 1) +
+        pad(now.getDate()) + '-' +
+        pad(now.getHours()) +
+        pad(now.getMinutes()) +
+        pad(now.getSeconds());
+      const payload = {
+        version: 1,
+        tool: 'js-trace',
+        exportedAt: now.toISOString(),
+        startedAt: traceStartedAt ? new Date(traceStartedAt).toISOString() : null,
+        pageURL: tracedPageURL,
+        eventCount: source.length,
+        masked: masked,
+        filterStats: filterStats,
+        events: exportEvents
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const suffix = (onlySelected ? '-selected' : '') + (masked ? '-masked' : '');
+      a.download = 'js-trace-' + stamp + suffix + '.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+  });
+
+  // Master checkbox — visible row 일괄 select/deselect.
+  selectAllChk.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const visible = getVisibleRows();
+    const allSelected = visible.length > 0 && visible.every(r => selectedSeqs.has(Number(r.dataset.seq)));
+    const targetState = !allSelected;
+    visible.forEach(r => setRowSelected(r, targetState));
+    updateSelectionUI();
+  });
+
+  // Selection clear pill
+  selectionClearBtn.addEventListener('click', () => {
+    selectedSeqs.clear();
+    timelineEl.querySelectorAll('.row.row-checked').forEach(r => {
+      r.classList.remove('row-checked');
+      const cb = r.querySelector('.row-select input');
+      if (cb) cb.checked = false;
+    });
+    updateSelectionUI();
+  });
+
+  // Cmd/Ctrl+A — visible 전체 선택 (JS Trace 탭 active + 입력 필드 외)
+  document.addEventListener('keydown', (e) => {
+    if (!(e.metaKey || e.ctrlKey)) return;
+    if (e.key !== 'a' && e.key !== 'A') return;
+    if (!root.classList.contains('active')) return;
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    e.preventDefault();
+    const visible = getVisibleRows();
+    visible.forEach(r => setRowSelected(r, true));
+    updateSelectionUI();
   });
 
   filterInputs.forEach(input => {
@@ -421,7 +686,46 @@
 
   searchInput.addEventListener('input', () => {
     searchQuery = searchInput.value.toLowerCase();
+    searchCurrentIdx = -1;
+    // search-active 강조 제거
+    timelineEl.querySelectorAll('.row.search-active').forEach(r => r.classList.remove('search-active'));
     applyFilter();
+    // 검색어 비어있지 않으면 첫 매치로 자동 이동
+    if (searchQuery) {
+      const rows = getMatchedRows();
+      if (rows.length > 0) highlightMatch(0);
+    }
+  });
+
+  // Enter = next, Shift+Enter = prev, Esc = clear
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const rows = getMatchedRows();
+      if (rows.length === 0) return;
+      highlightMatch(searchCurrentIdx + (e.shiftKey ? -1 : 1));
+    } else if (e.key === 'Escape') {
+      if (searchInput.value) {
+        searchInput.value = '';
+        searchInput.dispatchEvent(new Event('input'));
+      }
+    }
+  });
+
+  searchPrevBtn.addEventListener('click', () => {
+    const rows = getMatchedRows();
+    if (rows.length === 0) return;
+    highlightMatch(searchCurrentIdx - 1);
+  });
+  searchNextBtn.addEventListener('click', () => {
+    const rows = getMatchedRows();
+    if (rows.length === 0) return;
+    highlightMatch(searchCurrentIdx + 1);
+  });
+  searchClearBtn.addEventListener('click', () => {
+    searchInput.value = '';
+    searchInput.dispatchEvent(new Event('input'));
+    searchInput.focus();
   });
 
   // ── 컬럼 리사이즈 ──────────────────────────────────────────────────────────
@@ -432,14 +736,14 @@
     const header = root.querySelector('.timeline-header');
     if (!header) return;
     const cells = Array.from(header.children);
-    if (cells.length < 5) return;
+    if (cells.length < 6) return;
 
     // CSS var의 현재 default를 읽어 cols 배열 초기화.
     function parseCols() {
       const raw = getComputedStyle(root).getPropertyValue('--js-trace-cols').trim();
       return raw.split(/\s+/).map(s => s.endsWith('px') ? parseFloat(s) : s);
     }
-    const cols = parseCols(); // [70, 14, 170, '1fr', 110]
+    const cols = parseCols(); // [24, 70, 14, 170, '1fr', 110]
 
     function writeCols() {
       const parts = cols.map(c => typeof c === 'number' ? c + 'px' : c);
@@ -475,9 +779,10 @@
     }
 
     // cells[0]=Time, [1]=Cat dot(fixed), [2]=Kind, [3]=Args(1fr), [4]=Result(last)
-    addResizer(cells[0], 0, +1);   // Time 우측 → cols[0] 직접 조정
-    addResizer(cells[2], 2, +1);   // Kind 우측 → cols[2] 직접 조정
-    addResizer(cells[3], 4, -1);   // Args/Result 경계 → cols[4](Result) 역방향
+    // cells[0]=Select(fixed), [1]=Time, [2]=Cat dot(fixed), [3]=Kind, [4]=Args(1fr), [5]=Result(last)
+    addResizer(cells[1], 1, +1);   // Time 우측 → cols[1] 직접 조정
+    addResizer(cells[3], 3, +1);   // Kind 우측 → cols[3] 직접 조정
+    addResizer(cells[4], 5, -1);   // Args/Result 경계 → cols[5](Result) 역방향
   })();
 
   // 페이지 네비게이션 시 wrapper가 사라짐 — tracing 중이면 재주입.

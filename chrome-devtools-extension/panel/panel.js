@@ -294,14 +294,6 @@ _crawlImportFile.addEventListener('change', (e) => {
   e.target.value = '';
 });
 
-document.getElementById('network-reload').addEventListener('click', () => {
-  // Hard reload — HTTP 캐시 bypass로 캐시된 CSS/JS/이미지가 네트워크
-  // 레이어로 다시 와서 캡처에 잡히도록. 일반 reload는 브라우저가
-  // 캐시에서 서빙하면서 chrome.devtools.network 이벤트를 아예
-  // 건너뛰어 트리/리스트에 silent gap이 생김.
-  chrome.devtools.inspectedWindow.reload({ ignoreCache: true });
-});
-
 function classifyMimeType(mimeType) {
   if (!mimeType) return 'other';
   if (mimeType.includes('json') || mimeType.includes('xml')) return 'api';
@@ -550,7 +542,7 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
     row.appendChild(countEl);
   }
 
-  // host 전용: hover 시 "Set Scope" 드롭다운 — 이 도메인(또는 와일드카드
+  // host 전용: "Set Scope" 드롭다운 — 이 도메인(또는 와일드카드
   // 형태)을 글로벌 scope로 고정. 사용자가 패턴을 직접 입력하지 않고
   // Intercept 노이즈를 줄일 수 있게 함.
   if (isHost) {
@@ -558,9 +550,11 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
     scopeSelect.className = 'btn btn-xs sitemap-scope-select';
     scopeSelect.title = `Set global scope based on ${host}`;
 
+    // 닫힌 상태에서 표시될 placeholder — scope 의미의 표적 아이콘.
+    // 펼치면 native select dropdown으로 Exact/Wildcard 옵션 노출.
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = 'Set Scope';
+    placeholder.textContent = '🎯';
     placeholder.disabled = true;
     placeholder.selected = true;
     scopeSelect.appendChild(placeholder);
@@ -587,6 +581,22 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
     });
 
     row.appendChild(scopeSelect);
+  }
+
+  // host 전용 (target host만): Hard reload 버튼 — 브라우저에서 실제 열려있는
+  // 호스트에 대해서만 의미 있는 동작이므로 target host 노드에만 노출.
+  // `chrome.devtools.inspectedWindow.reload({ignoreCache:true})`는 inspected
+  // tab만 reload하므로 다른 host(이전 방문 / external) 노드에서는 무의미.
+  if (isHost && host === targetHost) {
+    const reloadBtn = document.createElement('button');
+    reloadBtn.className = 'btn btn-xs sitemap-host-reload';
+    reloadBtn.textContent = '↻';
+    reloadBtn.title = 'Hard reload the inspected tab (bypasses cache so cached CSS/JS/images get re-captured)';
+    reloadBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      chrome.devtools.inspectedWindow.reload({ ignoreCache: true });
+    });
+    row.appendChild(reloadBtn);
   }
 
   wrapper.appendChild(row);
@@ -1073,8 +1083,10 @@ networkTabsEl.addEventListener('click', (e) => {
   setActiveTab(tabEl.dataset.host);
 });
 
-document.getElementById('network-start').addEventListener('click', startNetworkMonitoring);
-document.getElementById('network-stop').addEventListener('click', stopNetworkMonitoring);
+document.getElementById('network-toggle').addEventListener('click', () => {
+  if (networkMonitoring) stopNetworkMonitoring();
+  else startNetworkMonitoring();
+});
 document.getElementById('network-clear').addEventListener('click', clearNetwork);
 
 // All / Host-only 토글. per-tab — 활성 탭의 필터 모드를 설정하고
@@ -1312,16 +1324,18 @@ function replayExistingNetworkHAR() {
 
 function startNetworkMonitoring() {
   networkMonitoring = true;
-  document.getElementById('network-start').disabled = true;
-  document.getElementById('network-stop').disabled = false;
+  const btn = document.getElementById('network-toggle');
+  btn.textContent = 'Monitor ON';
+  btn.className = 'btn btn-toggle-on';
   document.querySelector('.tab[data-tab="network"]').classList.add('recording');
   safeStorageSet({ networkMonitoring: true });
 }
 
 function stopNetworkMonitoring() {
   networkMonitoring = false;
-  document.getElementById('network-start').disabled = false;
-  document.getElementById('network-stop').disabled = true;
+  const btn = document.getElementById('network-toggle');
+  btn.textContent = 'Monitor OFF';
+  btn.className = 'btn btn-toggle-off';
   document.querySelector('.tab[data-tab="network"]').classList.remove('recording');
   safeStorageSet({ networkMonitoring: false });
 }
@@ -6955,7 +6969,7 @@ function startIntercept() {
 
   interceptActive = true;
   icptToggleBtn.textContent = 'Intercept ON';
-  icptToggleBtn.className = 'btn btn-intercept-on';
+  icptToggleBtn.className = 'btn btn-toggle-on';
   interceptTabBtn.classList.add('recording');
   updateProxyStatus('idle', 'Proxy: Connecting...');
 
@@ -7001,7 +7015,7 @@ document.getElementById('icpt-method-filter').addEventListener('change', () => {
 function stopIntercept() {
   interceptActive = false;
   icptToggleBtn.textContent = 'Intercept OFF';
-  icptToggleBtn.className = 'btn btn-intercept-off';
+  icptToggleBtn.className = 'btn btn-toggle-off';
   interceptTabBtn.classList.remove('recording');
 
   // 남은 모든 큐 아이템 forward
@@ -7725,14 +7739,12 @@ function setupTableColumnResize(table) {
 }
 setupTableColumnResize(document.getElementById('network-table'));
 
-// 영속화된 "Auto-start" 토글 — 체크되면 이 패널이 열리는 즉시 Network
-// 모니터링 활성화. 기본 off라 기존 사용자에게 동작 변화 없음.
+// 영속화된 "Auto-start" 토글 — 사용자가 popup(확장 아이콘)에서 켜두면
+// 이 패널이 열리는 즉시 Network 모니터링 활성화. UI는 popup.html에 있고
+// panel은 storage만 읽음 (panel.js는 read-only consumer).
 (function initAutoStartMonitoring() {
-  const checkbox = document.getElementById('auto-start-monitoring');
-  if (!checkbox) return;
   safeStorageGet(['autoStartMonitoring'], (result) => {
     const enabled = !!(result && result.autoStartMonitoring);
-    checkbox.checked = enabled;
     if (enabled && !networkMonitoring) {
       startNetworkMonitoring();
       // 페이지가 이미 로드되어 있을 수 있음 — HAR replay 없이는 다음
@@ -7740,9 +7752,6 @@ setupTableColumnResize(document.getElementById('network-table'));
       // 캡처한 모든 것을 backfill.
       replayExistingNetworkHAR();
     }
-  });
-  checkbox.addEventListener('change', (e) => {
-    safeStorageSet({ autoStartMonitoring: e.target.checked });
   });
 })();
 

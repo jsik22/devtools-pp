@@ -4,13 +4,14 @@
   <meta charset="utf-8">
   <title>DevTools++</title>
   <link rel="stylesheet" href="panel.css">
+  <link rel="stylesheet" href="js-trace/js-trace.css">
 </head>
 <body>
   <div class="container">
     <header>
       <h1><span class="title-name">DevTools</span><span class="title-plus1">+</span><span class="title-plus2">+</span></h1>
       <span class="header-tagline">A lightweight web and API analysis</span>
-      <label class="header-pref" title="Start monitoring automatically when this panel opens">
+      <label class="header-pref" title="Start Monitor and JS Trace automatically when this panel opens">
         <input type="checkbox" id="auto-start-monitoring">
         Auto-start
       </label>
@@ -26,6 +27,7 @@
           <div class="tabs">
             <button class="tab active" data-tab="network">Monitor</button>
             <button class="tab intercept-tab" data-tab="intercept">Intercept</button>
+            <button class="tab" data-tab="js-trace">JS Trace</button>
           </div>
           <div class="global-scope-bar">
             <label for="global-scope-input" class="global-scope-label" title="Host+path pattern. Wildcards: *. Multiple patterns: comma-separated. Empty = all in scope.">Scope</label>
@@ -343,6 +345,45 @@
       </div>
     </section>
 
+    <!-- JS Trace 탭 -->
+    <section id="js-trace" class="tab-content">
+      <div class="toolbar">
+        <button id="trace-start" class="btn btn-primary">Start Trace</button>
+        <button id="trace-stop" class="btn btn-danger" disabled>Stop</button>
+        <button id="trace-clear" class="btn">Clear</button>
+        <button id="trace-export" class="btn" disabled>Export</button>
+        <label class="mask-toggle" title="다운로드 직전 password 필드 값을 [REDACTED]로 치환. 캡처 자체는 영향 없음.">
+          <input type="checkbox" id="mask-passwords"> mask pw
+        </label>
+
+        <input type="search" id="trace-search" class="filter-input search-input-wide" placeholder="search events (substring, case-insensitive)" />
+        <span id="search-count" class="search-count"></span>
+
+        <div class="filters">
+          <label><input type="checkbox" data-cat="random" checked><span class="cat-dot cat-random"></span>random</label>
+          <label><input type="checkbox" data-cat="crypto" checked><span class="cat-dot cat-crypto"></span>crypto</label>
+          <label><input type="checkbox" data-cat="network" checked><span class="cat-dot cat-network"></span>network</label>
+          <label><input type="checkbox" data-cat="encoding" checked><span class="cat-dot cat-encoding"></span>encoding</label>
+          <label><input type="checkbox" data-cat="input" checked><span class="cat-dot cat-input"></span>input</label>
+          <label><input type="checkbox" data-cat="storage" checked><span class="cat-dot cat-storage"></span>storage</label>
+        </div>
+
+        <span id="trace-status" class="status">idle</span>
+      </div>
+
+      <div class="timeline-header">
+        <span class="th-time">Time</span>
+        <span class="th-cat"></span>
+        <span class="th-kind">Kind</span>
+        <span class="th-args">Args</span>
+        <span class="th-result">Result</span>
+      </div>
+
+      <div id="timeline" class="timeline">
+        <div class="placeholder">No trace recorded yet. Click <b>Start Trace</b>, perform the action you want to inspect, then click <b>Stop</b>.</div>
+      </div>
+    </section>
+
       </div> <!-- /.main-content -->
     </div> <!-- /.main-split -->
 
@@ -402,5 +443,6 @@
   <div id="dtpp-toast" class="dtpp-toast"></div>
 
   <script src="panel.js"></script>
+  <script src="js-trace/js-trace.js"></script>
 </body>
 </html>

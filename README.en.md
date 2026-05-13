@@ -152,6 +152,17 @@ Intercept requests **before** they reach the server and responses **before** the
 - Drag-resize gutters between queue, editor, and log so growing content scrolls inside its own pane instead of shrinking the message editors.
 - Keyboard shortcuts: `F` Forward · `G` Forward Modified · `D` Drop · `R` Mock · `A` Forward All · `Q` Drop All.
 
+### 🧬 JS Trace
+
+Records the page's authentication / session / token JavaScript on a timeline — **before** any request hits the network. Surface area aligned with PortSwigger's Authentication category (login / MFA / OAuth / JWT / session / cookie).
+
+- Click **Start Trace**, interact with the page, and these are captured: `Math.random` / `crypto.getRandomValues` / `crypto.subtle.*` / `fetch` / `XMLHttpRequest.send` / `HTMLFormElement.submit` (method calls + submit event) / `btoa` · `atob` / `TextEncoder.encode` · `TextDecoder.decode` / `HTMLInputElement.value` getter (plaintext password · OTP tracing) / `Storage.setItem|removeItem|clear` / `document.cookie` getter+setter.
+- **Category color-dot filters** — random / crypto / network / encoding / input / storage. Substring search matches across args, results, and stack traces simultaneously.
+- **Automatic noise cuts** — per-call-site frequency cap (after 10 hits at the same site, one "capped" notice then silent), URL blacklist (`.js.map` / favicon), and dedupe on consecutive identical input.value reads.
+- **Survives navigation** — for form POST → 302 chains and other unload-before-poll cases, unflushed trace + seq counter is stashed to `sessionStorage` on `pagehide` and restored on the next page's inject.
+- **Export JSON** — full timeline + `filterStats` metadata. Enabling `mask pw` replaces password field values with `[REDACTED]`, including URL-encoded and JSON-escaped variants.
+- **Runs independently** of Monitor capture and Intercept proxy. All three can be active simultaneously without conflict.
+
 ---
 
 ## Installation

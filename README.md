@@ -152,6 +152,17 @@ DevTools++는 Chrome DevTools의 native함과 전문 테스트 도구의 핵심 
 - 큐 / 에디터 / 로그 사이의 드래그 gutter — 콘텐츠가 늘어나도 메시지 에디터가 줄어들지 않고 각 영역 안에서 스크롤.
 - 키보드 단축키: `F` Forward · `G` Forward Modified · `D` Drop · `R` Mock · `A` Forward All · `Q` Drop All.
 
+### 🧬 JS Trace
+
+요청이 네트워크로 나가기 **전**, 페이지의 JS가 인증·세션·토큰을 어떻게 다루는지 timeline으로 기록합니다. PortSwigger Authentication 범주 (login / MFA / OAuth / JWT / session / cookie) 가시화가 목표입니다.
+
+- **Start Trace** 클릭 후 페이지를 조작하면 다음 호출을 모두 캡처: `Math.random` / `crypto.getRandomValues` / `crypto.subtle.*` / `fetch` / `XMLHttpRequest.send` / `HTMLFormElement.submit` (메서드 호출 + submit 이벤트) / `btoa` · `atob` / `TextEncoder.encode` · `TextDecoder.decode` / `HTMLInputElement.value` getter (평문 비번 · OTP 추적) / `Storage.setItem|removeItem|clear` / `document.cookie` getter+setter.
+- **카테고리별 컬러 dot 필터** — random / crypto / network / encoding / input / storage. substring 검색으로 호출 인자 / 결과 / 스택까지 동시 매칭.
+- **노이즈 자동 컷** — 호출 사이트 빈도 cap (10회 이상 같은 위치에서 fire되면 "capped" notice 1회 후 silent), `.js.map` / favicon 같은 무관 URL 차단, 연속 동일 input 값 dedup.
+- **페이지 이동 견디기** — form POST → 302 chain처럼 panel poll 전에 unload되는 케이스에서도 `pagehide` 시 `sessionStorage`에 stash → 다음 페이지 inject 시 복원.
+- **Export JSON** — 호출 timeline 전체 + `filterStats` 메타데이터. `mask pw` 옵션으로 password 필드 값과 그 URL-encoded · JSON-escaped 변형까지 `[REDACTED]`로 치환.
+- **격리 동작** — Monitor 캡처 / Intercept 프록시와 독립 실행. 셋 다 동시 켜둬도 충돌 없음.
+
 ---
 
 ## 설치

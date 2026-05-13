@@ -332,6 +332,29 @@ tr:hover {
   display: none;
 }
 
+/* 컬럼 리사이저 위젯 — table th 우측 끝 또는 grid header cell 우측 끝에
+   absolute로 부착되어 드래그로 컬럼 폭 조정. split-gutter와 시각 톤 통일. */
+.col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  z-index: 2;
+}
+.col-resizer:hover,
+.col-resizer.dragging {
+  background: #0078d4;
+}
+/* 드래그 중에는 전역 cursor를 col-resize로 유지 (마우스가 resizer 벗어나도). */
+body.col-resizing,
+body.col-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
 /* Network split 뷰 — top-level 레이아웃은 [tree | gutter | main].
    우측은 tabs + (list | detail)을 wrap → 트리가 툴바 아래 full height
    를 차지(global navigation surface), 탭은 그 우측 list/detail 행
@@ -1815,9 +1838,10 @@ tr.selected td {
    Intercept Proxy
    ============================================================ */
 
-/* intercept ON일 때 탭 라벨 앞에 작은 펄싱 빨간 점 표시 — 탭의 폰트
-   색상을 override하지 않으면서. */
-.intercept-tab.intercepting::before {
+/* 탭 라벨 앞에 작은 펄싱 빨간 점 — 탭 기능이 활성 상태(Monitor 모니터링 중,
+   Intercept ON, JS Trace recording 중)임을 시각적으로 통일성 있게 표시.
+   탭의 폰트 색상을 override하지 않으면서. */
+.tab.recording::before {
   content: '';
   display: inline-block;
   width: 6px;
@@ -1826,10 +1850,10 @@ tr.selected td {
   background: #d32f2f;
   margin-right: 6px;
   vertical-align: middle;
-  animation: icpt-pulse 1.5s ease-in-out infinite;
+  animation: tab-recording-pulse 1.5s ease-in-out infinite;
 }
 
-@keyframes icpt-pulse {
+@keyframes tab-recording-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
 }
@@ -2552,6 +2576,25 @@ tr.selected td {
 
 /* Selection 컬럼 — 좁고, 체크박스는 row hover 또는 체크된 상태일
    때까지 숨김. Header 체크박스는 항상 보임. */
+/* table-layout:fixed로 th 너비가 컬럼 폭을 결정. URL 컬럼만 너비 미지정 →
+   남은 공간 흡수. 컬럼 리사이저는 panel.js의 setupTableColumnResize가 부착. */
+#network-table {
+  table-layout: fixed;
+}
+#network-table thead th:nth-child(2) { width: 150px; } /* Host */
+#network-table thead th:nth-child(3) { width: 70px; }  /* Method */
+/* nth-child(4) URL — width 미지정, flex 흡수 */
+#network-table thead th:nth-child(5) { width: 60px; }  /* Status */
+#network-table thead th:nth-child(6) { width: 90px; }  /* Type */
+#network-table thead th:nth-child(7) { width: 70px; }  /* Size */
+#network-table thead th:nth-child(8) { width: 70px; }  /* Time */
+#network-table thead th:nth-child(9) { width: 100px; } /* Initiator */
+#network-table thead th:nth-child(10) { width: 110px; } /* Detection */
+
+#network-table th {
+  position: relative; /* col-resizer 부착용 */
+}
+
 #network-table th.select-cell,
 #network-table td.select-cell {
   width: 28px;

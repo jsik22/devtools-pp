@@ -1314,6 +1314,7 @@ function startNetworkMonitoring() {
   networkMonitoring = true;
   document.getElementById('network-start').disabled = true;
   document.getElementById('network-stop').disabled = false;
+  document.querySelector('.tab[data-tab="network"]').classList.add('recording');
   safeStorageSet({ networkMonitoring: true });
 }
 
@@ -1321,6 +1322,7 @@ function stopNetworkMonitoring() {
   networkMonitoring = false;
   document.getElementById('network-start').disabled = false;
   document.getElementById('network-stop').disabled = true;
+  document.querySelector('.tab[data-tab="network"]').classList.remove('recording');
   safeStorageSet({ networkMonitoring: false });
 }
 
@@ -6954,7 +6956,7 @@ function startIntercept() {
   interceptActive = true;
   icptToggleBtn.textContent = 'Intercept ON';
   icptToggleBtn.className = 'btn btn-intercept-on';
-  interceptTabBtn.classList.add('intercepting');
+  interceptTabBtn.classList.add('recording');
   updateProxyStatus('idle', 'Proxy: Connecting...');
 
   const combined = buildBypassPattern();
@@ -7000,7 +7002,7 @@ function stopIntercept() {
   interceptActive = false;
   icptToggleBtn.textContent = 'Intercept OFF';
   icptToggleBtn.className = 'btn btn-intercept-off';
-  interceptTabBtn.classList.remove('intercepting');
+  interceptTabBtn.classList.remove('recording');
 
   // 남은 모든 큐 아이템 forward
   forwardAll();
@@ -7682,6 +7684,46 @@ function setupSplitGutter(gutter) {
   });
 }
 document.querySelectorAll('.split-gutter').forEach(setupSplitGutter);
+
+// ── 컬럼 리사이즈 ──────────────────────────────────────────────────────────
+// table-layout:fixed인 테이블의 각 thead th 우측에 .col-resizer를 부착해
+// 드래그로 컬럼 폭 조정. 마지막 컬럼은 우측 공간이 없어 skip.
+// js-trace의 grid 기반 리사이즈는 js-trace.js가 별도 구현 (CSS var 갱신).
+function setupTableColumnResize(table) {
+  if (!table) return;
+  const ths = Array.from(table.querySelectorAll('thead th'));
+  ths.forEach((th, idx) => {
+    if (idx === ths.length - 1) return;
+    if (th.querySelector('.col-resizer')) return;
+    const resizer = document.createElement('div');
+    resizer.className = 'col-resizer';
+    th.appendChild(resizer);
+
+    resizer.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startW = th.offsetWidth;
+      resizer.classList.add('dragging');
+      document.body.classList.add('col-resizing');
+      const onMove = (ev) => {
+        const newW = Math.max(40, startW + (ev.clientX - startX));
+        th.style.width = newW + 'px';
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        resizer.classList.remove('dragging');
+        document.body.classList.remove('col-resizing');
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    // 헤더의 정렬 등 click 동작을 가로채지 않도록.
+    resizer.addEventListener('click', (e) => e.stopPropagation());
+  });
+}
+setupTableColumnResize(document.getElementById('network-table'));
 
 // 영속화된 "Auto-start" 토글 — 체크되면 이 패널이 열리는 즉시 Network
 // 모니터링 활성화. 기본 off라 기존 사용자에게 동작 변화 없음.

@@ -105,7 +105,10 @@
   }
 
   function captureStack() {
-    var stack = (new Error()).stack || '';
+    // nexacro 등 일부 framework가 Error.prepareStackTrace를 override해 .stack을
+    // string이 아닌 객체로 반환하는 경우가 있음 → string type check 후 사용.
+    var stack = (new Error()).stack;
+    if (typeof stack !== 'string') return '';
     // v8: 첫 줄 "Error" + captureStack 프레임 + wrapper 프레임 → 3줄 skip
     var lines = stack.split('\n').slice(3, 13);
     return lines.join('\n').trim();
@@ -184,44 +187,48 @@
 
   // ── 1. Math.random ────────────────────────────────────────────────────────
   originals.MathRandom = Math.random;
-  Math.random = function () {
+  Math.random = function random() {
     var r = originals.MathRandom.apply(Math, arguments);
-    var stack = captureStack();
-    var verdict = checkCallsiteCap('Math.random', stack);
-    if (verdict === 'suppress') return r;
-    if (verdict === 'notice') {
-      emitCapNotice('random', 'Math.random', stack.split('\n')[0].trim());
-      return r;
-    }
-    push({
-      cat: 'random',
-      kind: 'Math.random',
-      args: [],
-      result: String(r),
-      stack: stack
-    });
+    try {
+      var stack = captureStack();
+      var verdict = checkCallsiteCap('Math.random', stack);
+      if (verdict === 'suppress') return r;
+      if (verdict === 'notice') {
+        emitCapNotice('random', 'Math.random', stack.split('\n')[0].trim());
+        return r;
+      }
+      push({
+        cat: 'random',
+        kind: 'Math.random',
+        args: [],
+        result: String(r),
+        stack: stack
+      });
+    } catch (_) {}
     return r;
   };
 
   // ── 2. crypto.getRandomValues ─────────────────────────────────────────────
   if (window.crypto && crypto.getRandomValues) {
     originals.getRandomValues = crypto.getRandomValues.bind(crypto);
-    crypto.getRandomValues = function (array) {
-      var stack = captureStack();
+    crypto.getRandomValues = function getRandomValues(array) {
       var result = originals.getRandomValues(array);
-      var verdict = checkCallsiteCap('crypto.getRandomValues', stack);
-      if (verdict === 'suppress') return result;
-      if (verdict === 'notice') {
-        emitCapNotice('random', 'crypto.getRandomValues', stack.split('\n')[0].trim());
-        return result;
-      }
-      push({
-        cat: 'random',
-        kind: 'crypto.getRandomValues',
-        args: [preview(array)],
-        result: preview(result),
-        stack: stack
-      });
+      try {
+        var stack = captureStack();
+        var verdict = checkCallsiteCap('crypto.getRandomValues', stack);
+        if (verdict === 'suppress') return result;
+        if (verdict === 'notice') {
+          emitCapNotice('random', 'crypto.getRandomValues', stack.split('\n')[0].trim());
+          return result;
+        }
+        push({
+          cat: 'random',
+          kind: 'crypto.getRandomValues',
+          args: [preview(array)],
+          result: preview(result),
+          stack: stack
+        });
+      } catch (_) {}
       return result;
     };
   }
@@ -240,167 +247,204 @@
     subtleMethods.forEach(function (m) {
       if (typeof subtle[m] !== 'function') return;
       originals.subtle[m] = subtle[m].bind(subtle);
-      subtle[m] = function () {
+      var wrapped = function () {
         var args = Array.prototype.slice.call(arguments);
-        var stack = captureStack();
+        var stack = '';
         var startedAt = Date.now();
+        try { stack = captureStack(); } catch (_) {}
         var promise;
         try {
           promise = originals.subtle[m].apply(subtle, args);
         } catch (e) {
-          push({
-            cat: 'crypto',
-            kind: 'crypto.subtle.' + m,
-            args: args.map(function (a) { return preview(a); }),
-            error: String(e && e.message || e),
-            stack: stack
-          });
+          try {
+            push({
+              cat: 'crypto',
+              kind: 'crypto.subtle.' + m,
+              args: args.map(function (a) { return preview(a); }),
+              error: String(e && e.message || e),
+              stack: stack
+            });
+          } catch (_) {}
           throw e;
         }
-        promise.then(function (result) {
-          push({
-            cat: 'crypto',
-            kind: 'crypto.subtle.' + m,
-            args: args.map(function (a) { return preview(a); }),
-            result: preview(result),
-            durationMs: Date.now() - startedAt,
-            stack: stack
+        try {
+          promise.then(function (result) {
+            try {
+              push({
+                cat: 'crypto',
+                kind: 'crypto.subtle.' + m,
+                args: args.map(function (a) { return preview(a); }),
+                result: preview(result),
+                durationMs: Date.now() - startedAt,
+                stack: stack
+              });
+            } catch (_) {}
+          }, function (err) {
+            try {
+              push({
+                cat: 'crypto',
+                kind: 'crypto.subtle.' + m,
+                args: args.map(function (a) { return preview(a); }),
+                error: String(err && err.message || err),
+                durationMs: Date.now() - startedAt,
+                stack: stack
+              });
+            } catch (_) {}
           });
-        }, function (err) {
-          push({
-            cat: 'crypto',
-            kind: 'crypto.subtle.' + m,
-            args: args.map(function (a) { return preview(a); }),
-            error: String(err && err.message || err),
-            durationMs: Date.now() - startedAt,
-            stack: stack
-          });
-        });
+        } catch (_) {}
         return promise;
       };
+      try { Object.defineProperty(wrapped, 'name', { value: m, configurable: true }); } catch (_) {}
+      subtle[m] = wrapped;
     });
   }
 
   // ── 4. window.fetch ───────────────────────────────────────────────────────
   if (window.fetch) {
     originals.fetch = window.fetch.bind(window);
-    window.fetch = function () {
+    window.fetch = function fetch() {
       var args = Array.prototype.slice.call(arguments);
-      var stack = captureStack();
-      var startedAt = Date.now();
-      var input = args[0];
-      var init = args[1] || {};
-      var method = (init && init.method)
-        || (typeof Request !== 'undefined' && input instanceof Request && input.method)
-        || 'GET';
-      var url = (typeof Request !== 'undefined' && input instanceof Request) ? input.url : String(input);
-      var bodyPreview = init && init.body ? preview(init.body) : '';
-      var blocked = isBlockedURL(url);
+      var stack = '', startedAt = Date.now();
+      var method = 'GET', url = '', bodyPreview = '', blocked = false;
+      try {
+        stack = captureStack();
+        var input = args[0];
+        var init = args[1] || {};
+        method = (init && init.method)
+          || (typeof Request !== 'undefined' && input instanceof Request && input.method)
+          || 'GET';
+        url = (typeof Request !== 'undefined' && input instanceof Request) ? input.url : String(input);
+        bodyPreview = init && init.body ? preview(init.body) : '';
+        blocked = isBlockedURL(url);
+      } catch (_) { blocked = true; }
 
       var promise;
       try {
         promise = originals.fetch.apply(window, args);
       } catch (e) {
-        if (!blocked) push({
-          cat: 'network',
-          kind: 'fetch',
-          args: [method + ' ' + url, bodyPreview],
-          error: String(e && e.message || e),
-          stack: stack
-        });
+        try {
+          if (!blocked) push({
+            cat: 'network',
+            kind: 'fetch',
+            args: [method + ' ' + url, bodyPreview],
+            error: String(e && e.message || e),
+            stack: stack
+          });
+        } catch (_) {}
         throw e;
       }
       if (blocked) return promise;
-      promise.then(function (res) {
-        push({
-          cat: 'network',
-          kind: 'fetch',
-          args: [method + ' ' + url, bodyPreview],
-          result: res.status + ' ' + (res.statusText || ''),
-          durationMs: Date.now() - startedAt,
-          stack: stack
+      try {
+        promise.then(function (res) {
+          try {
+            push({
+              cat: 'network',
+              kind: 'fetch',
+              args: [method + ' ' + url, bodyPreview],
+              result: res.status + ' ' + (res.statusText || ''),
+              durationMs: Date.now() - startedAt,
+              stack: stack
+            });
+          } catch (_) {}
+        }, function (err) {
+          try {
+            push({
+              cat: 'network',
+              kind: 'fetch',
+              args: [method + ' ' + url, bodyPreview],
+              error: String(err && err.message || err),
+              durationMs: Date.now() - startedAt,
+              stack: stack
+            });
+          } catch (_) {}
         });
-      }, function (err) {
-        push({
-          cat: 'network',
-          kind: 'fetch',
-          args: [method + ' ' + url, bodyPreview],
-          error: String(err && err.message || err),
-          durationMs: Date.now() - startedAt,
-          stack: stack
-        });
-      });
+      } catch (_) {}
       return promise;
     };
   }
 
   // ── 5. XMLHttpRequest.send ────────────────────────────────────────────────
+  // wrap 내부 throw 격리 + named function expression(`function open`/`function send`)
+  // 으로 .name을 native와 동일하게. captureStack이 throw하더라도 nexacro 등
+  // 호출자에게 전파되지 않도록 보호.
   if (window.XMLHttpRequest) {
     var xhrProto = XMLHttpRequest.prototype;
     originals.xhrOpen = xhrProto.open;
     originals.xhrSend = xhrProto.send;
 
-    xhrProto.open = function (method, url) {
-      this.__authTraceOpen = { method: method, url: String(url) };
+    xhrProto.open = function open(method, url) {
+      try {
+        this.__authTraceOpen = { method: method, url: String(url) };
+      } catch (_) {}
       return originals.xhrOpen.apply(this, arguments);
     };
 
-    xhrProto.send = function (body) {
-      var stack = captureStack();
-      var startedAt = Date.now();
-      var info = this.__authTraceOpen || { method: '?', url: '?' };
-      var bodyPreview = body !== undefined && body !== null ? preview(body) : '';
-      var self = this;
-      if (!isBlockedURL(info.url)) {
-        self.addEventListener('loadend', function () {
-          push({
-            cat: 'network',
-            kind: 'XHR.send',
-            args: [info.method + ' ' + info.url, bodyPreview],
-            result: self.status + ' ' + (self.statusText || ''),
-            durationMs: Date.now() - startedAt,
-            stack: stack
+    xhrProto.send = function send(body) {
+      try {
+        var stack = captureStack();
+        var startedAt = Date.now();
+        var info = this.__authTraceOpen || { method: '?', url: '?' };
+        var bodyPreview = body !== undefined && body !== null ? preview(body) : '';
+        var self = this;
+        if (!isBlockedURL(info.url)) {
+          self.addEventListener('loadend', function () {
+            try {
+              push({
+                cat: 'network',
+                kind: 'XHR.send',
+                args: [info.method + ' ' + info.url, bodyPreview],
+                result: self.status + ' ' + (self.statusText || ''),
+                durationMs: Date.now() - startedAt,
+                stack: stack
+              });
+            } catch (_) {}
           });
-        });
-      }
+        }
+      } catch (_) {}
       return originals.xhrSend.apply(this, arguments);
     };
   }
 
   // ── 6. btoa / atob ────────────────────────────────────────────────────────
-  function wrapEncodingFn(kindName, originalFn, thisArgFactory) {
-    return function (input) {
-      var stack = captureStack();
+  // nativeName: 함수의 .name으로 설정 (native 위장). kindName: trace 식별자.
+  function wrapEncodingFn(nativeName, kindName, originalFn, thisArgFactory) {
+    var wrapped = function (input) {
       var result = originalFn.apply(thisArgFactory ? thisArgFactory(this) : window, arguments);
-      var verdict = checkCallsiteCap(kindName, stack);
-      if (verdict === 'suppress') return result;
-      if (verdict === 'notice') {
-        emitCapNotice('encoding', kindName, stack.split('\n')[0].trim());
-        return result;
-      }
-      push({
-        cat: 'encoding',
-        kind: kindName,
-        args: [preview(input)],
-        result: preview(result),
-        stack: stack
-      });
+      try {
+        var stack = captureStack();
+        var verdict = checkCallsiteCap(kindName, stack);
+        if (verdict === 'suppress') return result;
+        if (verdict === 'notice') {
+          emitCapNotice('encoding', kindName, stack.split('\n')[0].trim());
+          return result;
+        }
+        push({
+          cat: 'encoding',
+          kind: kindName,
+          args: [preview(input)],
+          result: preview(result),
+          stack: stack
+        });
+      } catch (_) {}
       return result;
     };
+    try { Object.defineProperty(wrapped, 'name', { value: nativeName, configurable: true }); } catch (_) {}
+    return wrapped;
   }
   if (window.btoa) {
     originals.btoa = window.btoa.bind(window);
-    window.btoa = wrapEncodingFn('btoa', originals.btoa);
+    window.btoa = wrapEncodingFn('btoa', 'btoa', originals.btoa);
   }
   if (window.atob) {
     originals.atob = window.atob.bind(window);
-    window.atob = wrapEncodingFn('atob', originals.atob);
+    window.atob = wrapEncodingFn('atob', 'atob', originals.atob);
   }
 
   // ── 7. TextEncoder.encode / TextDecoder.decode ────────────────────────────
   if (window.TextEncoder && TextEncoder.prototype.encode) {
     originals.TextEncoder_encode = TextEncoder.prototype.encode;
     TextEncoder.prototype.encode = wrapEncodingFn(
+      'encode',
       'TextEncoder.encode',
       originals.TextEncoder_encode,
       function (self) { return self; }
@@ -409,6 +453,7 @@
   if (window.TextDecoder && TextDecoder.prototype.decode) {
     originals.TextDecoder_decode = TextDecoder.prototype.decode;
     TextDecoder.prototype.decode = wrapEncodingFn(
+      'decode',
       'TextDecoder.decode',
       originals.TextDecoder_decode,
       function (self) { return self; }
@@ -427,17 +472,19 @@
         enumerable: inputDesc.enumerable,
         get: function () {
           var v = inputDesc.get.call(this);
-          if (typeof v === 'string' && v.length > 0 && !shouldDedupeInput(this, v)) {
-            var type = this.type || 'text';
-            var name = this.name || this.id || '';
-            push({
-              cat: 'input',
-              kind: 'input.value get',
-              args: ['<input type="' + type + '"' + (name ? ' name="' + name + '"' : '') + '>'],
-              result: preview(v),
-              stack: captureStack()
-            });
-          }
+          try {
+            if (typeof v === 'string' && v.length > 0 && !shouldDedupeInput(this, v)) {
+              var type = this.type || 'text';
+              var name = this.name || this.id || '';
+              push({
+                cat: 'input',
+                kind: 'input.value get',
+                args: ['<input type="' + type + '"' + (name ? ' name="' + name + '"' : '') + '>'],
+                result: preview(v),
+                stack: captureStack()
+              });
+            }
+          } catch (_) {}
           return v;
         },
         set: function (v) {
@@ -487,14 +534,16 @@
 
   if (window.HTMLFormElement) {
     originals.formSubmit = HTMLFormElement.prototype.submit;
-    HTMLFormElement.prototype.submit = function () {
-      captureForm(this, 'js-call');
+    HTMLFormElement.prototype.submit = function submit() {
+      try { captureForm(this, 'js-call'); } catch (_) {}
       return originals.formSubmit.apply(this, arguments);
     };
     originals.formSubmitListener = function (e) {
-      if (e.target instanceof HTMLFormElement) captureForm(e.target, 'submit-event');
+      try {
+        if (e.target instanceof HTMLFormElement) captureForm(e.target, 'submit-event');
+      } catch (_) {}
     };
-    document.addEventListener('submit', originals.formSubmitListener, true);
+    try { document.addEventListener('submit', originals.formSubmitListener, true); } catch (_) {}
   }
 
   // ── 10. Storage (localStorage / sessionStorage) ───────────────────────────
@@ -507,35 +556,39 @@
   }
   if (window.Storage && Storage.prototype) {
     originals.Storage_setItem = Storage.prototype.setItem;
-    Storage.prototype.setItem = function (key, value) {
-      var stack = captureStack();
-      push({
-        cat: 'storage',
-        kind: whichStorage(this) + '.setItem',
-        args: [String(key), preview(value)],
-        stack: stack
-      });
+    Storage.prototype.setItem = function setItem(key, value) {
+      try {
+        push({
+          cat: 'storage',
+          kind: whichStorage(this) + '.setItem',
+          args: [String(key), preview(value)],
+          stack: captureStack()
+        });
+      } catch (_) {}
       return originals.Storage_setItem.call(this, key, value);
     };
     originals.Storage_removeItem = Storage.prototype.removeItem;
-    Storage.prototype.removeItem = function (key) {
-      var stack = captureStack();
-      push({
-        cat: 'storage',
-        kind: whichStorage(this) + '.removeItem',
-        args: [String(key)],
-        stack: stack
-      });
+    Storage.prototype.removeItem = function removeItem(key) {
+      try {
+        push({
+          cat: 'storage',
+          kind: whichStorage(this) + '.removeItem',
+          args: [String(key)],
+          stack: captureStack()
+        });
+      } catch (_) {}
       return originals.Storage_removeItem.call(this, key);
     };
     originals.Storage_clear = Storage.prototype.clear;
-    Storage.prototype.clear = function () {
-      push({
-        cat: 'storage',
-        kind: whichStorage(this) + '.clear',
-        args: [],
-        stack: captureStack()
-      });
+    Storage.prototype.clear = function clear() {
+      try {
+        push({
+          cat: 'storage',
+          kind: whichStorage(this) + '.clear',
+          args: [],
+          stack: captureStack()
+        });
+      } catch (_) {}
       return originals.Storage_clear.call(this);
     };
   }
@@ -553,25 +606,29 @@
         enumerable: cookieDesc.enumerable,
         get: function () {
           var v = cookieDesc.get.call(this);
-          if (typeof v === 'string' && v.length > 0 && v !== lastCookieRead) {
-            lastCookieRead = v;
-            push({
-              cat: 'storage',
-              kind: 'document.cookie get',
-              args: [],
-              result: preview(v),
-              stack: captureStack()
-            });
-          }
+          try {
+            if (typeof v === 'string' && v.length > 0 && v !== lastCookieRead) {
+              lastCookieRead = v;
+              push({
+                cat: 'storage',
+                kind: 'document.cookie get',
+                args: [],
+                result: preview(v),
+                stack: captureStack()
+              });
+            }
+          } catch (_) {}
           return v;
         },
         set: function (value) {
-          push({
-            cat: 'storage',
-            kind: 'document.cookie set',
-            args: [preview(value)],
-            stack: captureStack()
-          });
+          try {
+            push({
+              cat: 'storage',
+              kind: 'document.cookie set',
+              args: [preview(value)],
+              stack: captureStack()
+            });
+          } catch (_) {}
           return cookieDesc.set.call(this, value);
         }
       });

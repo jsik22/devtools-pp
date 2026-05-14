@@ -167,14 +167,43 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* result 셀: text + 옵션 jump-btn. flex로 우측 정렬. */
 #js-trace .row .result {
+  display: flex;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+}
+#js-trace .row .result .result-text {
   color: #0b7a3e;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-align: right;
 }
-#js-trace .row .result.error { color: #d32f2f; }
+#js-trace .row .result.error .result-text { color: #d32f2f; }
+
+#js-trace .jstrace-jump-btn {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid #c4c4c4;
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 10px;
+  cursor: pointer;
+  color: #1a73e8;
+  line-height: 1.4;
+  font-family: inherit;
+}
+#js-trace .jstrace-jump-btn:hover {
+  background: #e8f0fe;
+  border-color: #1a73e8;
+}
+#js-trace .jstrace-jump-btn.not-found {
+  background: #fee2e2;
+  border-color: #b91c1c;
+  color: #b91c1c;
+}
 
 #js-trace .row .cat-marker {
   width: 8px;
@@ -225,6 +254,21 @@
    배경 강조와 다른 시각 슬롯이라 겹쳐도 둘 다 인지 가능. */
 #js-trace .row.search-active {
   box-shadow: inset 3px 0 0 #fbbf24;
+}
+
+/* Monitor 세부정보 JS Context에서 점프해 들어온 row — 1.6초 깜빡거리는
+   배경 강조 + 굵은 노란 좌측 막대. scroll된 위치에서 즉시 시선 유도.
+   1.6초 후 클래스 자동 제거되어 timeline의 다른 작업에 방해 안 됨. */
+@keyframes bridge-jump-flash {
+  0%   { background: transparent; }
+  20%  { background: #fff3cd; }
+  50%  { background: #fde68a; }
+  80%  { background: #fff3cd; }
+  100% { background: transparent; }
+}
+#js-trace .row.bridge-jumped {
+  animation: bridge-jump-flash 1.6s ease-in-out;
+  box-shadow: inset 4px 0 0 #f59e0b;
 }
 
 #js-trace .search-input-wide {

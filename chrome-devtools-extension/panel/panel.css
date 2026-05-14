@@ -20,56 +20,48 @@ body {
   height: 100vh;
 }
 
-header {
+/* 좌측 트리 컬럼 상단의 로고만 있는 헤더. 우측 .content-top과 같은 높이
+   (border-bottom + 같은 padding)라서 두 컬럼 헤더 row가 시각적으로 정렬. */
+.tree-header {
   background: #f3f3f3;
   border-bottom: 1px solid #d4d4d4;
   padding: 4px 12px;
   display: flex;
   align-items: center;
-  gap: 16px;
   flex-shrink: 0;
+  min-height: 30px;
+  box-sizing: border-box;
 }
 
-header h1 {
+.tree-header h1 {
   font-size: 12px;
   font-weight: 600;
-  color: #1e1e1e;
   margin: 0;
-  flex-shrink: 0;
 }
 
 .title-name { color: #4285F4; }
 .title-plus1 { color: #EA4335; }
 .title-plus2 { color: #FBBC04; }
 
-/* 로고 옆 태그라인 — 같은 행, muted 색상이라 브랜드 워드마크가
-   strip의 dominant 요소로 유지. flex:1로 남는 가로 공간을 흡수하고
-   Auto-start를 가장 오른쪽으로 밀어냄. */
-.header-tagline {
-  flex: 1;
-  font-size: 11px;
-  color: #999;
-  margin-left: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tabs {
-  display: flex;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
-/* 우측 content 컬럼 상단의 서브 툴바 — Monitor/Intercept 탭 버튼과
-   글로벌 Scope 바를 호스팅. 어느 탭 섹션이 활성이든 그 위에 위치. */
-.content-toolbar {
+/* 우측 컬럼 상단 한 행 — 탭 + Scope. 트리 폭 변경 시 함께 좌우 이동
+   (main-content가 트리 우측 column이라 자동). 좌측 padding을 .toolbar
+   (8px 12px)와 맞춰 Monitor 탭과 그 아래 Monitor OFF 토글이 같은 12px
+   위치에서 정렬. */
+.content-top {
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 4px 12px;
   background: #f3f3f3;
   border-bottom: 1px solid #d4d4d4;
+  flex-shrink: 0;
+  min-height: 30px;
+  box-sizing: border-box;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
   flex-shrink: 0;
 }
 
@@ -96,27 +88,42 @@ header h1 {
   font-weight: 500;
 }
 
+/* 트리 패널 두 번째 row — DevTools++ 헤더 아래, sitemap 위. 컴팩트 layout,
+   input은 flex:1로 패널 폭 변화에 따라 늘어남, Apply/Clear는 아이콘 버튼.
+   패널을 매우 넓게 끌면 scope 박스가 무한 확장되지 않도록 max-width 제한 —
+   그 우측은 배경만 노출. */
 .global-scope-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex: 1;
-  min-width: 0;
-  padding-left: 14px;
-  border-left: 1px solid #bbb;
+  gap: 4px;
+  padding: 4px 12px;
+  background: #fafafa;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+  max-width: 360px;
 }
 
 .global-scope-label {
   font-size: 11px;
   font-weight: 500;
   color: #888;
-  padding: 0 2px;
   cursor: help;
+  flex-shrink: 0;
 }
 
 .global-scope-input {
   flex: 1;
   min-width: 0;
+}
+
+/* 아이콘 버튼 — Apply ✓ / Clear ✕. 컴팩트 정사각 형태. */
+.btn-icon {
+  width: 22px;
+  padding: 2px 0 !important;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
 }
 
 .tab-content {
@@ -3043,3 +3050,66 @@ mark.network-search-mark.current {
   font-size: 11px;
   color: #c5221f;
 }
+
+/* ============================================================
+   JS Trace 브릿지 — Monitor 상세 패널의 JS Trace 탭
+   ============================================================ */
+.jstrace-section {
+  margin-bottom: 12px;
+}
+.jstrace-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #5f6368;
+  padding: 6px 10px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e0e0e0;
+}
+.jstrace-row {
+  display: grid;
+  grid-template-columns: 14px 130px 1fr 70px;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 10px;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  border-bottom: 1px solid #f0f0f0;
+  cursor: pointer;
+  color: #333;
+}
+.jstrace-row:hover { background: #f0f4ff; }
+.jstrace-linked {
+  background: #fffbe6;
+}
+.jstrace-linked:hover { background: #fff5cc; }
+.jstrace-is-linked {
+  /* Context에서도 linked event는 좌측 노란 막대로 식별 */
+  box-shadow: inset 3px 0 0 #fbbf24;
+}
+.jstrace-row .jstrace-kind { color: #1e1e1e; }
+.jstrace-row .jstrace-args { color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jstrace-row .jstrace-t { color: #888; text-align: right; }
+
+.jstrace-notice,
+.jstrace-empty {
+  padding: 12px 10px;
+  font-size: 12px;
+  color: #777;
+  font-style: italic;
+}
+
+/* cat-dot — JS Trace의 카테고리 컬러 (jstrace-row 내부에 한정해서 충돌 회피) */
+.jstrace-row .cat-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #888;
+  flex-shrink: 0;
+}
+.jstrace-row .cat-dot.cat-random   { background: #4caf50; }
+.jstrace-row .cat-dot.cat-crypto   { background: #ab47bc; }
+.jstrace-row .cat-dot.cat-network  { background: #42a5f5; }
+.jstrace-row .cat-dot.cat-encoding { background: #ffb74d; }
+.jstrace-row .cat-dot.cat-input    { background: #26c6da; }
+.jstrace-row .cat-dot.cat-storage  { background: #ec407a; }

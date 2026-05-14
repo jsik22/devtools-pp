@@ -151,13 +151,41 @@
 
     const result = document.createElement('span');
     result.className = 'result';
+    // result 셀에 텍스트와 buttom을 함께 두기 위해 inner span 분리.
+    const resultText = document.createElement('span');
+    resultText.className = 'result-text';
     if (ev.error) {
       result.classList.add('error');
-      result.textContent = '✗ ' + ev.error;
+      resultText.textContent = '✗ ' + ev.error;
     } else if (ev.result !== undefined) {
-      result.textContent = ev.result;
+      resultText.textContent = ev.result;
     }
-    result.title = result.textContent;
+    result.title = resultText.textContent;
+    result.appendChild(resultText);
+
+    // cat=network 이벤트에는 → Monitor 점프 버튼. 매칭 요청 없으면 클릭 시
+    // 시각 피드백(빨강 깜빡)으로 표시.
+    if (ev.cat === 'network') {
+      const jumpBtn = document.createElement('button');
+      jumpBtn.className = 'jstrace-jump-btn';
+      jumpBtn.textContent = '↗';
+      jumpBtn.title = 'Jump to this request in Monitor';
+      jumpBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const arg0 = (ev.args && ev.args[0]) || '';
+        const sp = arg0.indexOf(' ');
+        if (sp === -1) return;
+        const method = arg0.slice(0, sp);
+        const url = arg0.slice(sp + 1);
+        const ok = window.__monitorAPI && window.__monitorAPI.jumpToRequest(method, url, ev.t);
+        if (!ok) {
+          jumpBtn.classList.add('not-found');
+          jumpBtn.title = 'No matching request in Monitor (live capture only)';
+          setTimeout(() => jumpBtn.classList.remove('not-found'), 1500);
+        }
+      });
+      result.appendChild(jumpBtn);
+    }
 
     const details = document.createElement('div');
     details.className = 'details';
@@ -804,4 +832,46 @@
     }
     setStatus('re-inject failed: ' + (lastErr && lastErr.message || 'unknown'));
   });
+
+  // ── Cross-module API ──────────────────────────────────────────────────────
+  // panel.js의 Monitor↔JS Trace 브릿지가 사용하는 controlled API. IIFE 내부
+  // events 배열을 직접 노출하지 않고 복사본을 반환해 mutation 차단.
+  window.__jsTraceAPI = {
+    getEvents() { return events.slice(); },
+    isActive() { return tracing; },
+    getStartedAt() { return traceStartedAt ? new Date(traceStartedAt).toISOString() : null; },
+    getFilterStats() { return lastFilterStats; },
+    // Monitor export → Import 시 trace events 적재용. 기존 events 덮어쓰기.
+    loadEvents(eventsArr, startedAtIso, filterStats) {
+      if (!Array.isArray(eventsArr)) return false;
+      events.length = 0;
+      selectedSeqs.clear();
+      timelineEl.innerHTML = '';
+      traceStartedAt = startedAtIso ? new Date(startedAtIso).getTime() : Date.now();
+      lastFilterStats = filterStats || null;
+      renderNewEvents(eventsArr);
+      updateSelectionUI();
+      return true;
+    },
+    // Monitor에서 → JS Trace로 점프할 때 사용. JS Trace 탭이 활성화된 후
+    // 해당 seq의 row를 찾아 scrollIntoView + 노란 막대 강조.
+    selectEvent(seq) {
+      const row = timelineEl.querySelector(`.row[data-seq="${seq}"]`);
+      if (!row) return false;
+      // 기존 강조 모두 제거 (search-active + bridge-jumped)
+      timelineEl.querySelectorAll('.row.search-active, .row.bridge-jumped')
+        .forEach(r => r.classList.remove('search-active', 'bridge-jumped'));
+      // hidden(검색 필터로 가려진) 경우 일시적으로 보이게
+      if (row.classList.contains('hidden')) row.classList.remove('hidden');
+      // 자동 펼침 — 이벤트 상세 즉시 보임
+      row.classList.add('open');
+      row.scrollIntoView({ block: 'center', behavior: 'auto' });
+      // 깜빡 강조 — 사용자 시선 유도. 1.5초 후 클래스 제거(재실행 가능)
+      // setTimeout 전에 reflow 강제 → 같은 row 연속 호출 시에도 애니메이션 재시작
+      void row.offsetWidth;
+      row.classList.add('bridge-jumped');
+      setTimeout(() => row.classList.remove('bridge-jumped'), 1600);
+      return true;
+    },
+  };
 })();

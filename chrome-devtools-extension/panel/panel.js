@@ -1469,13 +1469,27 @@ function exportAllRequests(scope, selectedOnly) {
     mainHost: r._mainHost || null,
   }));
 
-  _downloadJson(
-    _exportFilename(scope, selectedOnly, source.length),
-    Object.assign({}, _exportMetadata(), {
-      totalRequests: source.length,
-      items,
-    })
-  );
+  // JS Trace events 함께 export — Monitor request export에는 trace events가
+  // 시간 윈도우 매칭에 필요. 사이트 분석 결과를 한 파일로 묶어 reproducible.
+  // events 0건 / API 미연결이면 jsTrace 필드 자체 생략.
+  const payload = Object.assign({}, _exportMetadata(), {
+    totalRequests: source.length,
+    items,
+  });
+  if (window.__jsTraceAPI && typeof window.__jsTraceAPI.getEvents === 'function') {
+    const traceEvents = window.__jsTraceAPI.getEvents();
+    if (traceEvents.length > 0) {
+      payload.jsTrace = {
+        events: traceEvents,
+        startedAt: window.__jsTraceAPI.getStartedAt
+          ? window.__jsTraceAPI.getStartedAt() : null,
+        filterStats: window.__jsTraceAPI.getFilterStats
+          ? window.__jsTraceAPI.getFilterStats() : null,
+      };
+    }
+  }
+
+  _downloadJson(_exportFilename(scope, selectedOnly, source.length), payload);
 }
 
 // ============================================================
@@ -1503,7 +1517,7 @@ function _parseImportJson(text) {
   if (!items) {
     return { error: 'Invalid file (no items / requests array)' };
   }
-  return { items };
+  return { items, jsTrace: data.jsTrace || null };
 }
 
 // 임포트된 아이템 1개를 패널의 나머지와 호환되는 req 객체로 변환.
@@ -1632,16 +1646,30 @@ function importNetworkData(file) {
     if (result.error) { showToast(result.error); return; }
     const reqs = result.items.map(_itemToReq);
     if (reqs.length === 0) { showToast('No requests in file'); return; }
+    // jsTrace 필드가 export에 포함되어 있으면 JS Trace 측에도 적재.
+    // overwrite/append와 무관하게 항상 덮어쓰기 (JS Trace는 단일 timeline).
+    const loadTrace = () => {
+      if (result.jsTrace && Array.isArray(result.jsTrace.events)
+          && window.__jsTraceAPI && typeof window.__jsTraceAPI.loadEvents === 'function') {
+        window.__jsTraceAPI.loadEvents(
+          result.jsTrace.events,
+          result.jsTrace.startedAt,
+          result.jsTrace.filterStats
+        );
+      }
+    };
     if (networkRequests.length > 0) {
       showImportConfirm(
         `${networkRequests.length} request${networkRequests.length === 1 ? '' : 's'} already captured. What would you like to do?`,
         (choice) => {
           if (choice === 'cancel') return;
           _applyImport(reqs, choice, file.name);
+          loadTrace();
         }
       );
     } else {
       _applyImport(reqs, 'overwrite', file.name);
+      loadTrace();
     }
   };
   reader.onerror = () => showToast('Failed to read file');
@@ -2602,7 +2630,87 @@ function showDetail(req) {
   renderInitiator(req);
   renderDetection(req);
   renderAuth(req);
+  renderJsTraceBridge(req);
   applyDetailHighlights(req);
+}
+
+// JS Trace 브릿지 — Monitor 행 선택 시 해당 요청 시점의 trace 이벤트들을 묶어
+// 표시. JS Trace 탭이 비활성/이벤트 없음/매칭 없음 등을 안내. cat별 색상 dot
+// 으로 시각화, 이벤트 클릭 시 JS Trace 탭으로 점프.
+function renderJsTraceBridge(req) {
+  const body = document.getElementById('detail-jstrace-body');
+  if (!body) return;
+  const traceEvents = (window.__jsTraceAPI && window.__jsTraceAPI.getEvents) ? window.__jsTraceAPI.getEvents() : [];
+  const isActive = !!(window.__jsTraceAPI && window.__jsTraceAPI.isActive && window.__jsTraceAPI.isActive());
+
+  if (traceEvents.length === 0) {
+    body.innerHTML = `<div class="jstrace-notice">${
+      isActive
+        ? 'JS Trace is running but no events captured yet. Interact with the page.'
+        : 'JS Trace is not running. Open the JS Trace tab and Start Trace to see context for this request.'
+    }</div>`;
+    return;
+  }
+
+  const reqMs = _getRequestStartMs(req);
+  if (reqMs === null) {
+    body.innerHTML = '<div class="jstrace-notice">This request has no start time (imported data?). Bridge needs live capture.</div>';
+    return;
+  }
+
+  const linked = findLinkedFetchEvent(req, traceEvents);
+  const context = findContextTraceEvents(req, traceEvents, 2000);
+
+  const reqClock = new Date(reqMs).toLocaleTimeString();
+
+  const linkedHtml = linked
+    ? `<div class="jstrace-row jstrace-linked" data-seq="${linked.seq}" title="Click to jump to this event in JS Trace tab">
+         <span class="cat-dot cat-${linked.cat}"></span>
+         <span class="jstrace-kind">${escHtml(linked.kind)}</span>
+         <span class="jstrace-args">${escHtml((linked.args || []).join(' · '))}</span>
+         <span class="jstrace-t">${_msToOffset(linked.t, reqMs)}</span>
+       </div>`
+    : '<div class="jstrace-empty">No linked fetch/XHR event (within ±500ms)</div>';
+
+  const contextHtml = context.length === 0
+    ? '<div class="jstrace-empty">No JS activity within ±2 seconds</div>'
+    : context.map(ev => `
+        <div class="jstrace-row ${linked && ev.seq === linked.seq ? 'jstrace-is-linked' : ''}" data-seq="${ev.seq}" title="Click to jump to this event in JS Trace tab">
+          <span class="cat-dot cat-${ev.cat}"></span>
+          <span class="jstrace-kind">${escHtml(ev.kind)}</span>
+          <span class="jstrace-args">${escHtml((ev.args || []).slice(0, 2).join(' · '))}</span>
+          <span class="jstrace-t">${_msToOffset(ev.t, reqMs)}</span>
+        </div>`).join('');
+
+  body.innerHTML = `
+    <div class="jstrace-section">
+      <div class="jstrace-section-title">Linked fetch / XHR</div>
+      ${linkedHtml}
+    </div>
+    <div class="jstrace-section">
+      <div class="jstrace-section-title">Context (±2s · ${context.length} events · request @ ${reqClock})</div>
+      ${contextHtml}
+    </div>
+  `;
+
+  // Row 클릭 시 JS Trace 탭으로 점프
+  body.querySelectorAll('.jstrace-row[data-seq]').forEach(el => {
+    el.addEventListener('click', () => {
+      const seq = Number(el.dataset.seq);
+      jumpToTraceEvent(seq);
+    });
+  });
+}
+
+function _msToOffset(eventMs, refMs) {
+  const delta = eventMs - refMs;
+  const sign = delta >= 0 ? '+' : '−';
+  const abs = Math.abs(delta);
+  return abs < 1000 ? `${sign}${abs}ms` : `${sign}${(abs / 1000).toFixed(2)}s`;
+}
+
+function escHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 // ============================================================
@@ -7738,6 +7846,88 @@ function setupTableColumnResize(table) {
   });
 }
 setupTableColumnResize(document.getElementById('network-table'));
+
+// ── Monitor ↔ JS Trace 브릿지 ─────────────────────────────────────────────
+// 매칭 키 = URL + Method + 시작 시각(±500ms). 동일 URL+method가 짧은 시간에
+// 여러 번 발생하면 가장 가까운 시간의 trace 이벤트를 채택.
+// Linked fetch: 정확 매칭(0 또는 1), Context: ±2s 모든 cat (input/storage/
+// crypto 등 포함, 요청 전후 JS 흐름 시각화).
+
+function _getRequestStartMs(req) {
+  if (req && req._harEntry && req._harEntry.startedDateTime) {
+    return new Date(req._harEntry.startedDateTime).getTime();
+  }
+  return null;
+}
+
+function _parseTraceFetchArg(arg0) {
+  // "POST https://.../cmm/login" 또는 "GET /some/path" 형식 — preview()의
+  // 출력 포맷과 일치.
+  if (!arg0 || typeof arg0 !== 'string') return null;
+  const sp = arg0.indexOf(' ');
+  if (sp === -1) return null;
+  return { method: arg0.slice(0, sp), url: arg0.slice(sp + 1) };
+}
+
+function findLinkedFetchEvent(req, traceEvents) {
+  const reqMs = _getRequestStartMs(req);
+  if (reqMs === null) return null;
+  const candidates = traceEvents.filter(ev => {
+    if (ev.cat !== 'network') return false;
+    if (typeof ev.t !== 'number') return false;
+    if (Math.abs(ev.t - reqMs) > 500) return false;
+    const parsed = _parseTraceFetchArg(ev.args && ev.args[0]);
+    if (!parsed) return false;
+    if (parsed.method !== req.method) return false;
+    // 한쪽이 다른 쪽을 포함하면 매칭 (full URL ↔ path-only 둘 다 호환)
+    return req.url.includes(parsed.url) || parsed.url.includes(req.url);
+  });
+  if (candidates.length === 0) return null;
+  return candidates.sort((a, b) => Math.abs(a.t - reqMs) - Math.abs(b.t - reqMs))[0];
+}
+
+function findContextTraceEvents(req, traceEvents, windowMs) {
+  if (windowMs === undefined) windowMs = 2000;
+  const reqMs = _getRequestStartMs(req);
+  if (reqMs === null) return [];
+  return traceEvents
+    .filter(ev => typeof ev.t === 'number' && Math.abs(ev.t - reqMs) <= windowMs)
+    .sort((a, b) => a.t - b.t);
+}
+
+// Monitor 행에서 → JS Trace로 점프. 탭 전환 + selectEvent(seq).
+function jumpToTraceEvent(seq) {
+  const traceTabBtn = document.querySelector('.tab[data-tab="js-trace"]');
+  if (traceTabBtn) traceTabBtn.click();
+  // 탭 전환 직후엔 DOM rendered 되어 있어도 안전하게 다음 tick으로 미룸.
+  setTimeout(() => {
+    if (window.__jsTraceAPI && typeof window.__jsTraceAPI.selectEvent === 'function') {
+      window.__jsTraceAPI.selectEvent(seq);
+    }
+  }, 30);
+}
+
+// JS Trace의 → Monitor 버튼이 호출하는 API. method+url+t로 매칭 요청 찾아
+// Monitor 탭 전환 + select + scroll.
+window.__monitorAPI = {
+  jumpToRequest(method, url, tMs) {
+    if (!method || !url || typeof tMs !== 'number') return false;
+    const candidates = networkRequests.filter(r => {
+      if (r.method !== method) return false;
+      if (!(r.url.includes(url) || url.includes(r.url))) return false;
+      const reqMs = _getRequestStartMs(r);
+      if (reqMs === null) return false;
+      return Math.abs(reqMs - tMs) < 500;
+    });
+    if (candidates.length === 0) return false;
+    const best = candidates.sort((a, b) => {
+      return Math.abs(_getRequestStartMs(a) - tMs) - Math.abs(_getRequestStartMs(b) - tMs);
+    })[0];
+    document.querySelector('.tab[data-tab="network"]').click();
+    setTimeout(() => selectNetworkRequest(best.requestId, { scroll: true }), 30);
+    return true;
+  },
+};
 
 // 영속화된 "Auto-start" 토글 — 사용자가 popup(확장 아이콘)에서 켜두면
 // 이 패널이 열리는 즉시 Network 모니터링 활성화. UI는 popup.html에 있고

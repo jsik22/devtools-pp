@@ -8,28 +8,26 @@
 </head>
 <body>
   <div class="container">
-    <header>
-      <h1><span class="title-name">DevTools</span><span class="title-plus1">+</span><span class="title-plus2">+</span></h1>
-      <span class="header-tagline">A lightweight web and API analysis</span>
-    </header>
-
     <div class="main-split">
       <div class="main-tree-pane" id="main-tree-pane">
+        <div class="tree-header">
+          <h1><span class="title-name">DevTools</span><span class="title-plus1">+</span><span class="title-plus2">+</span></h1>
+        </div>
+        <div class="global-scope-bar">
+          <label for="global-scope-input" class="global-scope-label" title="Host+path pattern. Wildcards: *. Multiple patterns: comma-separated. Empty = all in scope.">Scope</label>
+          <input type="text" id="global-scope-input" class="filter-input global-scope-input" placeholder="*.site.com, api.example.com">
+          <button id="global-scope-apply" class="btn btn-xs btn-icon" title="Apply scope (Enter)">✓</button>
+          <button id="global-scope-clear" class="btn btn-xs btn-icon" title="Clear scope (show all)">✕</button>
+        </div>
         <div id="sitemap-tree" class="sitemap-tree"></div>
       </div>
       <div class="split-gutter split-gutter-h" data-resize="prev"></div>
       <div class="main-content">
-        <div class="content-toolbar">
+        <div class="content-top">
           <div class="tabs">
             <button class="tab active" data-tab="network">Monitor</button>
             <button class="tab intercept-tab" data-tab="intercept">Intercept</button>
             <button class="tab" data-tab="js-trace">JS Trace</button>
-          </div>
-          <div class="global-scope-bar">
-            <label for="global-scope-input" class="global-scope-label" title="Host+path pattern. Wildcards: *. Multiple patterns: comma-separated. Empty = all in scope.">Scope</label>
-            <input type="text" id="global-scope-input" class="filter-input global-scope-input" placeholder="*.site.com, api.example.com — empty = show all">
-            <button id="global-scope-apply" class="btn btn-xs" title="Apply scope (Enter)">Apply</button>
-            <button id="global-scope-clear" class="btn btn-xs" title="Clear scope (show all)">Clear</button>
           </div>
         </div>
 
@@ -126,6 +124,7 @@
               <button class="detail-tab" data-detail="initiator">Initiator</button>
               <button class="detail-tab" data-detail="detection">Detection</button>
               <button class="detail-tab" data-detail="auth">Auth</button>
+              <button class="detail-tab" data-detail="jstrace">JS Context</button>
             </div>
             <button id="detail-send-to-browser" class="btn detail-action-btn" disabled
               title="Open this request in a new tab so it goes through Intercept (requires Intercept ON).">
@@ -184,6 +183,9 @@
           </div>
           <div id="detail-auth" class="detail-content">
             <div id="detail-auth-body" class="detail-section"></div>
+          </div>
+          <div id="detail-jstrace" class="detail-content">
+            <div id="detail-jstrace-body" class="detail-section"></div>
           </div>
         </div>
           </div>

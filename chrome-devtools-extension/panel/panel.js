@@ -2856,13 +2856,11 @@ function _statusClass(s) {
 }
 
 // 캡처된 요청을 buildRawResponse가 기대하는 모양으로 wrap.
+// 헤더는 HAR resp.headers에서 캡처 시점에 항상 채워지므로 본문 로드 상태와
+// 무관하게 항상 렌더. 본문이 아직 안 들어왔거나 (3xx redirect처럼) 비어있는
+// 경우는 본문 영역 인라인 노트로만 표시 — 헤더는 그대로 노출 (Location,
+// Set-Cookie 등 redirect의 핵심 정보 가시화).
 function _viewFromCapture(req) {
-  if (req._imported && !req.responseBodyLoaded) {
-    return { placeholder: 'Not included in the imported file' };
-  }
-  if (!req.responseBodyLoaded) {
-    return { placeholder: 'Loading response body...' };
-  }
   if (req.responseBase64) {
     return {
       status: req.status, statusText: req.statusText, headers: req.responseHeaders || {},
@@ -2870,10 +2868,16 @@ function _viewFromCapture(req) {
       _bin: true,
     };
   }
+  let body = req.responseBody || '';
+  if (!req.responseBodyLoaded) {
+    if (req._imported) body = '[Body not included in imported file]';
+    else if (req.status >= 300 && req.status < 400) body = '[No body — redirect]';
+    else body = '[Loading response body…]';
+  }
   return {
     status: req.status, statusText: req.statusText,
     headers: req.responseHeaders || {},
-    body: req.responseBody || '',
+    body,
   };
 }
 

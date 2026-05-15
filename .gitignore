@@ -15,3 +15,10 @@ chrome-devtools-extension/native-proxy/native-messaging-host.sh
 
 # Build artifacts
 *.zip
+
+# CWS listing screenshots — 1280x800 letterboxed, generated locally from
+# docs/screenshots/ source images for Chrome Web Store dashboard upload only.
+docs/screenshots/cws/
+
+# CWS reviewer justification — paste-ready submission text, kept local only.
+docs/CWS_REVIEW_NOTES.md

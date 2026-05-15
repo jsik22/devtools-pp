@@ -53,21 +53,17 @@
   let lastToggledRow = null; // Shift+click range 시 시작 anchor
 
   // ── 부트스트랩: inject/restore 스크립트 텍스트를 미리 로드 ───────────────────
+  // JS Trace 시작은 이제 panel.js의 startNetworkMonitoring이 단독으로 트리거
+  // (Monitor 라이프사이클에 종속). 만약 inject 로드 이전에 start()가 호출되면
+  // pendingStart로 보류했다가 로드 완료 후 처리.
+  let pendingStart = false;
   Promise.all([
     fetch('js-trace/inject.js').then(r => r.text()),
     fetch('js-trace/restore.js').then(r => r.text())
   ]).then(([inject, restore]) => {
     injectCode = inject;
     restoreCode = restore;
-    // 패널 헤더의 Auto-start 토글이 켜져 있으면 Monitor와 함께 JS Trace도
-    // 자동 시작. panel.js의 initAutoStartMonitoring과 동일 storage key 공유.
-    try {
-      chrome.storage.local.get(['autoStartMonitoring'], (result) => {
-        if (result && result.autoStartMonitoring && !tracing) {
-          toggleBtn.click();
-        }
-      });
-    } catch (e) { /* storage 접근 실패 시 silent */ }
+    if (pendingStart) { pendingStart = false; startTrace(); }
   }).catch(err => {
     setStatus('inject load failed: ' + err.message);
   });
@@ -433,7 +429,9 @@
 
   async function startTrace() {
     if (!injectCode) {
-      setStatus('inject script not loaded yet');
+      // 부트스트랩 fetch 완료 후 자동 재시도되도록 보류.
+      pendingStart = true;
+      setStatus('loading injector…');
       return;
     }
     try {
@@ -839,6 +837,21 @@
   window.__jsTraceAPI = {
     getEvents() { return events.slice(); },
     isActive() { return tracing; },
+    // Monitor 라이프사이클에서 호출. 이미 같은 상태면 no-op.
+    start() { if (!tracing) return startTrace(); },
+    stop() {
+      pendingStart = false; // inject 로드 전 보류된 시작 요청 취소
+      if (tracing) return stopTrace();
+    },
+    // Monitor가 켜져있으면 Trace toggle 활성화, 꺼져있으면 disable.
+    setEnabled(enabled) {
+      toggleBtn.disabled = !enabled;
+      toggleBtn.title = enabled ? '' : 'Start Monitor to enable JS Trace';
+      if (tabBtn) {
+        tabBtn.disabled = !enabled;
+        tabBtn.title = enabled ? '' : 'Start Monitor to enable JS Trace';
+      }
+    },
     getStartedAt() { return traceStartedAt ? new Date(traceStartedAt).toISOString() : null; },
     getFilterStats() { return lastFilterStats; },
     // Monitor export → Import 시 trace events 적재용. 기존 events 덮어쓰기.

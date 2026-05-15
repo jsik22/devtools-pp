@@ -1329,6 +1329,12 @@ function startNetworkMonitoring() {
   btn.className = 'btn btn-toggle-on';
   document.querySelector('.tab[data-tab="network"]').classList.add('recording');
   safeStorageSet({ networkMonitoring: true });
+  // JS Trace는 Monitor에 종속 — Monitor ON 시 자동 시작 + 탭 enable.
+  // 사용자가 JS 분석 불필요하면 JS Trace 탭에서 수동 OFF 가능.
+  if (window.__jsTraceAPI) {
+    window.__jsTraceAPI.setEnabled(true);
+    window.__jsTraceAPI.start();
+  }
 }
 
 function stopNetworkMonitoring() {
@@ -1338,6 +1344,11 @@ function stopNetworkMonitoring() {
   btn.className = 'btn btn-toggle-off';
   document.querySelector('.tab[data-tab="network"]').classList.remove('recording');
   safeStorageSet({ networkMonitoring: false });
+  // Monitor OFF → JS Trace cascade stop + 탭 disable.
+  if (window.__jsTraceAPI) {
+    window.__jsTraceAPI.stop();
+    window.__jsTraceAPI.setEnabled(false);
+  }
 }
 
 function clearNetwork() {

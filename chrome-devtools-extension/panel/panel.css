@@ -88,6 +88,15 @@ body {
   font-weight: 500;
 }
 
+/* JS Trace 탭은 Monitor에 종속 — Monitor OFF면 disable. 클릭 불가 +
+   시각적으로 dim. */
+.tab:disabled {
+  color: #bbb;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.tab:disabled:hover { background: transparent; color: #bbb; }
+
 /* 우측 .content-top의 탭 우측에 위치 — 탭과 세로 구분선으로 분리, 남는 폭
    전체 흡수. 🎯 라벨은 트리의 Set Scope 아이콘과 시각 통일. */
 .global-scope-bar {

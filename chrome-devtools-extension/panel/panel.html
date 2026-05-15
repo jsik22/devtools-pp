@@ -20,8 +20,8 @@
         <div class="content-top">
           <div class="tabs">
             <button class="tab active" data-tab="network">Monitor</button>
+            <button class="tab" data-tab="js-trace" disabled title="Start Monitor to enable JS Trace">JS Trace</button>
             <button class="tab intercept-tab" data-tab="intercept">Intercept</button>
-            <button class="tab" data-tab="js-trace">JS Trace</button>
           </div>
           <div class="global-scope-bar">
             <span class="global-scope-label" title="Host+path pattern. Wildcards: *. Multiple patterns: comma-separated. Empty = all in scope.">🎯</span>
@@ -197,6 +197,64 @@
       </div>
     </section>
 
+    <!-- JS Trace 탭 -->
+    <section id="js-trace" class="tab-content">
+      <div class="toolbar">
+        <button id="trace-toggle" class="btn btn-toggle-off" disabled title="Start Monitor to enable JS Trace">Trace OFF</button>
+        <button id="trace-clear" class="btn">Clear</button>
+        <input type="file" id="trace-import-file" accept=".json" hidden>
+        <button id="trace-import" class="btn" title="Import previously exported JS Trace JSON">Import</button>
+        <div class="export-dropdown">
+          <button id="trace-export" class="btn" disabled>Export ▾</button>
+          <div id="trace-export-menu" class="export-menu hidden">
+            <label class="export-menu-item">
+              <input type="checkbox" id="mask-passwords"> Masking
+            </label>
+            <div class="export-menu-divider"></div>
+            <div class="export-menu-section">Events</div>
+            <button class="export-menu-item" data-trace-export="all">Full events</button>
+            <button class="export-menu-item" data-trace-export="selected" disabled>Selected events <span class="export-selected-count" id="trace-export-selected-count"></span></button>
+          </div>
+        </div>
+        <span id="trace-selection" class="network-selection hidden">
+          <span id="trace-selection-count">0 selected</span>
+          <button id="trace-selection-clear" class="btn btn-xs" title="Clear selection">X</button>
+        </span>
+
+        <div class="network-search-group">
+          <input type="text" id="trace-search" class="filter-input search-input-wide" placeholder="Search events...">
+          <button id="trace-search-clear" class="btn btn-xs network-search-btn hidden" title="Clear search (Esc)">X</button>
+          <button id="trace-search-prev" class="btn btn-xs network-search-btn" title="Previous match (Shift+Enter)" disabled>&#9650;</button>
+          <button id="trace-search-next" class="btn btn-xs network-search-btn" title="Next match (Enter)" disabled>&#9660;</button>
+          <span id="search-count" class="badge network-search-count hidden"></span>
+        </div>
+
+        <div class="filters">
+          <label><input type="checkbox" data-cat="random" checked><span class="cat-dot cat-random"></span>random</label>
+          <label><input type="checkbox" data-cat="crypto" checked><span class="cat-dot cat-crypto"></span>crypto</label>
+          <label><input type="checkbox" data-cat="network" checked><span class="cat-dot cat-network"></span>network</label>
+          <label><input type="checkbox" data-cat="encoding" checked><span class="cat-dot cat-encoding"></span>encoding</label>
+          <label><input type="checkbox" data-cat="input" checked><span class="cat-dot cat-input"></span>input</label>
+          <label><input type="checkbox" data-cat="storage" checked><span class="cat-dot cat-storage"></span>storage</label>
+        </div>
+
+        <span id="trace-status" class="status">idle</span>
+      </div>
+
+      <div class="timeline-header">
+        <span class="th-select"><input type="checkbox" id="trace-select-all" title="Select all visible (Cmd/Ctrl+A) · Shift+click for range"></span>
+        <span class="th-time">Time</span>
+        <span class="th-cat"></span>
+        <span class="th-kind">Kind</span>
+        <span class="th-args">Args</span>
+        <span class="th-result">Result</span>
+      </div>
+
+      <div id="timeline" class="timeline">
+        <div class="placeholder">No trace recorded yet. Click <b>Start Trace</b>, perform the action you want to inspect, then click <b>Stop</b>.</div>
+      </div>
+    </section>
+
     <!-- Intercept 탭 -->
     <section id="intercept" class="tab-content">
       <!-- Top: 컨트롤 바 (single row; 보조 컨트롤은 Rules popover로 collapse) -->
@@ -342,64 +400,6 @@
           </div>
           <div id="icpt-log" class="icpt-log-list"></div>
         </div>
-      </div>
-    </section>
-
-    <!-- JS Trace 탭 -->
-    <section id="js-trace" class="tab-content">
-      <div class="toolbar">
-        <button id="trace-toggle" class="btn btn-toggle-off">Trace OFF</button>
-        <button id="trace-clear" class="btn">Clear</button>
-        <input type="file" id="trace-import-file" accept=".json" hidden>
-        <button id="trace-import" class="btn" title="Import previously exported JS Trace JSON">Import</button>
-        <div class="export-dropdown">
-          <button id="trace-export" class="btn" disabled>Export ▾</button>
-          <div id="trace-export-menu" class="export-menu hidden">
-            <label class="export-menu-item">
-              <input type="checkbox" id="mask-passwords"> Masking
-            </label>
-            <div class="export-menu-divider"></div>
-            <div class="export-menu-section">Events</div>
-            <button class="export-menu-item" data-trace-export="all">Full events</button>
-            <button class="export-menu-item" data-trace-export="selected" disabled>Selected events <span class="export-selected-count" id="trace-export-selected-count"></span></button>
-          </div>
-        </div>
-        <span id="trace-selection" class="network-selection hidden">
-          <span id="trace-selection-count">0 selected</span>
-          <button id="trace-selection-clear" class="btn btn-xs" title="Clear selection">X</button>
-        </span>
-
-        <div class="network-search-group">
-          <input type="text" id="trace-search" class="filter-input search-input-wide" placeholder="Search events...">
-          <button id="trace-search-clear" class="btn btn-xs network-search-btn hidden" title="Clear search (Esc)">X</button>
-          <button id="trace-search-prev" class="btn btn-xs network-search-btn" title="Previous match (Shift+Enter)" disabled>&#9650;</button>
-          <button id="trace-search-next" class="btn btn-xs network-search-btn" title="Next match (Enter)" disabled>&#9660;</button>
-          <span id="search-count" class="badge network-search-count hidden"></span>
-        </div>
-
-        <div class="filters">
-          <label><input type="checkbox" data-cat="random" checked><span class="cat-dot cat-random"></span>random</label>
-          <label><input type="checkbox" data-cat="crypto" checked><span class="cat-dot cat-crypto"></span>crypto</label>
-          <label><input type="checkbox" data-cat="network" checked><span class="cat-dot cat-network"></span>network</label>
-          <label><input type="checkbox" data-cat="encoding" checked><span class="cat-dot cat-encoding"></span>encoding</label>
-          <label><input type="checkbox" data-cat="input" checked><span class="cat-dot cat-input"></span>input</label>
-          <label><input type="checkbox" data-cat="storage" checked><span class="cat-dot cat-storage"></span>storage</label>
-        </div>
-
-        <span id="trace-status" class="status">idle</span>
-      </div>
-
-      <div class="timeline-header">
-        <span class="th-select"><input type="checkbox" id="trace-select-all" title="Select all visible (Cmd/Ctrl+A) · Shift+click for range"></span>
-        <span class="th-time">Time</span>
-        <span class="th-cat"></span>
-        <span class="th-kind">Kind</span>
-        <span class="th-args">Args</span>
-        <span class="th-result">Result</span>
-      </div>
-
-      <div id="timeline" class="timeline">
-        <div class="placeholder">No trace recorded yet. Click <b>Start Trace</b>, perform the action you want to inspect, then click <b>Stop</b>.</div>
       </div>
     </section>
 

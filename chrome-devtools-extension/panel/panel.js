@@ -2645,6 +2645,89 @@ function showDetail(req) {
   applyDetailHighlights(req);
 }
 
+// JS Trace 카테고리별 안내 — Detection 탭 톤과 동일. JS Context의 카테고리
+// 그룹 헤더 클릭 시 카드로 펼침.
+const JSTRACE_CATEGORY_DESCRIPTIONS = {
+  random:
+    `난수 생성 호출입니다.
+CSRF 토큰, 세션 ID, 일회성 nonce, UUID 등을 만드는 데 쓰이며,
+요청 헤더/바디에 어떤 random 값이 주입됐는지 추적하는 단서가 됩니다.
+호출 빈도가 비정상적으로 높거나 직전 호출 결과가 그대로 요청에
+실리면 토큰 생성 로직의 진입점입니다.`,
+
+  crypto:
+    `Web Crypto API 호출입니다.
+encrypt / decrypt / digest / sign / verify / generateKey 등 클라이언트
+측 암호화 / 해시 / 서명 처리. 페이로드 인코딩 직전에 발화하면 그 함수가
+요청 바디를 가공한 위치이며, key import/export는 키 자체가 클라이언트에
+존재한다는 신호 — 분석 표적.`,
+
+  network:
+    `fetch / XMLHttpRequest.send / <form>.submit 호출입니다.
+Monitor 탭의 캡처 데이터와 같은 통신이지만 "JS가 어디서 어떻게 호출했는가"
+관점. Linked 섹션이 ±500ms 정확 매칭이며, 직전·직후 ±2초 안에 잡힌
+다른 network 이벤트는 같은 click handler 흐름의 일부일 가능성.`,
+
+  encoding:
+    `Base64 / 텍스트 인코딩 변환입니다.
+btoa / atob (Base64), TextEncoder.encode / TextDecoder.decode (UTF-8).
+요청 직전에 발화한 encoding 호출의 결과를 요청 헤더/바디에서 찾아 비교하면
+어떤 raw 값이 인코딩돼서 서버로 전달됐는지 식별 가능 (Bearer 토큰, basic
+auth, 커스텀 페이로드 등).`,
+
+  input:
+    `<input>.value getter 호출입니다.
+JS가 사용자 입력 필드를 읽어가는 시점. 로그인 폼 submit 직전에 password /
+id를 읽어 가공·전송하는 흐름이 여기서 잡힙니다. 같은 input을 반복 읽으면
+연속 동일값은 dedupe됨 — 진짜 의미 있는 read만 노출.`,
+
+  storage:
+    `localStorage / sessionStorage / document.cookie 변경입니다.
+세션 토큰 저장, 인증 상태 플래그, 사용자 식별자 캐싱이 주로 일어나는
+곳. setItem / removeItem / clear / cookie set 모두 추적.
+값이 토큰 형태면 다른 요청의 Authorization 헤더 / 쿠키와 대조하여
+어디서 발생해 어디서 사용되는지 흐름 추적.`,
+};
+
+// kind 단위 설명 — kind에서 " (capped)" 접미사는 제거 후 매칭.
+// 11개 wrapper의 emit kind들을 prefix 매칭으로 커버.
+function _jsTraceKindDescription(kind) {
+  const k = String(kind || '').replace(/\s*\(capped\)$/, '');
+  if (k === 'Math.random')
+    return 'JS 내장 PRNG. 암호학적 안전성 없음 (Mersenne Twister 기반). 토큰 생성에 쓰이면 보안 약점 후보.';
+  if (k === 'crypto.getRandomValues')
+    return '암호학적으로 안전한 난수. UUID v4 / nonce / salt 생성에 정상 사용. 결과 바이트가 base64/hex로 인코딩돼 요청에 실리는 패턴을 추적.';
+  if (k.startsWith('crypto.subtle.'))
+    return 'Web Crypto SubtleCrypto API. encrypt / decrypt / digest / sign 등 비동기 암호 연산. args에 알고리즘, result에 출력 또는 promise resolved 값.';
+  if (k === 'fetch')
+    return 'fetch() 호출. args에 method + URL, result에 status code. Monitor 탭에서 동일 요청을 행 단위로 다시 볼 수 있음 (Linked 섹션 자동 매칭).';
+  if (k === 'XHR.send')
+    return 'XMLHttpRequest.send() 호출. send() 시점에 URL/method/body가 확정됨. 응답 status는 readystate 4 시점에 result에 기록.';
+  if (k.startsWith('form.submit'))
+    return '<form>.submit() 또는 submit 이벤트. 페이지 navigation을 동반하므로 직후 pagehide → trace stash 발생 (다음 페이지에서 복원).';
+  if (k === 'btoa')
+    return 'Base64 인코딩. 입력 문자열의 일부를 args에 preview로 보존. Basic auth / 커스텀 인증 헤더 인코딩에 자주 등장.';
+  if (k === 'atob')
+    return 'Base64 디코딩. 서버에서 받은 인코딩된 값을 클라이언트가 풀어 쓸 때 발화. JWT payload 디코딩 등.';
+  if (k === 'TextEncoder.encode')
+    return '문자열 → UTF-8 Uint8Array. crypto.subtle.* 입력 직전 또는 fetch body 가공에 사용.';
+  if (k === 'TextDecoder.decode')
+    return 'Uint8Array → 문자열. crypto.subtle.* 결과 또는 응답 바이너리 해석.';
+  if (k === 'input.value get')
+    return 'HTMLInputElement.value getter. 페이지 코드가 input 값을 읽는 순간 — 로그인 폼 submit 직전 password 추출 등이 여기로 잡힘. type/마스킹 여부는 args의 outerHTML preview에서 확인.';
+  if (/^(local|session)Storage\.setItem$/.test(k))
+    return '브라우저 스토리지 쓰기. args[0]은 키, args[1]은 값. 인증 토큰이 여기에 저장되면 XSS 시 직접 탈취 가능 (HttpOnly cookie 대비 노출).';
+  if (/^(local|session)Storage\.removeItem$/.test(k))
+    return '스토리지 항목 삭제. 로그아웃 / 세션 만료 처리 흔적.';
+  if (/^(local|session)Storage\.clear$/.test(k))
+    return '스토리지 전체 비움. 로그아웃 시점 단서.';
+  if (k === 'document.cookie get')
+    return 'document.cookie getter — JS가 쿠키 값을 읽는 시점. HttpOnly가 아닌 쿠키만 노출. 토큰을 cookie에서 읽어 Authorization 헤더로 옮기는 패턴 추적.';
+  if (k === 'document.cookie set')
+    return 'document.cookie setter — JS가 쿠키를 set/update. args는 "name=value; ..." 형태. expires/path/domain 속성 함께 분석.';
+  return null;
+}
+
 // JS Trace 브릿지 — Monitor 행 선택 시 해당 요청 시점의 trace 이벤트들을 묶어
 // 표시. JS Trace 탭이 비활성/이벤트 없음/매칭 없음 등을 안내. cat별 색상 dot
 // 으로 시각화, 이벤트 클릭 시 JS Trace 탭으로 점프.
@@ -2683,15 +2766,71 @@ function renderJsTraceBridge(req) {
        </div>`
     : '<div class="jstrace-empty">No linked fetch/XHR event (within ±500ms)</div>';
 
-  const contextHtml = context.length === 0
-    ? '<div class="jstrace-empty">No JS activity within ±2 seconds</div>'
-    : context.map(ev => `
+  // Context 이벤트를 카테고리로 그룹화 → Detection 탭과 동일 카드 구조
+  // (헤더 + 펼침 description + 이벤트 list). description 카드에는 카테고리
+  // 설명 + 이번 그룹에 등장한 kind들의 개별 설명을 같이 노출 (옵션 C).
+  let contextHtml;
+  if (context.length === 0) {
+    contextHtml = '<div class="jstrace-empty">No JS activity within ±2 seconds</div>';
+  } else {
+    const byCat = {}; // cat → { events: [...], kinds: Map<kindNormalized, originalKind> }
+    for (const ev of context) {
+      // Network 카테고리는 linked 이벤트 1개로 한정 — 다른 fetch/XHR 호출은
+      // 이 Monitor 요청과 무관한 별도 호출이므로 Context에서 제거 (해당 호출은
+      // Monitor 자체 행에서 별도 분석). Linked가 없으면 network 카테고리
+      // 자체가 안 뜸. 비-네트워크 카테고리는 모두 보존 (이 요청의 원료/부산물).
+      if (ev.cat === 'network' && (!linked || ev.seq !== linked.seq)) continue;
+      if (!byCat[ev.cat]) byCat[ev.cat] = { events: [], kinds: new Map() };
+      byCat[ev.cat].events.push(ev);
+      const normalized = String(ev.kind).replace(/\s*\(capped\)$/, '');
+      if (!byCat[ev.cat].kinds.has(normalized)) {
+        byCat[ev.cat].kinds.set(normalized, ev.kind);
+      }
+    }
+    const catOrder = ['network', 'storage', 'input', 'encoding', 'crypto', 'random'];
+    const sortedCats = Object.keys(byCat).sort((a, b) => {
+      const ia = catOrder.indexOf(a), ib = catOrder.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
+    // 필터링 후 모든 그룹이 비면 (모든 컨텍스트가 unlinked network라서 제외됐다면)
+    // 빈 안내 메시지로 fallback.
+    if (sortedCats.length === 0) {
+      contextHtml = '<div class="jstrace-empty">No JS activity within ±2 seconds (unrelated network events filtered out)</div>';
+    } else {
+      contextHtml = sortedCats.map(cat => {
+      const g = byCat[cat];
+      const catDesc = JSTRACE_CATEGORY_DESCRIPTIONS[cat] || '';
+      // kind별 설명 — 이 그룹에 실제로 등장한 kind만
+      const kindLines = Array.from(g.kinds.keys())
+        .map(k => {
+          const d = _jsTraceKindDescription(k);
+          return d ? `<li><b>${escHtml(k)}</b> — ${escHtml(d)}</li>` : `<li><b>${escHtml(k)}</b></li>`;
+        })
+        .join('');
+      const descBlock = (catDesc || kindLines)
+        ? `<div class="detection-category-desc hidden">${
+            catDesc ? escHtml(catDesc) : ''
+          }${kindLines ? `<ul class="jstrace-kind-list">${kindLines}</ul>` : ''}</div>`
+        : '';
+      const rowsHtml = g.events.map(ev => `
         <div class="jstrace-row ${linked && ev.seq === linked.seq ? 'jstrace-is-linked' : ''}" data-seq="${ev.seq}" title="Click to jump to this event in JS Trace tab">
           <span class="cat-dot cat-${ev.cat}"></span>
           <span class="jstrace-kind">${escHtml(ev.kind)}</span>
           <span class="jstrace-args">${escHtml((ev.args || []).slice(0, 2).join(' · '))}</span>
           <span class="jstrace-t">${_msToOffset(ev.t, reqMs)}</span>
         </div>`).join('');
+      return `<div class="detection-group jstrace-cat-group" data-jst-cat="${cat}">
+        <div class="detection-group-header">
+          <span class="scan-badge scan-badge-jst-${cat}"><span class="cat-dot cat-${cat}"></span> ${escHtml(cat)}</span>
+          <span class="detection-group-count">${g.events.length} event${g.events.length === 1 ? '' : 's'}</span>
+          ${(catDesc || kindLines) ? '<span class="detection-group-toggle">▾</span>' : ''}
+        </div>
+        ${descBlock}
+        <div class="jstrace-cat-events">${rowsHtml}</div>
+      </div>`;
+      }).join('');
+    }
+  }
 
   body.innerHTML = `
     <div class="jstrace-section">
@@ -2706,9 +2845,24 @@ function renderJsTraceBridge(req) {
 
   // Row 클릭 시 JS Trace 탭으로 점프
   body.querySelectorAll('.jstrace-row[data-seq]').forEach(el => {
-    el.addEventListener('click', () => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
       const seq = Number(el.dataset.seq);
       jumpToTraceEvent(seq);
+    });
+  });
+
+  // 카테고리 그룹 헤더 클릭 → description 카드 토글 (Detection과 동일 UX).
+  // description 내부 클릭은 텍스트 선택/복사를 위해 무시.
+  body.querySelectorAll('.jstrace-cat-group').forEach(group => {
+    group.addEventListener('click', (e) => {
+      if (e.target.closest('.detection-category-desc')) return;
+      if (e.target.closest('.jstrace-row')) return; // row 자체 click은 점프 핸들러 담당
+      const desc = group.querySelector('.detection-category-desc');
+      if (!desc) return;
+      desc.classList.toggle('hidden');
+      const toggle = group.querySelector('.detection-group-toggle');
+      if (toggle) toggle.textContent = desc.classList.contains('hidden') ? '▾' : '▴';
     });
   });
 }

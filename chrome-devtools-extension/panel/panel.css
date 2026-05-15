@@ -29,7 +29,7 @@ body {
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  min-height: 30px;
+  height: 32px;
   box-sizing: border-box;
 }
 
@@ -55,7 +55,7 @@ body {
   background: #f3f3f3;
   border-bottom: 1px solid #d4d4d4;
   flex-shrink: 0;
-  min-height: 30px;
+  height: 32px;
   box-sizing: border-box;
 }
 
@@ -3133,3 +3133,51 @@ mark.network-search-mark.current {
 .jstrace-row .cat-dot.cat-encoding { background: #ffb74d; }
 .jstrace-row .cat-dot.cat-input    { background: #26c6da; }
 .jstrace-row .cat-dot.cat-storage  { background: #ec407a; }
+
+/* JS Context 카테고리 그룹 — Detection 탭의 .detection-group 패턴 재사용.
+   배지는 카테고리 컬러에 맞춰 새로 정의 (Detection 카테고리와 구분 위해
+   .scan-badge-jst-* 네임스페이스). */
+.scan-badge-jst-random   { background: #e8f5e9; color: #2e7d32; border-color: #a5d6a7; }
+.scan-badge-jst-crypto   { background: #f3e5f5; color: #6a1b9a; border-color: #ce93d8; }
+.scan-badge-jst-network  { background: #e3f2fd; color: #1565c0; border-color: #90caf9; }
+.scan-badge-jst-encoding { background: #fff3e0; color: #b06000; border-color: #ffcc80; }
+.scan-badge-jst-input    { background: #e0f7fa; color: #00695c; border-color: #80deea; }
+.scan-badge-jst-storage  { background: #fce4ec; color: #ad1457; border-color: #f48fb1; }
+
+/* JS Context 배지 안의 cat-dot — 텍스트 좌측 작은 컬러 점 */
+.scan-badge[class*="scan-badge-jst-"] .cat-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.scan-badge-jst-random .cat-dot   { background: #4caf50; }
+.scan-badge-jst-crypto .cat-dot   { background: #ab47bc; }
+.scan-badge-jst-network .cat-dot  { background: #42a5f5; }
+.scan-badge-jst-encoding .cat-dot { background: #ffb74d; }
+.scan-badge-jst-input .cat-dot    { background: #26c6da; }
+.scan-badge-jst-storage .cat-dot  { background: #ec407a; }
+
+/* description 카드 안의 kind 리스트 */
+.jstrace-kind-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 11px;
+  color: #3c4043;
+}
+.jstrace-kind-list li {
+  margin: 4px 0;
+  line-height: 1.5;
+}
+.jstrace-kind-list b {
+  color: #1a73e8;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-weight: 500;
+}
+
+/* 카테고리 그룹 내부 이벤트 list 컨테이너 */
+.jstrace-cat-events {
+  padding: 2px 0;
+}

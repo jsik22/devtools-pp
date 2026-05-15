@@ -47,11 +47,11 @@ function updateCommands() {
 
   let installText, trustText;
   if (currentPlatform === 'mac') {
-    installText = `cd "<path-to-extension>/native-proxy"\nchmod +x install.sh\n./install.sh ${extensionId}`;
+    installText = `cd "<downloaded>/chrome-devtools-extension/native-proxy"\nchmod +x install.sh\n./install.sh ${extensionId}`;
     trustDesc.textContent = 'Run the following command to add the CA certificate to the macOS system keychain:';
     trustText = `sudo security add-trusted-cert -d -r trustRoot \\\n  -k /Library/Keychains/System.keychain \\\n  ~/.devtools-pp/ca.pem`;
   } else if (currentPlatform === 'win') {
-    installText = `cd "<path-to-extension>\\native-proxy"\ninstall.bat ${extensionId}`;
+    installText = `cd "<downloaded>\\chrome-devtools-extension\\native-proxy"\ninstall.bat ${extensionId}`;
     trustDesc.textContent = 'Run the following command in an Administrator Command Prompt to trust the CA certificate:';
     trustText = `certutil -addstore -user "Root" "%USERPROFILE%\\.devtools-pp\\ca.pem"`;
   }

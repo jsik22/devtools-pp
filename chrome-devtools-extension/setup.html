@@ -150,14 +150,34 @@
       </div>
     </div>
 
-    <!-- Step 1: Run installer -->
+    <!-- Step 1: Get the proxy files from GitHub -->
     <div class="step">
       <div class="step-header">
         <div class="step-num">1</div>
+        <div class="step-title">Get the proxy files from GitHub</div>
+      </div>
+      <div class="step-desc">
+        The Chrome Web Store build does not bundle the local proxy. Download it from the
+        <a href="https://github.com/jsik22/devtools-pp/releases/latest" target="_blank">latest release</a>
+        (unzip <code>devtools-pp-v*.zip</code>), or clone the repository:
+      </div>
+      <div class="code-block" id="clone-cmd">git clone https://github.com/jsik22/devtools-pp.git</div>
+      <div class="btn-row">
+        <button class="btn btn-primary" data-copy-target="clone-cmd">Copy Command</button>
+      </div>
+      <div class="note">
+        Prefer the release that matches your installed extension version.
+      </div>
+    </div>
+
+    <!-- Step 2: Run installer -->
+    <div class="step">
+      <div class="step-header">
+        <div class="step-num">2</div>
         <div class="step-title">Run the installer script</div>
       </div>
       <div class="step-desc">
-        Open a terminal and run the following command. This will install dependencies, generate a CA certificate, and register the Native Messaging host.
+        Open a terminal in the downloaded folder and run the following command. This will install dependencies, generate a CA certificate, and register the Native Messaging host.
       </div>
       <div class="code-block" id="install-cmd">—</div>
       <div class="btn-row">
@@ -165,10 +185,10 @@
       </div>
     </div>
 
-    <!-- Step 2: Trust CA cert -->
+    <!-- Step 3: Trust CA cert -->
     <div class="step">
       <div class="step-header">
-        <div class="step-num">2</div>
+        <div class="step-num">3</div>
         <div class="step-title">Trust the CA certificate (for HTTPS interception)</div>
       </div>
       <div class="step-desc" id="trust-desc">—</div>
@@ -181,10 +201,10 @@
       </div>
     </div>
 
-    <!-- Step 3: Restart Chrome -->
+    <!-- Step 4: Restart Chrome -->
     <div class="step">
       <div class="step-header">
-        <div class="step-num">3</div>
+        <div class="step-num">4</div>
         <div class="step-title">Restart Chrome</div>
       </div>
       <div class="step-desc">

@@ -3114,7 +3114,7 @@ mark.network-search-mark.current {
 }
 .jstrace-row {
   display: grid;
-  grid-template-columns: 14px 130px 1fr 70px;
+  grid-template-columns: 14px 160px 1fr 70px;
   gap: 8px;
   align-items: center;
   padding: 4px 10px;
@@ -3133,8 +3133,8 @@ mark.network-search-mark.current {
   /* Context에서도 linked event는 좌측 노란 막대로 식별 */
   box-shadow: inset 3px 0 0 #fbbf24;
 }
-.jstrace-row .jstrace-kind { color: #1e1e1e; }
-.jstrace-row .jstrace-args { color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jstrace-row .jstrace-kind { color: #1e1e1e; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jstrace-row .jstrace-args { color: #555; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jstrace-row .jstrace-t { color: #888; text-align: right; }
 
 .jstrace-notice,

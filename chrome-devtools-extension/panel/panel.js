@@ -128,14 +128,115 @@ const sitemapTreeEl = document.getElementById('sitemap-tree');
 
 // Auto Crawl: Network 모니터링이 모두 기록하는 동안 inspected tab을
 // URL 리스트대로 순차 방문. 한 번에 알려진 타겟을 일괄 훑을 때 유용.
+// Spider 엔진 상태. crawlState.active = "크롤 실행 중" 플래그(기존 의미 유지).
+// frontier = BFS 큐 [{url, depth}], seen = enqueue/visit dedup 키 집합.
 const crawlState = {
   active: false,
-  urls: [],
-  index: 0,
   waitMs: 5000,
   timeoutId: null,
+  watchdogId: null,
+  pollId: null,
+  // Spider
+  frontier: [],
+  seen: new Set(),
+  seedOrigins: new Set(),
+  maxDepth: 2,
+  maxPages: 200,
+  visitedCount: 0,
+  currentUrl: '',
+  // 크롤 중 캡처를 seed origin으로 한정 (third-party 노이즈 드롭). 기본 ON.
+  scopeCapture: true,
+  // 고속 발견 모드 — Per-page wait 무시(0). 링크/구조 발견 무결성은 유지
+  // (추출은 wait 전에 끝남), 페이지별 늦은 async 트래픽 캡처만 감소.
+  fastDiscovery: false,
+  // 크롤 중 이미지/폰트 캡처 스킵 — 메모리/노이즈 절감 (속도·무결성 무관).
+  skipAssets: false,
+  // 크롤 종료(완료/Stop) 시 run 요약 .txt 자동 저장. 기본 ON.
+  metaFile: true,
+  // run 요약용 메타 (종료 후에도 보존).
+  seeds: [],
+  startedAt: null,
+  endedAt: null,
+  // 크롤이 Monitor를 자동으로 켰는지 → 종료 시 자동 OFF 여부 판단.
+  monitorAutoStarted: false,
 };
+// 크롤 asset-skip 시 확장자 fallback (mimeType 누락/오라벨 대비).
+const SPIDER_ASSET_RE = /\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico|woff2?|ttf|otf|eot)(?:[?#]|$)/i;
+// 고속 발견 모드의 페이지 간 wait. 0이라도 NAV_COMMIT+로드+GRACE(~1s)
+// 자연 바닥이 있어 서버를 연타하진 않음.
+const SPIDER_FAST_WAIT_MS = 0;
+// 절대 천장 — 시드 입력 sanity cap + Max pages 입력의 상한. 실제 크롤
+// 한도는 사용자 설정 crawlState.maxPages (기본 200, ≤ 이 값).
+const SPIDER_MAX_PAGES = 1000;
+// 페이지 1스텝(이동→로드완료 폴링)의 무응답 상한. alert/confirm/무한
+// 스크립트 등으로 로드완료가 안 잡히면 이 시간 후 그 페이지 버리고 다음으로.
+const SPIDER_WATCHDOG_MS = 10000;
+// tabs.update 후 네비게이션 commit(이전 문서 unload) 대기 — 이전 페이지의
+// 잔여 readyState='complete'를 새 페이지로 오인하지 않도록. 200ms면 실무상
+// 네비 commit에 충분하면서 페이지당 오버헤드 최소화 (무결성 영향 없음).
+const SPIDER_NAV_COMMIT_MS = 200;
+// readyState 폴링 간격 — 로드완료를 감지하는 주기일 뿐이라 짧을수록
+// 빠르고 결과는 동일(무결성 무관).
+const SPIDER_POLL_MS = 100;
+// 로드 완료 후 링크 추출 전 짧은 grace — load 직후 JS가 추가하는 링크까지
+// 포착. 옛 blind settle(최대 3s 추측)을 대체하는 작은 고정 쿠션.
+const SPIDER_POST_LOAD_GRACE_MS = 600;
+// spider 네비게이션 — background가 chrome.tabs.update로 inspected 탭을
+// 브라우저 레벨 이동(페이지 JS 안 거침 → 다이얼로그/행에 면역, 막힌
+// 다이얼로그도 부수 취소). 로드 완료 판정은 패널이 inspectedWindow.eval
+// readyState 폴링으로 직접 수행.
+//
+// long-lived 포트(sendToBg)가 아니라 chrome.runtime.sendMessage 사용 —
+// 포트는 cold/stale SW에서 첫 메시지를 유실(드롭, 버퍼 없음)해 cross-origin
+// 시드 첫 이동이 안 되던 근본 원인. sendMessage는 SW를 깨워 전달 보장.
+// tabId는 inspected tab(파일 상단 const tabId)을 명시 전달.
+function spiderNavigate(url) {
+  if (bgReconnectStopped) return;
+  try {
+    chrome.runtime.sendMessage({ type: 'spider_navigate', url, tabId });
+  } catch (err) {
+    if (isContextInvalidated(err)) bgReconnectStopped = true;
+  }
+}
+const DESTRUCTIVE_URL_RE = /(logout|sign-?out|delete|remove|destroy|withdraw|deactivate)/i;
 
+function normalizeUrl(u) {
+  try { const x = new URL(u); return x.origin + x.pathname + x.search; }
+  catch { return null; }
+}
+
+function isDestructiveUrl(u) { return DESTRUCTIVE_URL_RE.test(u); }
+
+// 크롤 진행 중 캡처 한정 — 크롤 대상 seed origin 밖 요청은 캡처 단계에서
+// 드롭(메모리/검색 비용 bound). 크롤 비활성이거나 옵션 OFF면 영향 없음.
+function crawlCaptureBlocks(url) {
+  if (!crawlState.active || !crawlState.scopeCapture) return false;
+  try { return !crawlState.seedOrigins.has(new URL(url).origin); }
+  catch { return false; }
+}
+
+// 크롤 중 이미지/폰트 캡처 스킵 — 메모리/노이즈 절감용. 속도·링크 발견
+// 무결성과 무관(이미지/폰트는 링크 소스 아님). 크롤 비활성/옵션 OFF면 무영향.
+function crawlSkipsAsset(harEntry) {
+  if (!crawlState.active || !crawlState.skipAssets) return false;
+  const mt = ((harEntry.response && harEntry.response.content &&
+    harEntry.response.content.mimeType) || '').toLowerCase();
+  if (mt.startsWith('image/') || mt.startsWith('font/') ||
+      mt === 'application/font-woff' || mt === 'application/vnd.ms-fontobject') return true;
+  try { return SPIDER_ASSET_RE.test(new URL(harEntry.request.url).pathname); }
+  catch { return false; }
+}
+
+// same-origin(시드 origin) 한정 + 글로벌 Scope 교집합(Scope 없으면 통과).
+function inSpiderScope(u) {
+  let x;
+  try { x = new URL(u); } catch { return false; }
+  if (x.protocol !== 'http:' && x.protocol !== 'https:') return false;
+  if (!crawlState.seedOrigins.has(x.origin)) return false;
+  return inGlobalScope(u);
+}
+
+// 시드 텍스트 → 절대 URL 배열 (trim, https:// prepend, dedup, 검증).
 function preprocessCrawlUrls(rawText) {
   const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
   const seen = new Set();
@@ -146,7 +247,7 @@ function preprocessCrawlUrls(rawText) {
     if (seen.has(url)) continue;
     seen.add(url);
     urls.push(url);
-    if (urls.length >= 200) break;
+    if (urls.length >= SPIDER_MAX_PAGES) break;
   }
   return urls;
 }
@@ -159,27 +260,55 @@ function hideCrawlModal() {
 }
 
 function startCrawl() {
-  const text = document.getElementById('crawl-urls').value;
-  const urls = preprocessCrawlUrls(text);
-  if (urls.length === 0) {
-    showToast('No valid URLs.');
+  const seeds = preprocessCrawlUrls(document.getElementById('crawl-urls').value);
+  if (seeds.length === 0) {
+    showToast('No valid seed URLs.');
     return;
   }
   const waitVal = parseInt(document.getElementById('crawl-wait').value, 10);
   const waitSec = Math.min(30, Math.max(1, isNaN(waitVal) ? 5 : waitVal));
+  const depthVal = parseInt(document.getElementById('crawl-depth').value, 10);
+  const maxDepth = Math.min(5, Math.max(0, isNaN(depthVal) ? 2 : depthVal));
+  const pagesVal = parseInt(document.getElementById('crawl-max-pages').value, 10);
+  const maxPages = Math.min(SPIDER_MAX_PAGES, Math.max(1, isNaN(pagesVal) ? 200 : pagesVal));
 
-  // 모니터링이 꺼져 있으면 자동으로 켜기
+  // 모니터링이 꺼져 있으면 자동으로 켜기. 이때 "크롤이 켰다"를 기록 →
+  // 크롤 종료 시 자동 OFF. 사용자가 미리 켜둔 세션이면 건드리지 않음.
+  crawlState.monitorAutoStarted = !networkMonitoring;
   if (!networkMonitoring) startNetworkMonitoring();
 
+  crawlState.fastDiscovery = document.getElementById('crawl-fast-discovery').checked;
+
   crawlState.active = true;
-  crawlState.urls = urls;
-  crawlState.index = 0;
-  crawlState.waitMs = waitSec * 1000;
+  crawlState.waitMs = crawlState.fastDiscovery ? SPIDER_FAST_WAIT_MS : waitSec * 1000;
+  crawlState.maxDepth = maxDepth;
+  crawlState.maxPages = maxPages;
+  crawlState.frontier = [];
+  crawlState.seen = new Set();
+  crawlState.seedOrigins = new Set();
+  crawlState.visitedCount = 0;
+  crawlState.currentUrl = '';
+  for (const s of seeds) {
+    const key = normalizeUrl(s);
+    if (!key || crawlState.seen.has(key)) continue;
+    try { crawlState.seedOrigins.add(new URL(s).origin); } catch { continue; }
+    crawlState.seen.add(key);
+    crawlState.frontier.push({ url: s, depth: 0 });
+  }
+
+  crawlState.scopeCapture = document.getElementById('crawl-scope-capture').checked;
+  crawlState.skipAssets = document.getElementById('crawl-skip-assets').checked;
+  crawlState.metaFile = document.getElementById('crawl-meta-file').checked;
+  crawlState.seeds = seeds.slice();
+  crawlState.startedAt = Date.now();
+  crawlState.endedAt = null;
 
   // UI: 입력 잠금, Start → Stop으로 교체, progress 블록 표시
-  document.getElementById('crawl-urls').disabled = true;
-  document.getElementById('crawl-wait').disabled = true;
-  document.getElementById('crawl-import-btn').disabled = true;
+  ['crawl-urls', 'crawl-wait', 'crawl-depth', 'crawl-max-pages', 'crawl-import-btn',
+   'crawl-scope-capture', 'crawl-fast-discovery', 'crawl-skip-assets', 'crawl-meta-file'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = true;
+  });
   document.getElementById('crawl-progress').classList.remove('hidden');
   const btn = document.getElementById('crawl-start');
   btn.textContent = 'Stop';
@@ -188,56 +317,204 @@ function startCrawl() {
   visitNextCrawl();
 }
 
+// frontier BFS 한 스텝: 다음 유효 항목 navigate → 로드완료(readyState
+// 'complete' + origin 일치) 폴링 → grace → (depth<max면) same-origin 링크
+// 추출·enqueue → wait → 반복. 로드완료가 안 잡히면(alert/hang/너무 느림)
+// 워치독이 그 페이지 버리고 다음으로 → 다음 스텝의 spiderNavigate(브라우저
+// 레벨)가 막힌 다이얼로그를 부수적으로 취소.
 function visitNextCrawl() {
   if (!crawlState.active) return;
-  if (crawlState.index >= crawlState.urls.length) {
+
+  let item = null;
+  while (crawlState.frontier.length) {
+    const cand = crawlState.frontier.shift();
+    if (!inSpiderScope(cand.url) || isDestructiveUrl(cand.url)) continue;
+    item = cand;
+    break;
+  }
+  if (!item || crawlState.visitedCount >= crawlState.maxPages) {
     completeCrawl();
     return;
   }
-  const url = crawlState.urls[crawlState.index];
-  updateCrawlProgress();
-  const expr = `location.href = ${JSON.stringify(url)}`;
-  chrome.devtools.inspectedWindow.eval(expr, () => {
-    // 에러(chrome:// URL, 차단 등) — skip하고 진행.
+
+  crawlState.visitedCount++;
+  crawlState.currentUrl = item.url;
+  updateCrawlProgress(item);
+
+  let expectedOrigin = null;
+  try { expectedOrigin = new URL(item.url).origin; } catch { /* keep null */ }
+
+  // 이 스텝은 readyState 폴링 성공 또는 워치독 중 먼저 오는 쪽만 1회 처리.
+  let stepDone = false;
+  const finishStep = (loaded) => {
+    if (stepDone) return;
+    stepDone = true;
+    if (crawlState.pollId) { clearInterval(crawlState.pollId); crawlState.pollId = null; }
+    if (crawlState.watchdogId) { clearTimeout(crawlState.watchdogId); crawlState.watchdogId = null; }
     if (!crawlState.active) return;
-    crawlState.index++;
+    if (loaded) {
+      // 실제 로드 완료 → 짧은 grace 후 링크 추출.
+      crawlState.timeoutId = setTimeout(() => {
+        if (!crawlState.active) return;
+        collectLinksThenContinue(item);
+      }, SPIDER_POST_LOAD_GRACE_MS);
+    } else {
+      // 로드완료 안 잡힘(alert/hang/너무 느림) → 이 페이지 추출 생략,
+      // 다음으로. 다음 spiderNavigate(브라우저 레벨)가 막힌 다이얼로그를
+      // 부수적으로 취소시키며 빠져나감.
+      crawlState.timeoutId = setTimeout(visitNextCrawl, crawlState.waitMs);
+    }
+  };
+
+  // 브라우저 레벨 이동 (background tabs.update). 페이지 JS 안 거침.
+  spiderNavigate(item.url);
+
+  // commit 대기 후, inspectedWindow.eval로 새 페이지 로드 완료를 폴링.
+  // origin이 기대값과 일치 + readyState 'complete'여야 통과 → 이전 문서의
+  // 잔여 'complete'를 새 페이지로 오인하지 않음. alert가 페이지를 막으면
+  // 이 eval이 응답 안 함 → 워치독이 stuck 처리.
+  crawlState.timeoutId = setTimeout(() => {
+    if (!crawlState.active || stepDone) return;
+    const probe = `JSON.stringify({rs:document.readyState,o:location.origin})`;
+    crawlState.pollId = setInterval(() => {
+      if (!crawlState.active || stepDone) {
+        if (crawlState.pollId) { clearInterval(crawlState.pollId); crawlState.pollId = null; }
+        return;
+      }
+      chrome.devtools.inspectedWindow.eval(probe, (raw, err) => {
+        if (err || stepDone || !crawlState.active) return;
+        let st;
+        try { st = JSON.parse(raw); } catch { return; }
+        if (st && st.rs === 'complete' &&
+            (expectedOrigin === null || st.o === expectedOrigin)) {
+          finishStep(true);
+        }
+      });
+    }, SPIDER_POLL_MS);
+  }, SPIDER_NAV_COMMIT_MS);
+
+  crawlState.watchdogId = setTimeout(() => {
+    crawlState.watchdogId = null;
+    finishStep(false);
+  }, SPIDER_WATCHDOG_MS);
+}
+
+// 현재 페이지에서 same-origin 앵커를 추출해 frontier에 enqueue(depth+1)한 뒤,
+// wait → 다음 스텝. (passive 전용 — 페이지 트래픽은 Monitor/JS Trace가 캡처)
+//
+// 여기 도달 = visitNextCrawl에서 이미 readyState 'complete'를 확인한 뒤
+// (grace 경과)라 보통 추출 eval은 즉시 응답. 다만 로드 *완료 후* 타이머
+// 등으로 뒤늦게 뜨는 alert가 추출 eval을 막을 수 있어 보조 워치독을 둔다 —
+// eval 콜백 vs 워치독 중 먼저 오는 쪽이 이기고(race guard) 다른 쪽은 무시.
+// 워치독이 이기면 추출 생략하고 진행 → 다음 visitNextCrawl의 spiderNavigate
+// (브라우저 레벨)가 막힌 다이얼로그를 부수적으로 취소시키며 빠져나감.
+function collectLinksThenContinue(item) {
+  let settled = false;
+  const proceed = () => {
+    if (settled) return;
+    settled = true;
+    if (crawlState.watchdogId) { clearTimeout(crawlState.watchdogId); crawlState.watchdogId = null; }
+    if (!crawlState.active) return;
     crawlState.timeoutId = setTimeout(visitNextCrawl, crawlState.waitMs);
+  };
+
+  if (item.depth >= crawlState.maxDepth) { proceed(); return; }
+
+  // 원인 불문 워치독 — eval이 막혀 무응답이면 stuck 처리하고 진행.
+  crawlState.watchdogId = setTimeout(() => {
+    crawlState.watchdogId = null;
+    proceed();
+  }, SPIDER_WATCHDOG_MS);
+
+  const expr = `JSON.stringify((function(){try{
+    return Array.prototype.slice.call(document.querySelectorAll('a[href]'))
+      .map(function(a){ return a.href; });
+  }catch(e){ return []; }})())`;
+  chrome.devtools.inspectedWindow.eval(expr, (raw) => {
+    if (settled || !crawlState.active) return;
+    try {
+      const hrefs = JSON.parse(raw || '[]');
+      for (const h of hrefs) {
+        if (crawlState.seen.size >= crawlState.maxPages) break;
+        const key = normalizeUrl(h);
+        if (!key || crawlState.seen.has(key)) continue;
+        if (!inSpiderScope(h) || isDestructiveUrl(h)) continue;
+        crawlState.seen.add(key);
+        crawlState.frontier.push({ url: h, depth: item.depth + 1 });
+      }
+    } catch { /* malformed — skip enqueue */ }
+    proceed();
   });
+}
+
+// 크롤이 Monitor를 자동으로 켰던 경우에만 종료 시 자동 OFF.
+// stopNetworkMonitoring은 데이터를 안 지움(clear는 별개) → 캡처된 크롤
+// 결과·jsTrace 보존되어 이후 export 정상. 사용자가 도중 수동 OFF 했으면
+// (networkMonitoring=false) 재토글 안 함.
+function maybeStopMonitorAfterCrawl() {
+  if (crawlState.monitorAutoStarted && networkMonitoring) {
+    stopNetworkMonitoring();
+  }
+  crawlState.monitorAutoStarted = false;
 }
 
 function stopCrawl() {
   if (crawlState.timeoutId) clearTimeout(crawlState.timeoutId);
   crawlState.timeoutId = null;
+  if (crawlState.watchdogId) clearTimeout(crawlState.watchdogId);
+  crawlState.watchdogId = null;
+  if (crawlState.pollId) clearInterval(crawlState.pollId);
+  crawlState.pollId = null;
   crawlState.active = false;
+  crawlState.endedAt = Date.now();
+  saveCrawlMeta();
+  maybeStopMonitorAfterCrawl();
   resetCrawlUI();
 }
 
 function completeCrawl() {
-  const visited = crawlState.index;
+  const n = crawlState.visitedCount;
   crawlState.active = false;
+  crawlState.endedAt = Date.now();
+  saveCrawlMeta();
+  maybeStopMonitorAfterCrawl();
   resetCrawlUI();
-  showToast(`Visited ${visited} site${visited === 1 ? '' : 's'}.`);
+  showToast(`Crawled ${n} page${n === 1 ? '' : 's'}.`);
   hideCrawlModal();
 }
 
 function resetCrawlUI() {
-  document.getElementById('crawl-urls').disabled = false;
-  document.getElementById('crawl-wait').disabled = false;
-  document.getElementById('crawl-import-btn').disabled = false;
+  ['crawl-urls', 'crawl-wait', 'crawl-depth', 'crawl-max-pages', 'crawl-import-btn',
+   'crawl-scope-capture', 'crawl-fast-discovery', 'crawl-skip-assets', 'crawl-meta-file'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = false;
+  });
   document.getElementById('crawl-progress').classList.add('hidden');
   const btn = document.getElementById('crawl-start');
   btn.textContent = 'Start';
   btn.className = 'btn btn-primary';
+  // 입력 재활성화 후, fast 모드면 per-page wait는 다시 비활성 유지
+  // (fast 모드에선 무의미 — waitMs가 0으로 강제됨).
+  syncFastModeUI();
 }
 
-function updateCrawlProgress() {
-  const total = crawlState.urls.length;
-  const idx = crawlState.index;
-  const url = crawlState.urls[idx] || '';
-  document.querySelector('.crawl-progress-fill').style.width =
-    `${(idx / total) * 100}%`;
-  document.querySelector('.crawl-progress-text').textContent = `${idx + 1}/${total}`;
-  document.querySelector('.crawl-current-url').textContent = url;
+// fast 모드 체크 시 Per-page wait 입력 비활성화 (값이 무시되므로 혼선 방지).
+function syncFastModeUI() {
+  const fast = document.getElementById('crawl-fast-discovery');
+  const wait = document.getElementById('crawl-wait');
+  if (fast && wait && !crawlState.active) wait.disabled = fast.checked;
+}
+
+function updateCrawlProgress(item) {
+  const visited = crawlState.visitedCount;
+  const remaining = crawlState.frontier.length;
+  const total = visited + remaining;
+  const pct = total ? (visited / total) * 100 : 0;
+  document.querySelector('.crawl-progress-fill').style.width = `${pct}%`;
+  document.querySelector('.crawl-progress-text').textContent =
+    `visited ${visited} · queued ${remaining}` +
+    (item ? ` · depth ${item.depth}` : '');
+  document.querySelector('.crawl-current-url').textContent = item ? item.url : '--';
 }
 
 let _toastTimer = null;
@@ -263,6 +540,10 @@ document.getElementById('crawl-start').addEventListener('click', () => {
   if (crawlState.active) stopCrawl();
   else startCrawl();
 });
+
+// fast 모드 토글 → Per-page wait 활성/비활성 동기화 (+ 초기 1회).
+document.getElementById('crawl-fast-discovery').addEventListener('change', syncFastModeUI);
+syncFastModeUI();
 
 // Import .txt — 파일 내용을 textarea에 채움. import 후에도 textarea는
 // 편집 가능 → 사용자가 import한 목록을 다듬을 수 있음(원치 않는 host 제거,
@@ -1158,6 +1439,14 @@ function processNetworkRequest(harEntry) {
   // Network 리스트에도 추가 안 함). 빈 스코프 = 전 범위 in scope.
   if (!inGlobalScope(harEntry.request.url)) return;
 
+  // 크롤 중 캡처 스코프 — 크롤 대상 사이트(seed origin) 밖 요청 드롭.
+  // 200페이지 스파이더링 시 third-party(광고/analytics/CDN) 노이즈가
+  // networkRequests에 쌓여 메모리·검색 비용을 키우는 것 방지.
+  if (crawlCaptureBlocks(harEntry.request.url)) return;
+
+  // 크롤 중 이미지/폰트 캡처 스킵 (옵션, 기본 OFF) — 메모리/노이즈 절감.
+  if (crawlSkipsAsset(harEntry)) return;
+
   // Auth 탭 probe — 테스트 버튼이 발화하는 `fetch()` 변종이
   // onRequestFinished로 돌아옴. 완전히 드롭해서 Monitor 타임라인이
   // 실제 사용자/페이지 트래픽만 보이도록.
@@ -1393,6 +1682,170 @@ function _downloadJson(filename, data) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function _downloadText(filename, text) {
+  const blob = new Blob([text], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function _downloadBlobObject(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// items가 이 수치를 초과하면 export를 N개 .json으로 쪼개 단일 .zip으로 묶음.
+// (split unit이자 임계값 — "1000 초과 시 1000개씩 분할")
+const EXPORT_SPLIT_THRESHOLD = 1000;
+
+// ZIP STORE writer — 무압축·무의존. 압축률 0(용량 동일)이지만 거대 export를
+// 열람·재임포트 가능한 1000건 단위 파트로 쪼개 단일 컨테이너로 제공.
+// realistic 데이터(수십만 요청 이하)에선 32-bit 필드로 충분 → ZIP64 미사용.
+let _crc32Table = null;
+function _crc32(bytes) {
+  if (!_crc32Table) {
+    _crc32Table = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+      _crc32Table[n] = c >>> 0;
+    }
+  }
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) {
+    crc = (crc >>> 8) ^ _crc32Table[(crc ^ bytes[i]) & 0xff];
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function _dosDateTime(d) {
+  const time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+  const date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  return { time: time & 0xffff, date: date & 0xffff };
+}
+
+// files: [{ name: string, bytes: Uint8Array }] → Blob(application/zip)
+function _buildStoreZip(files) {
+  const enc = new TextEncoder();
+  const { time: dosTime, date: dosDate } = _dosDateTime(new Date());
+  const parts = [];      // local header + name + data 순차
+  const central = [];    // central directory records
+  let offset = 0;
+
+  for (const f of files) {
+    const nameBytes = enc.encode(f.name);
+    const data = f.bytes;
+    const crc = _crc32(data);
+    const size = data.length;
+
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true);   // local file header sig
+    lh.setUint16(4, 20, true);           // version needed
+    lh.setUint16(6, 0, true);            // flags
+    lh.setUint16(8, 0, true);            // method: 0 = STORE
+    lh.setUint16(10, dosTime, true);
+    lh.setUint16(12, dosDate, true);
+    lh.setUint32(14, crc, true);
+    lh.setUint32(18, size, true);        // compressed size
+    lh.setUint32(22, size, true);        // uncompressed size
+    lh.setUint16(26, nameBytes.length, true);
+    lh.setUint16(28, 0, true);           // extra len
+    const lhBytes = new Uint8Array(lh.buffer);
+    parts.push(lhBytes, nameBytes, data);
+
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true);   // central dir header sig
+    ch.setUint16(4, 20, true);           // version made by
+    ch.setUint16(6, 20, true);           // version needed
+    ch.setUint16(8, 0, true);            // flags
+    ch.setUint16(10, 0, true);           // method
+    ch.setUint16(12, dosTime, true);
+    ch.setUint16(14, dosDate, true);
+    ch.setUint32(16, crc, true);
+    ch.setUint32(20, size, true);
+    ch.setUint32(24, size, true);
+    ch.setUint16(28, nameBytes.length, true);
+    ch.setUint16(30, 0, true);           // extra len
+    ch.setUint16(32, 0, true);           // comment len
+    ch.setUint16(34, 0, true);           // disk #
+    ch.setUint16(36, 0, true);           // internal attrs
+    ch.setUint32(38, 0, true);           // external attrs
+    ch.setUint32(42, offset, true);      // local header offset
+    central.push(new Uint8Array(ch.buffer), nameBytes);
+
+    offset += 30 + nameBytes.length + size;
+  }
+
+  const centralStart = offset;
+  let centralSize = 0;
+  for (const c of central) centralSize += c.length;
+
+  const eocd = new DataView(new ArrayBuffer(22));
+  eocd.setUint32(0, 0x06054b50, true);   // EOCD sig
+  eocd.setUint16(4, 0, true);            // disk #
+  eocd.setUint16(6, 0, true);            // central dir disk
+  eocd.setUint16(8, files.length, true); // records this disk
+  eocd.setUint16(10, files.length, true);// total records
+  eocd.setUint32(12, centralSize, true);
+  eocd.setUint32(16, centralStart, true);
+  eocd.setUint16(20, 0, true);           // comment len
+
+  return new Blob([...parts, ...central, new Uint8Array(eocd.buffer)],
+    { type: 'application/zip' });
+}
+
+// 크롤 1회 run 요약 텍스트. startCrawl이 seeds/startedAt,
+// stop/completeCrawl이 endedAt을 세팅한 뒤 호출.
+function _crawlMetaText() {
+  const meta = _exportMetadata();
+  const started = crawlState.startedAt;
+  const ended = crawlState.endedAt || Date.now();
+  const sec = Math.max(0, Math.round((ended - started) / 1000));
+  const elapsed = sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${sec % 60}s`;
+  const L = [];
+  L.push('DevTools++ — crawl run summary');
+  L.push('');
+  L.push(`exportedAt        : ${meta.exportedAt}`);
+  L.push(`extensionVersion  : ${meta.extensionVersion}`);
+  L.push(`globalScope       : ${meta.scope || '(none)'}`);
+  L.push(`capturedRequests  : ${networkRequests.length}`);
+  L.push('');
+  L.push('-- crawl run --');
+  L.push(`seeds             : ${crawlState.seeds.join(', ')}`);
+  L.push(`startedAt         : ${new Date(started).toISOString()}`);
+  L.push(`endedAt           : ${new Date(ended).toISOString()}`);
+  L.push(`elapsed           : ${elapsed}`);
+  L.push(`visitedPages      : ${crawlState.visitedCount}`);
+  L.push(`maxDepth          : ${crawlState.maxDepth}`);
+  L.push(`maxPages          : ${crawlState.maxPages}`);
+  L.push(`perPageWait       : ${crawlState.fastDiscovery ? 'fast (0ms)' : (crawlState.waitMs / 1000) + 's'}`);
+  L.push(`fastDiscovery     : ${crawlState.fastDiscovery}`);
+  L.push(`scopeCapture      : ${crawlState.scopeCapture}`);
+  L.push(`skipAssets        : ${crawlState.skipAssets}`);
+  return L.join('\n') + '\n';
+}
+
+// 크롤 종료(완료/Stop) 시 run 요약 .txt 자동 저장.
+// metaFile ON + 실제 run이 있었을(startedAt) 때만.
+function saveCrawlMeta() {
+  if (!crawlState.metaFile || crawlState.startedAt == null) return;
+  const parts = ['devtoolspp', 'crawl'];
+  if (activeTabHost) parts.push(_sanitizeForFilename(activeTabHost));
+  parts.push(_exportTimestamp());
+  _downloadText(parts.join('-') + '.txt', _crawlMetaText());
+}
+
 // 파일명용 timestamp — local time 기준 (UTC가 아닌 사용자 wall clock).
 // JSON 안의 metadata.exportedAt은 UTC ISO 그대로 유지 — 머신 파싱 용도.
 function _exportTimestamp() {
@@ -1442,6 +1895,7 @@ function _exportMetadata() {
   };
 }
 
+
 // 캡처된 모든 요청을 export — full headers, bodies(로드된 경우),
 // scan results, initiator. 소스 집합은 scope(current tab / all tabs)와
 // selectedOnly(checked 행으로 제한)로 결정.
@@ -1480,17 +1934,13 @@ function exportAllRequests(scope, selectedOnly) {
     mainHost: r._mainHost || null,
   }));
 
-  // JS Trace events 함께 export — Monitor request export에는 trace events가
-  // 시간 윈도우 매칭에 필요. 사이트 분석 결과를 한 파일로 묶어 reproducible.
-  // events 0건 / API 미연결이면 jsTrace 필드 자체 생략.
-  const payload = Object.assign({}, _exportMetadata(), {
-    totalRequests: source.length,
-    items,
-  });
+  // JS Trace events — Monitor export의 시간 윈도우 매칭용. 전역 데이터라
+  // 분할 시 part-01에만 동봉(전 파트 중복 방지). 0건/미연결이면 생략.
+  let jsTrace = null;
   if (window.__jsTraceAPI && typeof window.__jsTraceAPI.getEvents === 'function') {
     const traceEvents = window.__jsTraceAPI.getEvents();
     if (traceEvents.length > 0) {
-      payload.jsTrace = {
+      jsTrace = {
         events: traceEvents,
         startedAt: window.__jsTraceAPI.getStartedAt
           ? window.__jsTraceAPI.getStartedAt() : null,
@@ -1500,7 +1950,35 @@ function exportAllRequests(scope, selectedOnly) {
     }
   }
 
-  _downloadJson(_exportFilename(scope, selectedOnly, source.length), payload);
+  const meta = Object.assign({}, _exportMetadata(), { totalRequests: source.length });
+
+  if (items.length <= EXPORT_SPLIT_THRESHOLD) {
+    const payload = Object.assign({}, meta, { items });
+    if (jsTrace) payload.jsTrace = jsTrace;
+    _downloadJson(_exportFilename(scope, selectedOnly, source.length), payload);
+    return;
+  }
+
+  // > threshold → 1000건 단위 .json 파트로 분할 → 단일 .zip(STORE).
+  // 각 파트 = 독립적으로 임포트 가능한 봉투(meta + part:{index,total} + items).
+  // 재임포트: part-01 Overwrite → 나머지 Append (기존 import 모달 그대로).
+  const total = Math.ceil(items.length / EXPORT_SPLIT_THRESHOLD);
+  const base = _exportFilename(scope, selectedOnly, source.length).replace(/\.json$/, '');
+  const enc = new TextEncoder();
+  const files = [];
+  for (let i = 0; i < total; i++) {
+    const chunk = items.slice(i * EXPORT_SPLIT_THRESHOLD, (i + 1) * EXPORT_SPLIT_THRESHOLD);
+    const part = Object.assign({}, meta, { part: { index: i + 1, total }, items: chunk });
+    if (i === 0 && jsTrace) part.jsTrace = jsTrace;
+    const nn = String(i + 1).padStart(2, '0');
+    const mm = String(total).padStart(2, '0');
+    files.push({
+      name: `${base}-part-${nn}-of-${mm}.json`,
+      bytes: enc.encode(JSON.stringify(part)),
+    });
+  }
+  _downloadBlobObject(base + '.zip', _buildStoreZip(files));
+  showToast(`${items.length} requests → ${total} parts (.zip)`);
 }
 
 // ============================================================
@@ -1709,8 +2187,8 @@ document.querySelectorAll('.export-menu-item').forEach(item => {
   item.addEventListener('click', () => {
     if (item.disabled) return;
     const scope = item.dataset.scope;            // 'tab' | 'all'
-    const selectedOnly = item.dataset.selected === 'true';
     _exportMenu.classList.add('hidden');
+    const selectedOnly = item.dataset.selected === 'true';
     exportAllRequests(scope, selectedOnly);
   });
 });

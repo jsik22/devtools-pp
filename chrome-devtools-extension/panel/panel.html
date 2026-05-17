@@ -417,15 +417,63 @@
       </div>
       <div class="crawl-modal-body">
         <div class="crawl-url-header">
-          <label for="crawl-urls">URL list (one per line, up to 200)</label>
+          <label for="crawl-urls">Seed URL(s) — one per line. The spider follows same-origin links from each.</label>
           <input type="file" id="crawl-import-file" accept=".txt" hidden>
           <button type="button" id="crawl-import-btn" class="btn btn-xs"
             title="Replace textarea content with the contents of a .txt file">Import .txt</button>
         </div>
-        <textarea id="crawl-urls" rows="8"
-          placeholder="https://naver.com&#10;https://daum.net"></textarea>
-        <label for="crawl-wait">Per-page wait (seconds, 1–30)</label>
-        <input type="number" id="crawl-wait" min="1" max="30" value="5">
+        <textarea id="crawl-urls" rows="6"
+          placeholder="https://example.com&#10;https://app.example.com/login"></textarea>
+        <div class="crawl-num-row">
+          <div class="crawl-num-field">
+            <label for="crawl-wait">Per-page wait (sec, 1–30)</label>
+            <input type="number" id="crawl-wait" min="1" max="30" value="5">
+          </div>
+          <div class="crawl-num-field">
+            <label for="crawl-depth">Max depth (0 = seeds only, ≤5)</label>
+            <input type="number" id="crawl-depth" min="0" max="5" value="2">
+          </div>
+          <div class="crawl-num-field">
+            <label for="crawl-max-pages">Max pages (1–1000)</label>
+            <input type="number" id="crawl-max-pages" min="1" max="1000" value="200">
+          </div>
+        </div>
+
+        <label class="crawl-submit-check">
+          <input type="checkbox" id="crawl-scope-capture" checked>
+          Capture only the crawled site(s) — drop third-party noise (recommended)
+        </label>
+
+        <label class="crawl-submit-check">
+          <input type="checkbox" id="crawl-fast-discovery">
+          Fast discovery mode — ignore Per-page wait, crawl as fast as possible
+        </label>
+        <div class="crawl-opt-desc">
+          Maximizes page-discovery speed. Links &amp; site structure are still
+          captured fully; only a page's late/async traffic (lazy XHR, analytics)
+          may be missed. Use for sitemap/recon crawls, not full traffic capture.
+        </div>
+
+        <label class="crawl-submit-check">
+          <input type="checkbox" id="crawl-skip-assets">
+          Skip images &amp; fonts during crawl
+        </label>
+        <div class="crawl-opt-desc">
+          Drops image/font requests at capture. No effect on crawl speed or
+          link/structure integrity — purely cuts memory &amp; list noise on
+          large, asset-heavy crawls.
+        </div>
+
+        <label class="crawl-submit-check">
+          <input type="checkbox" id="crawl-meta-file" checked>
+          Save a crawl summary (.txt) when the crawl ends
+        </label>
+        <div class="crawl-opt-desc">
+          Auto-downloads a small text file with the run's seeds, timing,
+          pages visited, requests captured, and settings. Written on
+          natural completion or manual Stop.
+        </div>
+
         <div id="crawl-progress" class="hidden">
           <div class="crawl-progress-bar">
             <div class="crawl-progress-fill"></div>

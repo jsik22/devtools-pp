@@ -2883,6 +2883,33 @@ mark.network-search-mark.current {
   color: #888;
 }
 
+/* Auto Crawl — wait/depth 숫자 입력 2열 + Active 옵션 영역 */
+.crawl-num-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+}
+.crawl-num-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.crawl-submit-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #555;
+  font-weight: 500;
+}
+.crawl-submit-check input { margin: 0; }
+.crawl-opt-desc {
+  margin: -2px 0 2px 22px;
+  font-size: 11px;
+  color: #888;
+  line-height: 1.45;
+}
+
 .crawl-modal-footer {
   display: flex;
   justify-content: flex-end;

@@ -427,6 +427,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
+// Auto Crawl spider 네비게이션. long-lived 포트(sendToBg)는 cold/stale SW
+// 에서 첫 메시지를 유실할 수 있어(드롭, 버퍼 없음) cross-origin 시드 첫
+// 이동이 안 되던 버그가 있었음. runtime.sendMessage는 SW를 깨워 전달을
+// 보장하므로 spider 네비는 이 경로로. tabId는 패널이 명시(inspected tab).
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (!sender || sender.id !== chrome.runtime.id) return;
+  if (!msg || msg.type !== 'spider_navigate') return;
+  if (typeof msg.url === 'string' && typeof msg.tabId === 'number') {
+    chrome.tabs.update(msg.tabId, { url: msg.url }).catch(() => { /* tab gone */ });
+  }
+});
+
 // 탭 닫힘 — 그 탭의 룰과 pending 상태 모두 드롭.
 chrome.tabs.onRemoved.addListener((tabId) => {
   removeNewTabTagRule(tabId);

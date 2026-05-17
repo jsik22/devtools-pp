@@ -167,7 +167,7 @@ const SPIDER_ASSET_RE = /\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico|woff2?|ttf|otf
 const SPIDER_FAST_WAIT_MS = 0;
 // 절대 천장 — 시드 입력 sanity cap + Max pages 입력의 상한. 실제 크롤
 // 한도는 사용자 설정 crawlState.maxPages (기본 200, ≤ 이 값).
-const SPIDER_MAX_PAGES = 1000;
+const SPIDER_MAX_PAGES = 5000;
 // 페이지 1스텝(이동→로드완료 폴링)의 무응답 상한. alert/confirm/무한
 // 스크립트 등으로 로드완료가 안 잡히면 이 시간 후 그 페이지 버리고 다음으로.
 const SPIDER_WATCHDOG_MS = 10000;
@@ -1899,9 +1899,10 @@ function _exportMetadata() {
 // 캡처된 모든 요청을 export — full headers, bodies(로드된 경우),
 // scan results, initiator. 소스 집합은 scope(current tab / all tabs)와
 // selectedOnly(checked 행으로 제한)로 결정.
-function exportAllRequests(scope, selectedOnly) {
-  const source = _exportSource(scope, selectedOnly);
-  const items = source.map(r => ({
+// 캡처 요청 → export 아이템. headers/body(로드된 경우)/scan/initiator +
+// auth 수동상태 + session 귀속(mainHost) 보존.
+function _exportItem(r) {
+  return {
     request: {
       method: r.method,
       url: r.url,
@@ -1922,26 +1923,21 @@ function exportAllRequests(scope, selectedOnly) {
     responseBase64: !!r.responseBase64,
     scanResults: r.scanResults || [],
     initiator: r.initiator || null,
-    // Auth — 수동 마크 + 실행한 테스트 결과까지 보존. 자동 감지는 import 후
-    // 동일 입력으로 다시 결정되니까 굳이 export 안 해도 되지만, 사용자가
-    // 분석 도중 만진 상태(mark / test verdict)는 라이브 상태에 종속되지
-    // 않게 같이 저장.
     authMarked: r._authMarked,
     authTestResults: _authTestResults.has(r.requestId)
       ? _authTestResults.get(r.requestId) : null,
-    // Session 귀속 보존 — 재임포트된 파일이 원본 캡처와 동일한
-    // per-host 탭 그룹핑으로 들어가도록.
     mainHost: r._mainHost || null,
-  }));
+  };
+}
 
-  // JS Trace events — Monitor export의 시간 윈도우 매칭용. 전역 데이터라
-  // 분할 시 part-01에만 동봉(전 파트 중복 방지). 0건/미연결이면 생략.
-  let jsTrace = null;
+// JS Trace events — Monitor export의 시간 윈도우 매칭용. 전역 데이터라
+// 분할/per-host 시 한 곳(part-01)에만 동봉. 0건/미연결이면 null.
+function _buildJsTrace() {
   if (window.__jsTraceAPI && typeof window.__jsTraceAPI.getEvents === 'function') {
-    const traceEvents = window.__jsTraceAPI.getEvents();
-    if (traceEvents.length > 0) {
-      jsTrace = {
-        events: traceEvents,
+    const ev = window.__jsTraceAPI.getEvents();
+    if (ev.length > 0) {
+      return {
+        events: ev,
         startedAt: window.__jsTraceAPI.getStartedAt
           ? window.__jsTraceAPI.getStartedAt() : null,
         filterStats: window.__jsTraceAPI.getFilterStats
@@ -1949,36 +1945,92 @@ function exportAllRequests(scope, selectedOnly) {
       };
     }
   }
+  return null;
+}
 
-  const meta = Object.assign({}, _exportMetadata(), { totalRequests: source.length });
-
+// items[] → zip에 넣을 파일 배열. ≤threshold면 baseName.json 1개,
+// 초과면 baseName-part-NN-of-MM.json 다수. 각 파일 = 독립 임포트 가능
+// 봉투(meta + totalRequests + (part) + items). jsTrace는 (있으면)
+// 첫 파트에만. compact JSON (zip 내부·다중 파일).
+function _splitFiles(items, baseMeta, jsTrace, baseName) {
+  const enc = new TextEncoder();
   if (items.length <= EXPORT_SPLIT_THRESHOLD) {
-    const payload = Object.assign({}, meta, { items });
+    const payload = Object.assign({}, baseMeta, { totalRequests: items.length, items });
+    if (jsTrace) payload.jsTrace = jsTrace;
+    return [{ name: baseName + '.json', bytes: enc.encode(JSON.stringify(payload)) }];
+  }
+  const total = Math.ceil(items.length / EXPORT_SPLIT_THRESHOLD);
+  const out = [];
+  for (let i = 0; i < total; i++) {
+    const chunk = items.slice(i * EXPORT_SPLIT_THRESHOLD, (i + 1) * EXPORT_SPLIT_THRESHOLD);
+    const part = Object.assign({}, baseMeta, {
+      totalRequests: items.length,
+      part: { index: i + 1, total },
+      items: chunk,
+    });
+    if (i === 0 && jsTrace) part.jsTrace = jsTrace;
+    const nn = String(i + 1).padStart(2, '0');
+    const mm = String(total).padStart(2, '0');
+    out.push({ name: `${baseName}-part-${nn}-of-${mm}.json`, bytes: enc.encode(JSON.stringify(part)) });
+  }
+  return out;
+}
+
+// all tabs → 호스트(_mainHost, 없으면 URL host)별로 분리해 단일 .zip(flat).
+// 호스트당 ≤1000 → <host>.json, >1000 → <host>-part-NN-of-MM.json.
+// jsTrace(전역)는 정렬상 첫 호스트의 part-01에만. 재임포트: 첫 파일
+// Overwrite → 나머지 Append (기존 import 모달 그대로).
+function exportAllTabsPerHost(source, selectedOnly, baseMeta, jsTrace) {
+  if (source.length === 0) {
+    _downloadJson(_exportFilename('all', selectedOnly, 0),
+      Object.assign({}, baseMeta, { totalRequests: 0, items: [] }));
+    return;
+  }
+  const groups = new Map();
+  for (const r of source) {
+    const key = r._mainHost || _reqHost(r) || 'unknown-host';
+    let g = groups.get(key);
+    if (!g) { g = []; groups.set(key, g); }
+    g.push(r);
+  }
+  const hosts = Array.from(groups.keys()).sort();
+  const files = [];
+  hosts.forEach((host, idx) => {
+    const hostItems = groups.get(host).map(_exportItem);
+    const jt = idx === 0 ? jsTrace : null;   // 전역 jsTrace는 한 번만
+    for (const f of _splitFiles(hostItems, baseMeta, jt, _sanitizeForFilename(host))) {
+      files.push(f);
+    }
+  });
+  const zipName = `devtoolspp-alltabs${selectedOnly ? '-sel' : ''}-${_exportTimestamp()}.zip`;
+  _downloadBlobObject(zipName, _buildStoreZip(files));
+  showToast(`${source.length} requests · ${hosts.length} hosts → ${files.length} files (.zip)`);
+}
+
+function exportAllRequests(scope, selectedOnly) {
+  const source = _exportSource(scope, selectedOnly);
+  const baseMeta = _exportMetadata();
+  const jsTrace = _buildJsTrace();
+
+  if (scope === 'all') {
+    exportAllTabsPerHost(source, selectedOnly, baseMeta, jsTrace);
+    return;
+  }
+
+  // ===== current tab — 단일 호스트 뷰, 기존 동작 보존 =====
+  const items = source.map(_exportItem);
+  if (items.length <= EXPORT_SPLIT_THRESHOLD) {
+    // 기존과 동일: 단일 .json (pretty-print, _downloadJson)
+    const payload = Object.assign({}, baseMeta, { totalRequests: source.length, items });
     if (jsTrace) payload.jsTrace = jsTrace;
     _downloadJson(_exportFilename(scope, selectedOnly, source.length), payload);
     return;
   }
-
-  // > threshold → 1000건 단위 .json 파트로 분할 → 단일 .zip(STORE).
-  // 각 파트 = 독립적으로 임포트 가능한 봉투(meta + part:{index,total} + items).
-  // 재임포트: part-01 Overwrite → 나머지 Append (기존 import 모달 그대로).
-  const total = Math.ceil(items.length / EXPORT_SPLIT_THRESHOLD);
+  // > threshold → 1000건 단위 분할 → 단일 .zip (기존 동작)
   const base = _exportFilename(scope, selectedOnly, source.length).replace(/\.json$/, '');
-  const enc = new TextEncoder();
-  const files = [];
-  for (let i = 0; i < total; i++) {
-    const chunk = items.slice(i * EXPORT_SPLIT_THRESHOLD, (i + 1) * EXPORT_SPLIT_THRESHOLD);
-    const part = Object.assign({}, meta, { part: { index: i + 1, total }, items: chunk });
-    if (i === 0 && jsTrace) part.jsTrace = jsTrace;
-    const nn = String(i + 1).padStart(2, '0');
-    const mm = String(total).padStart(2, '0');
-    files.push({
-      name: `${base}-part-${nn}-of-${mm}.json`,
-      bytes: enc.encode(JSON.stringify(part)),
-    });
-  }
+  const files = _splitFiles(items, baseMeta, jsTrace, base);
   _downloadBlobObject(base + '.zip', _buildStoreZip(files));
-  showToast(`${items.length} requests → ${total} parts (.zip)`);
+  showToast(`${items.length} requests → ${files.length} parts (.zip)`);
 }
 
 // ============================================================

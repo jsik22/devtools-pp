@@ -4,6 +4,36 @@ DevTools++ 버전별 변경 이력 (최신순). 기능 개요는 [README.md](REA
 
 ---
 
+### v0.12.0 변경사항 (2026-05-17)
+Auto Crawl을 재귀 스파이더로 전면 재설계 + Export 분할/zip 아키텍처 + 크롤 라이프사이클·요약.
+
+#### Auto Crawl: List → Spider 전면 재설계
+- URL 리스트 순차 방문 → **frontier BFS 스파이더**. seen-set dedup(`normalizeUrl` = origin+pathname+search), same-origin ∩ 글로벌 Scope 교집합, destructive-link denylist(logout/delete 등), depth gating
+- 페이지 네비게이션을 `inspectedWindow.eval('location.href=')` → `chrome.tabs.update`(background `runtime.sendMessage` 경유)로 전환. long-lived 포트가 cold/stale service worker에서 첫 메시지를 유실해 **cross-origin 시드가 안 넘어가던 버그 fix**. 브라우저 레벨 네비라 page-JS `alert()`/hang에도 면역
+- readyState 폴링(origin 일치 + `complete`) + 워치독(race-guard `stepDone`/`settled`)으로 **alert/hang 페이지를 사용자 개입 없이** 통과
+- 취약하던 Active form-fill/submit 모드 전면 제거 — passive spider 전용 (페이지 트래픽은 Monitor/JS Trace가 캡처)
+
+#### 크롤 옵션 (모달 UI)
+- **캡처 스코프 한정** (기본 ON) — seed origin 밖 요청은 캡처 단계에서 드롭, 메모리/검색 비용 bound
+- **Max depth** (0–5), **Max pages** (1–5000, 기본 200) — 천장 1000→5000 상향 (단일파일 export 하드월이 분할/zip으로 제거돼 유계 상향)
+- **Fast discovery** (기본 OFF) — Per-page wait 무시(0), 입력 자동 비활성 동기화. 링크/구조 발견 무결성 유지, 페이지별 late/async 트래픽만 감소
+- **이미지/폰트 skip** (기본 OFF) — 캡처 단계 드롭, 속도·링크 무결성 무관 순수 메모리/노이즈 절감
+- NAV_COMMIT/POLL 등 속도 상수 튜닝
+
+#### 크롤 라이프사이클·요약
+- **crawl run 요약 .txt 자동 저장** (체크박스 기본 ON) — 자연 완료 + 수동 Stop 모두. seeds / 시작·종료·소요 / visited / captured / 설정값
+- **Monitor 자동 OFF** — 크롤이 Monitor를 자동 ON 했던 경우에만 종료 시 OFF. 사용자가 미리 켜둔 세션은 미간섭. `stopNetworkMonitoring`은 데이터·jsTrace 미삭제 → 종료 후 export 정상 (기존 자동 ON과 대칭)
+
+#### Export: 분할 + zip
+- **>1000 요청** → 1000건 단위 `.json` 파트 분할 → 단일 `.zip`. STORE 무압축·무의존 자체 ZIP writer(CRC32 테이블 + local/central/EOCD), unzip/python 검증. 각 파트 = 독립 임포트 가능 봉투(meta + `part:{index,total}` + items)
+- **all tabs** → 호스트(`_mainHost`, 없으면 URL host)별 분리해 단일 flat `.zip`. 호스트당 ≤1000 → `<host>.json`, >1000 → `<host>-part-NN-of-MM.json` (중첩 zip 아님). 기존 "호스트 구분 없이 merge" 동작 대체
+- `jsTrace`(전역)는 정렬상 첫 호스트 part-01에만 동봉 (중복 0). 재임포트: 첫 파일 Overwrite → 나머지 Append (기존 import 모달·`mainHost` 복원 그대로)
+- current tab은 동작 보존 — ≤1000 단일 `.json`(pretty), >1000 분할 zip
+- CSV/HTML 인벤토리 export 제거 → JSON-only로 원복 (`_exportItem`/`_buildJsTrace`/`_splitFiles`/`exportAllTabsPerHost` 헬퍼 분리)
+
+#### 버그 fix
+- JS Context(`.jstrace-row`)에서 `sessionStorage.setItem` 등 긴 kind가 고정 130px 컬럼을 넘쳐 옆 args 컬럼과 텍스트가 겹쳐 보이던 현상. kind 컬럼 160px + `.jstrace-kind`에 `min-width:0` + overflow ellipsis (args도 `min-width:0` 보강)
+
 ### v0.11.0 변경사항 (2026-05-15)
 Monitor ↔ JS Trace 양방향 브릿지 + JS Trace를 Monitor 라이프사이클에 종속.
 

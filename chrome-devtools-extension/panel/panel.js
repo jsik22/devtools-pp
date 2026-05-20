@@ -862,6 +862,30 @@ function buildTreeNode(label, node, host, currentPath, forceShow) {
     });
 
     row.appendChild(scopeSelect);
+
+    // host 전용: 🕷 Auto Crawl 시드 추가. 그 호스트를 크롤 모달 텍스트
+    // 에어리어에 append(dedup) 후 모달 오픈. 행 클릭(상세 확장)과 분리.
+    // 크롤 진행 중이면 텍스트에어리어가 disabled라 토스트 안내 후 무시.
+    const crawlAddBtn = document.createElement('button');
+    crawlAddBtn.className = 'btn btn-xs sitemap-crawl-add';
+    crawlAddBtn.textContent = '🕷';
+    crawlAddBtn.title = `Add ${host} to Auto Crawl seeds`;
+    crawlAddBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (crawlState.active) {
+        showToast('Auto Crawl 진행 중 — 종료 후 다시 시도');
+        return;
+      }
+      const ta = document.getElementById('crawl-urls');
+      const seed = `https://${host}/`;
+      const existing = (ta.value || '').split('\n').map(s => s.trim()).filter(Boolean);
+      if (!existing.includes(seed)) {
+        existing.push(seed);
+        ta.value = existing.join('\n');
+      }
+      showCrawlModal();
+    });
+    row.appendChild(crawlAddBtn);
   }
 
   // host 전용 (target host만): Hard reload 버튼 — 브라우저에서 실제 열려있는
@@ -1926,6 +1950,9 @@ function _exportItem(r) {
     authMarked: r._authMarked,
     authTestResults: _authTestResults.has(r.requestId)
       ? _authTestResults.get(r.requestId) : null,
+    // 사용자 마킹/디스크립션 — 사용자 작업 결과라 export 보존, import 복원.
+    userMark: r._userMark === true,
+    userNote: r._userNote || null,
     mainHost: r._mainHost || null,
   };
 }
@@ -2104,6 +2131,11 @@ function _itemToReq(item) {
   }
   if (item.authTestResults) {
     _authTestResults.set(req.requestId, item.authTestResults);
+  }
+  // 사용자 마킹/디스크립션 복원 (legacy export엔 없음 → 무해)
+  if (item.userMark === true) req._userMark = true;
+  if (typeof item.userNote === 'string' && item.userNote) {
+    req._userNote = item.userNote;
   }
   return req;
 }
@@ -2455,6 +2487,25 @@ function updateNetworkRowAuth(req) {
 
 // 요청에 대한 단일 <tr>을 DOM 건드리지 않고 빌드. element를 반환해서
 // caller가 원하는 대로 append/insert.
+// 결합(A) — 명시적 별표(_userMark) 또는 비어있지 않은 노트가 있으면
+// 행을 하이라이트. "노트 있으면 무조건 표시"가 이 derived 규칙으로 보장됨
+// (노트 지우고 별표도 꺼야 해제).
+function _isReqMarked(r) {
+  return r._userMark === true || !!(r._userNote && r._userNote.trim());
+}
+
+// 단일 행의 mark 배지/하이라이트 클래스 갱신 (trim된 행이면 no-op).
+function updateNetworkRowMark(req) {
+  const row = networkTable.querySelector(
+    `tr[data-request-id="${CSS.escape(req.requestId)}"]`
+  );
+  if (!row) return;
+  const marked = _isReqMarked(req);
+  row.classList.toggle('row-marked', marked);
+  const badge = row.querySelector('.row-mark-badge');
+  if (badge) badge.textContent = marked ? '★' : '☆';
+}
+
 function buildNetworkRow(r) {
   const statusClass = r.status >= 400 ? 'status-error'
     : r.status >= 300 ? 'status-redirect'
@@ -2468,7 +2519,13 @@ function buildNetworkRow(r) {
   if (selectedExportIds.has(r.requestId)) tr.classList.add('row-checked');
   if (searchTerm && searchMatchedIds.includes(r.requestId)) tr.classList.add('search-hit');
   if (r._isReplay) tr.classList.add('row-replay');
+  const marked = _isReqMarked(r);
+  if (marked) tr.classList.add('row-marked');
   const checkedAttr = selectedExportIds.has(r.requestId) ? 'checked' : '';
+  // 사용자 마킹 — URL 셀 leading edge의 클릭 가능한 별표. 클릭 시 행
+  // 클릭(detail open)과 분리해 _userMark 토글 (.row-select 패턴 동일).
+  const markBadge =
+    `<span class="row-mark-badge" title="Mark / unmark — highlight in list (Description 탭에서 메모 작성)">${marked ? '★' : '☆'}</span> `;
   // Replay에서 시작한 요청은 URL 셀에 작은 ↻ 배지 prefix를 받아서
   // 타임라인에서 한눈에 구분 가능 — 사용자가 자기 Replay Send에서
   // 온 항목 vs 브라우저 발화 캡처를 알 수 있음.
@@ -2484,7 +2541,7 @@ function buildNetworkRow(r) {
     `<td class="select-cell"><input type="checkbox" class="row-select" ${checkedAttr}></td>` +
     `<td class="host-cell ${hostKindClass}" title="${escapeHtml(r.url)}">${escapeHtml(host)}</td>` +
     `<td><strong>${escapeHtml(r.method)}</strong></td>` +
-    `<td class="url-cell" title="${escapeHtml(r.url)}">${authBadge}${replayBadge}${escapeHtml(truncateUrl(r.url))}</td>` +
+    `<td class="url-cell" title="${escapeHtml(r.url)}">${markBadge}${authBadge}${replayBadge}${escapeHtml(truncateUrl(r.url))}</td>` +
     `<td class="${statusClass}">${r.status}</td>` +
     `<td>${escapeHtml(r.type)}</td>` +
     `<td>${r.size}</td>` +
@@ -2636,6 +2693,16 @@ networkTable.addEventListener('click', (e) => {
   // 경로로 떨어지지 않도록.
   if (e.target.matches('input.row-select')) {
     handleRowCheckboxClick(reqId, e.target.checked, e.shiftKey);
+    return;
+  }
+  // 별표 배지 → 명시적 마크 토글. detail-open로 안 떨어지게 여기서 멈춤.
+  // 노트가 있으면 _isReqMarked가 여전히 true라 하이라이트 유지(결합 A).
+  if (e.target.classList.contains('row-mark-badge')) {
+    const mreq = networkRequestMap.get(reqId);
+    if (mreq) {
+      mreq._userMark = !(mreq._userMark === true);
+      updateNetworkRowMark(mreq);
+    }
     return;
   }
   // select-cell padding(input 바깥) 클릭은 detail-open이 아닌 no-op로
@@ -3172,7 +3239,27 @@ function showDetail(req) {
   renderDetection(req);
   renderAuth(req);
   renderJsTraceBridge(req);
+  renderDescription(req);
   applyDetailHighlights(req);
+}
+
+// Description 탭 — 요청별 사용자 메모. 입력 즉시 req에 저장하고,
+// 결합(A)상 _isReqMarked가 노트를 보므로 행 하이라이트 자동 반영.
+function renderDescription(req) {
+  const body = document.getElementById('detail-note-body');
+  if (!body) return;
+  body.innerHTML =
+    '<div class="note-editor">' +
+      '<div class="note-label">이 요청에 대한 메모. 메모가 있거나 별표(★)된 요청은 목록에서 하이라이트됩니다.</div>' +
+      '<textarea id="detail-note-textarea" class="note-textarea" ' +
+        'placeholder="이 요청에 대한 메모를 작성하세요…"></textarea>' +
+    '</div>';
+  const ta = document.getElementById('detail-note-textarea');
+  ta.value = req._userNote || '';
+  ta.addEventListener('input', () => {
+    req._userNote = ta.value;
+    updateNetworkRowMark(req);
+  });
 }
 
 // JS Trace 카테고리별 안내 — Detection 탭 톤과 동일. JS Context의 카테고리

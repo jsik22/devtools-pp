@@ -299,6 +299,50 @@ tr:hover {
   vertical-align: middle;
 }
 
+/* 사용자 마킹 — 클릭 가능한 별표 prefix + 행 하이라이트(옅은 amber) */
+.row-mark-badge {
+  display: inline-block;
+  cursor: pointer;
+  color: #c9a227;
+  font-size: 11px;
+  margin-right: 4px;
+  vertical-align: middle;
+  user-select: none;
+}
+.row-mark-badge:hover { color: #a37d00; }
+#network-table tbody tr.row-marked td {
+  background: #fff6da;
+}
+#network-table tbody tr.row-marked:hover td {
+  background: #ffefc2;
+}
+#network-table tbody tr.row-marked.selected td,
+#network-table tbody tr.row-marked.row-checked.selected td {
+  background: #cce5ff;
+}
+
+/* Description 탭 에디터 */
+.note-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+.note-label {
+  font-size: 12px;
+  color: #666;
+}
+.note-textarea {
+  width: 100%;
+  min-height: 220px;
+  resize: vertical;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font: 13px/1.5 'SF Mono', Menlo, Consolas, monospace;
+  border: 1px solid #c4c4c4;
+  border-radius: 4px;
+}
+
 .status-ok { color: #0b7a3e; }
 .status-redirect { color: #8a6d00; }
 .status-error { color: #d32f2f; }
@@ -1835,6 +1879,20 @@ tr.selected td {
   font-size: 11px;
   line-height: 1.2;
 }
+
+/* 호스트 행: scope 우측의 🕷 버튼 — 해당 호스트를 Auto Crawl 시드로 추가. */
+.sitemap-crawl-add {
+  margin-left: 4px;
+  flex-shrink: 0;
+  padding: 1px 4px;
+  font-size: 12px;
+  line-height: 1.2;
+  background: #fafafa;
+  border: 1px solid #c4c4c4;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.sitemap-crawl-add:hover { background: #f0f0f0; }
 
 /* 자식은 부모 아래 들여쓰기 — 시각적으로 계층 구조 전달하는 룰.
    이게 없으면 모든 노드가 부모의 peer처럼 보임. */

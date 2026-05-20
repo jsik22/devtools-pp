@@ -4,6 +4,28 @@ DevTools++ 버전별 변경 이력 (최신순). 기능 개요는 [README.md](REA
 
 ---
 
+### v0.13.0 변경사항 (2026-05-21)
+Monitor 상세 패널에 Description 탭 신설(요청 단위 사용자 마킹/노트) + 사이트맵 호스트 행에서 Auto Crawl 시드 즉시 추가.
+
+#### Description 탭 (요청 마킹/노트, 결합 모델 A)
+- Monitor 상세 패널에 **Description 탭** 신설 — JS Context 우측, `data-detail="note"`. 데이터: `req._userMark`(별표) + `req._userNote`(메모)
+- 행 URL 셀의 클릭 가능한 **☆/★ 별표 prefix** (기존 🔐/↻ 패턴 동일 위치). 클릭 시 `_userMark` 토글, 행 클릭(detail open)과 분리(`stopPropagation`, `.row-select`와 동일 패턴)
+- 마킹된 행 = `tr.row-marked` 옅은 amber 배경 (selected 시 기존 파랑 우선, row-replay 패턴 동일 처리)
+- **결합 A**: 하이라이트는 derived = `_isReqMarked = _userMark || hasNote` → **노트가 있으면 자동 하이라이트**(목록에서 안 잃어버림). 노트 비우고 별표도 꺼야 해제
+- Description 탭 textarea — `input` 즉시 `req._userNote` 저장 + `updateNetworkRowMark`로 행 하이라이트 라이브 반영
+- **export/import 자동 보존** — `_exportItem`에 `userMark`/`userNote` 추가, `_itemToReq`에서 복원. legacy export는 필드 부재 → 무해(하위호환). 사용자 작업 결과 보존 원칙 적용
+- 헬퍼: `_isReqMarked` / `updateNetworkRowMark` / `renderDescription` 분리, `showDetail`에 dispatch 추가
+
+#### 사이트맵 🕷 Auto Crawl 시드 추가
+- 좌측 sitemap 트리의 **모든 host 행에 🕷 버튼** — scope 🎯 select 우측, target host의 ↻ reload 좌측
+- 클릭 → `https://<host>/`를 `#crawl-urls` 텍스트에어리어에 **append + dedup** → Auto Crawl 모달 자동 오픈
+- 행 클릭(노드 확장)과 분리(`stopPropagation`). 크롤 진행 중이면 토스트 안내 후 무시(텍스트에어리어 disabled 상태라 안전)
+- 스타일: scope select와 동일 톤 (연회색 배경 + 1px 테두리)
+
+#### 인프라/문서
+- `.gitignore`에 `analysis/` 추가 — 버그바운티/리얼월드 분석 워크스페이스(캡처·평문 자격증명·PII 포함) 로컬 전용, 공개 레포·CWS 미노출. CLAUDE.md에 "커밋 안전 — 민감 artifact 노출 방지" 자가점검 체크리스트 명문화
+- README 인라인 코드 백틱(`Math.random` 등) + 단일 별표 italic(`*전에*` 등) 포맷 마커 제거 — 텍스트 불변, 굵게(`**`)는 유지
+
 ### v0.12.0 변경사항 (2026-05-17)
 Auto Crawl을 재귀 스파이더로 전면 재설계 + Export 분할/zip 아키텍처 + 크롤 라이프사이클·요약.
 

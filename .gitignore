@@ -22,3 +22,8 @@ docs/screenshots/cws/
 
 # CWS reviewer justification — paste-ready submission text, kept local only.
 docs/CWS_REVIEW_NOTES.md
+
+# Bug-bounty / real-world analysis workspace — operational & engagement
+# material (playbook, captures, reports, distill/redact tooling). Local
+# only; never published to the public product repo or CWS.
+analysis/

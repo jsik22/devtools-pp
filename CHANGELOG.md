@@ -4,6 +4,37 @@ DevTools++ 버전별 변경 이력 (최신순). 기능 개요는 [README.md](REA
 
 ---
 
+### v0.14.0 변경사항 (2026-05-22)
+Import 동작 재설계 — 임포트 요청을 라이브 캡처와 격리된 별도 탭(📥)으로
+분리 + 확인 모달 제거.
+
+#### 임포트 격리 탭 (📥 prefix)
+- 임포트 시 `_itemToReq`가 `_mainHost`에 `📥 ` prefix 자동 부착 → 라이브 캡처
+  탭(`host`)과 임포트 탭(`📥 host`) 사이 키 공간 자동 분리. **같은 host의
+  라이브+임포트가 동시에 떠 있어도 안 섞임.** 분석 컨텍스트와 실시간 캡처가
+  깔끔히 갈림
+- 탭 strip 시각화: host가 `📥 `로 시작하면 `.network-tab.imported` 클래스 부여
+  → 약한 파랑 톤 + 점선 보더 + 이탤릭(active 시엔 solid). 버튼 `title`에
+  "이건 임포트한 탭입니다." hover 안내
+- export 시 `_exportItem`이 `📥 ` prefix를 strip → round-trip이 prefix를
+  누적하지 않음(재임포트 시 `_itemToReq`가 다시 부착). 원래 `mainHost` 보존
+
+#### 확인 모달 제거
+- `import-confirm-modal`(Overwrite / Append / Cancel 3-way) 통째 삭제 — 격리
+  덕에 라이브와 임포트 충돌이 원천적으로 없어 매 임포트마다 클릭 요구가 잉여
+  마찰. 임포트는 항상 append + 격리 탭 자동 생성
+- `showImportConfirm()` 함수 및 모달 HTML/CSS 잔재 제거. "전부 비우기"는
+  기존 Clear 버튼으로 그대로 가능 (기능 손실 없음)
+
+#### 탭 leak fix (격리 도입 직후 발견된 회귀)
+- 임포트 요청이 URL host 기반 매칭으로 같은 host의 라이브 탭에 새는 문제 —
+  5곳에 `!req._imported && _reqHost === host` 게이트 추가:
+  - `matchesActiveTab` (활성 탭 표시), `belongsToTab` (탭 닫기/이동),
+    `renderNetworkTabs` 카운트, 신규 캡처 후 비활성 탭 배지 갱신, Export 메뉴
+    의 "current tab selected" 카운트(`matchesActiveTab` 사용으로 통일)
+- 임포트 요청은 `_mainHost`(`📥 …`)로만 매칭, 라이브 요청은 종전대로 URL host
+  + `_mainHost` 양쪽 매칭. 임포트 탭에도 라이브 요청은 안 들어감
+
 ### v0.13.0 변경사항 (2026-05-21)
 Monitor 상세 패널에 Description 탭 신설(요청 단위 사용자 마킹/노트) + 사이트맵 호스트 행에서 Auto Crawl 시드 즉시 추가.
 

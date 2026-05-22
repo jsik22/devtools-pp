@@ -1698,6 +1698,19 @@ tr.selected td {
   color: #1A73E8;
   font-weight: 500;
 }
+/* 임포트 탭 — 라이브 캡처 탭과 시각적으로 구분(약한 파랑 톤 + 점선 보더). */
+.network-tab.imported {
+  background: #eef4fb;
+  border-style: dashed;
+  font-style: italic;
+  color: #1a3a5c;
+}
+.network-tab.imported.active {
+  background: #fff;
+  border-style: solid;
+  border-color: #4a90c8;
+  font-style: italic;
+}
 .network-tab .tab-host {
   max-width: 220px;
   overflow: hidden;

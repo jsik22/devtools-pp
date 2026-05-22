@@ -1205,7 +1205,9 @@ function getTabFilterMode(host) {
 
 function matchesActiveTab(req) {
   if (!activeTabHost) return true;
-  if (_reqHost(req) === activeTabHost) return true;
+  // 임포트 요청은 _mainHost(`📥 …`) 매칭만. URL host는 plain이라 같은 host의
+  // 라이브 탭과 매칭되면 양쪽 탭에 출현하는 버그 → 게이팅.
+  if (!req._imported && _reqHost(req) === activeTabHost) return true;
   // 'internal' 모드는 session-attribution 분기를 건너뜀 — externals
   // (CDN .map 파일, analytics, ads)이 뷰에서 빠짐.
   if (getTabFilterMode(activeTabHost) === 'internal') return false;
@@ -1273,7 +1275,8 @@ function closeTab(host) {
   // matchesActiveTab predicate와 매칭해서 confirm 다이얼로그의 카운트와
   // 실제 wipe 대상이 사용자가 보고 있던 것과 정확히 일치하도록 —
   // direct host hits + 그 세션의 externals.
-  const belongsToTab = r => _reqHost(r) === host || r._mainHost === host;
+  // 임포트 요청은 _mainHost 매칭만 — matchesActiveTab과 동일 정책.
+  const belongsToTab = r => (!r._imported && _reqHost(r) === host) || r._mainHost === host;
   const count = networkRequests.filter(belongsToTab).length;
   const msg = count > 0
     ? `Close tab "${host}" and discard its ${count} captured request${count === 1 ? '' : 's'}?`
@@ -1337,7 +1340,9 @@ function renderNetworkTabs() {
   const tabSet = new Set(tabHosts);
   for (const r of networkRequests) {
     const h = _reqHost(r);
-    if (tabSet.has(h)) counts.set(h, (counts.get(h) || 0) + 1);
+    // 임포트 요청은 URL host 기반 카운트에서 제외 — 같은 host 라이브 탭이
+    // 있어도 라이브 카운트가 부풀지 않게(매칭 정책과 동일).
+    if (!r._imported && tabSet.has(h)) counts.set(h, (counts.get(h) || 0) + 1);
     if (r._mainHost && r._mainHost !== h && tabSet.has(r._mainHost)) {
       counts.set(r._mainHost, (counts.get(r._mainHost) || 0) + 1);
     }
@@ -1346,7 +1351,10 @@ function renderNetworkTabs() {
   for (const host of tabHosts) {
     const isActive = host === activeTabHost;
     const count = counts.get(host) || 0;
-    html += `<button class="network-tab${isActive ? ' active' : ''}" data-host="${escapeAttr(host)}">` +
+    const imported = host.startsWith('📥 ');
+    const btnCls = `network-tab${isActive ? ' active' : ''}${imported ? ' imported' : ''}`;
+    const btnTitle = imported ? '이건 임포트한 탭입니다.' : '';
+    html += `<button class="${btnCls}" data-host="${escapeAttr(host)}"${btnTitle ? ` title="${escapeAttr(btnTitle)}"` : ''}>` +
       `<span class="tab-host" title="${escapeAttr(host)}">${escapeHtml(host)}</span>` +
       `<span class="tab-count">${count}</span>` +
       `<span class="tab-close" data-close="${escapeAttr(host)}" title="Close tab">×</span>` +
@@ -1953,7 +1961,9 @@ function _exportItem(r) {
     // 사용자 마킹/디스크립션 — 사용자 작업 결과라 export 보존, import 복원.
     userMark: r._userMark === true,
     userNote: r._userNote || null,
-    mainHost: r._mainHost || null,
+    // 임포트 탭 prefix(📥)는 export 시 strip — 라운드트립이 prefix를 누적
+    // 안 하게(재임포트 시 _itemToReq가 재부착). 원래 mainHost 보존.
+    mainHost: r._mainHost ? r._mainHost.replace(/^📥 /, '') : null,
   };
 }
 
@@ -2092,6 +2102,11 @@ function _parseImportJson(text) {
 // wrapped (`{request: {...}, ...}`)와 flat (`{method, url, ...}`) 형태
 // 모두 지원; scanResults는 `findings`(Detection 포맷) 또는 `scanResults`
 // (All 포맷)에서 가져옴.
+// 임포트 탭 prefix — 라이브 캡처 탭과 키 공간이 갈리도록 `📥 ` 붙임.
+// 같은 host의 라이브 탭이 동시에 떠 있어도 섞이지 않음. export 시 strip됨
+// (_exportItem) — 라운드트립이 prefix를 누적하지 않음.
+const IMPORT_TAB_MARK = '📥 ';
+
 function _itemToReq(item) {
   const meta = item.request || item;
   // Session 귀속 — export의 스탬프 우선, URL의 host로 fallback해서
@@ -2099,6 +2114,13 @@ function _itemToReq(item) {
   let mainHost = item.mainHost || null;
   if (!mainHost) {
     try { mainHost = new URL(meta.url || '').host || null; } catch {}
+  }
+  // 임포트 탭 격리: prefix 붙여 새 탭 키 생성. 이미 붙어있으면(중복 임포트
+  // 케이스) 그대로.
+  if (mainHost && !mainHost.startsWith(IMPORT_TAB_MARK)) {
+    mainHost = IMPORT_TAB_MARK + mainHost;
+  } else if (!mainHost) {
+    mainHost = IMPORT_TAB_MARK + 'unknown';
   }
   const req = {
     requestId: 'imp_' + (++_importIdCounter),
@@ -2187,30 +2209,6 @@ function hideImportNotice() {
   document.getElementById('network-import-notice').classList.add('hidden');
 }
 
-// overwrite/append 결정을 위한 3-way 확인 모달.
-// 일회성: 선택 후 핸들러는 detach.
-function showImportConfirm(message, onChoice) {
-  const modal = document.getElementById('import-confirm-modal');
-  document.getElementById('import-confirm-msg').textContent = message;
-  modal.classList.remove('hidden');
-  const overwriteBtn = document.getElementById('import-confirm-overwrite');
-  const appendBtn = document.getElementById('import-confirm-append');
-  const cancelBtn = document.getElementById('import-confirm-cancel');
-  function cleanup(choice) {
-    modal.classList.add('hidden');
-    overwriteBtn.removeEventListener('click', onOverwrite);
-    appendBtn.removeEventListener('click', onAppend);
-    cancelBtn.removeEventListener('click', onCancel);
-    onChoice(choice);
-  }
-  function onOverwrite() { cleanup('overwrite'); }
-  function onAppend() { cleanup('append'); }
-  function onCancel() { cleanup('cancel'); }
-  overwriteBtn.addEventListener('click', onOverwrite);
-  appendBtn.addEventListener('click', onAppend);
-  cancelBtn.addEventListener('click', onCancel);
-}
-
 function importNetworkData(file) {
   if (!file) return;
   const reader = new FileReader();
@@ -2219,30 +2217,17 @@ function importNetworkData(file) {
     if (result.error) { showToast(result.error); return; }
     const reqs = result.items.map(_itemToReq);
     if (reqs.length === 0) { showToast('No requests in file'); return; }
-    // jsTrace 필드가 export에 포함되어 있으면 JS Trace 측에도 적재.
-    // overwrite/append와 무관하게 항상 덮어쓰기 (JS Trace는 단일 timeline).
-    const loadTrace = () => {
-      if (result.jsTrace && Array.isArray(result.jsTrace.events)
-          && window.__jsTraceAPI && typeof window.__jsTraceAPI.loadEvents === 'function') {
-        window.__jsTraceAPI.loadEvents(
-          result.jsTrace.events,
-          result.jsTrace.startedAt,
-          result.jsTrace.filterStats
-        );
-      }
-    };
-    if (networkRequests.length > 0) {
-      showImportConfirm(
-        `${networkRequests.length} request${networkRequests.length === 1 ? '' : 's'} already captured. What would you like to do?`,
-        (choice) => {
-          if (choice === 'cancel') return;
-          _applyImport(reqs, choice, file.name);
-          loadTrace();
-        }
+    // 임포트는 항상 append — _itemToReq가 _mainHost에 `📥 ` prefix를 붙여
+    // 라이브 캡처 탭과 키 공간이 자동 격리되므로 충돌이 원천적으로 없음.
+    // 기존 overwrite/append/cancel 3-way 모달은 잉여라 제거.
+    _applyImport(reqs, 'append', file.name);
+    if (result.jsTrace && Array.isArray(result.jsTrace.events)
+        && window.__jsTraceAPI && typeof window.__jsTraceAPI.loadEvents === 'function') {
+      window.__jsTraceAPI.loadEvents(
+        result.jsTrace.events,
+        result.jsTrace.startedAt,
+        result.jsTrace.filterStats
       );
-    } else {
-      _applyImport(reqs, 'overwrite', file.name);
-      loadTrace();
     }
   };
   reader.onerror = () => showToast('Failed to read file');
@@ -2660,7 +2645,8 @@ function flushPendingNetworkRows() {
     // re-render 마크.
     if (hasTab && !matchesActiveTab(r)) {
       // out-of-tab 행도 비활성 탭의 카운트 배지는 업데이트.
-      if (tabHosts.includes(_reqHost(r))) countTouchedTabs = true;
+      // 임포트 요청은 URL host 기반 라이브 탭 카운트와 무관(매칭 정책 동일).
+      if (!r._imported && tabHosts.includes(_reqHost(r))) countTouchedTabs = true;
       continue;
     }
     if (hasFilter && !matchesNetworkFilter(r)) continue;
@@ -2808,8 +2794,10 @@ function updateSelectionUI() {
   // Export 메뉴 — "Selected requests" 항목은 적어도 한 행이 체크된
   // 경우만 활성; 각 항목의 카운트는 매칭 서브셋(current tab vs all)을
   // 반영. Full requests 항목은 항상 작동, 카운트 배지 없음.
+  // matchesActiveTab을 사용 — 임포트/라이브 탭 분리 정책과 일관(임포트 요청이
+  // 같은 URL host의 라이브 탭 선택 카운트에 새지 않게).
   const tabSelected = activeTabHost
-    ? networkRequests.filter(r => _reqHost(r) === activeTabHost && selectedExportIds.has(r.requestId)).length
+    ? networkRequests.filter(r => matchesActiveTab(r) && selectedExportIds.has(r.requestId)).length
     : count;
   const tabCountEl = document.getElementById('export-tab-selected-count');
   const allCountEl = document.getElementById('export-all-selected-count');

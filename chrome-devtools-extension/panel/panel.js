@@ -5855,10 +5855,16 @@ const SCAN_BODY_TRUNCATE = AUTODECODE_BODY_TRUNCATE;
 
 // 초기 패스에 body-side finding을 포함할 수 있도록 응답 body를
 // eager 로드할 가치가 있는 mimetype.
+// (x-)?javascript / (x-)?ecmascript variant를 모두 포함 — `application/x-javascript`
+// 같은 흔한 legacy variant가 누락되면 nexacro의 .xfdl.js 등이 캡처에 body 없이
+// 저장되어 분석 워크플로우(export → distill)에서 클라 코드 회수가 빠짐.
+// size cap 없음 — SPA 런타임 번들(nexacro Framework.js 1.3MB 등)도 분석 가치가
+// 있어 자동 회수가 워크플로우에 더 부합. 매 캡처마다 export 크기가 증가하는
+// 비용은 자가용 분석 워크스페이스에서 감수.
 function scanShouldEagerLoadBody(req) {
   const m = req.mimeType || '';
   if (!m) return false;
-  return /^(application\/(json|xml|x-www-form-urlencoded|javascript|graphql|ld\+json)|application\/[^;]*\+json|text\/)/i.test(m);
+  return /^(application\/(json|xml|x-www-form-urlencoded|(?:x-)?(?:java|ecma)script|graphql|ld\+json)|application\/[^;]*\+json|text\/)/i.test(m);
 }
 
 // 같은 (category, location)이 아직 보이지 않은 경우에만 finding 추가.

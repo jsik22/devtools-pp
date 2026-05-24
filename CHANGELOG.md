@@ -4,6 +4,30 @@ DevTools++ 버전별 변경 이력 (최신순). 기능 개요는 [README.md](REA
 
 ---
 
+### v0.14.1 변경사항 (2026-05-25)
+Eager response-body 로더의 MIME 매칭 누락 fix — `application/x-javascript` 등
+legacy javascript variant가 자동 eager load 대상에서 빠져 export에 body가
+저장되지 않던 회귀 수정. nexacro 같은 SPA의 `.xfdl.js` 등 모든 클라이언트
+JS가 캡처에 자동 포함되도록.
+
+#### `scanShouldEagerLoadBody` regex 확장
+- `panel.js`의 eager 조건에서 `application/javascript`·`text/javascript`만
+  매칭하던 regex가 **`application/x-javascript` / `application/x-ecmascript` /
+  `application/ecmascript`** variant를 모두 누락. 일부 서버(Apache·IIS 등)가
+  default로 내려보내는 `x-javascript`가 흔히 쓰임에도 자동 eager 대상에서
+  빠져, 캡처에 `responseBodyLoaded: false`로 저장됨
+- regex를 `(?:x-)?(?:java|ecma)script`로 확장 → 모든 javascript/ecmascript
+  variant 커버
+- 영향: 분석 워크플로우(export → distill → AI 분석)에서 클라 코드 자동 회수
+  실패가 해소. 이전 캡처에서는 사용자가 패널 detail 클릭 시 lazy fetch한
+  body가 export에는 들어가지 않아 SPA 클라 코드 분석이 수동 콘솔 fetch에
+  의존했음. fix 후 mms-stg `.xfdl.js` 9/9 자동 회수 검증
+- size cap 도입 검토했으나 채택 안 함 — SPA 런타임 번들(nexacro Framework.js
+  1.3MB 등)도 분석 가치가 있어 자동 회수가 워크플로우에 더 부합. 매 캡처마다
+  export 크기가 증가하는 비용은 자가용 분석 워크스페이스에서 감수
+
+---
+
 ### v0.14.0 변경사항 (2026-05-22)
 Import 동작 재설계 — 임포트 요청을 라이브 캡처와 격리된 별도 탭(📥)으로
 분리 + 확인 모달 제거.

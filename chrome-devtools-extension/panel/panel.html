@@ -22,6 +22,7 @@
             <button class="tab active" data-tab="network">Monitor</button>
             <button class="tab" data-tab="js-trace" disabled title="Start Monitor to enable JS Trace">JS Trace</button>
             <button class="tab intercept-tab" data-tab="intercept">Intercept</button>
+            <button class="tab" data-tab="poc" title="PoC 검증 결과 (gadget.report로 수집)">PoC <span id="poc-tab-badge" class="poc-tab-badge hidden">0</span></button>
           </div>
           <div class="global-scope-bar">
             <span class="global-scope-label" title="Host+path pattern. Wildcards: *. Multiple patterns: comma-separated. Empty = all in scope.">🎯</span>
@@ -403,6 +404,37 @@
             <button id="icpt-clear-log" class="btn btn-xs">Clear</button>
           </div>
           <div id="icpt-log" class="icpt-log-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PoC 탭 (v0.15.0) -->
+    <section id="poc" class="tab-content">
+      <div class="toolbar">
+        <button id="poc-clear" class="btn">Clear</button>
+        <button id="poc-export-all" class="btn" title="Export all results to ~/Downloads">Export All</button>
+        <span class="poc-stat-spacer"></span>
+        <select id="poc-filter-verdict" class="poc-filter">
+          <option value="all">모든 verdict</option>
+          <option value="VERIFIED">VERIFIED</option>
+          <option value="INVALID">INVALID</option>
+          <option value="UNCLEAR">UNCLEAR · 기타</option>
+        </select>
+        <select id="poc-filter-tp" class="poc-filter">
+          <option value="all">모든 TP</option>
+        </select>
+        <label class="poc-filter-check">
+          <input type="checkbox" id="poc-filter-unanalyzed"> 미분석만
+        </label>
+        <span id="poc-stats" class="poc-stats">0 results</span>
+      </div>
+      <div class="poc-split">
+        <div class="poc-list" id="poc-list">
+          <div class="poc-empty">콘솔에서 gadget.report(result) 호출 시 여기에 표시됩니다.</div>
+        </div>
+        <div class="split-gutter split-gutter-h" data-resize="prev"></div>
+        <div class="poc-detail" id="poc-detail">
+          <div class="poc-empty">좌측에서 항목 선택</div>
         </div>
       </div>
     </section>

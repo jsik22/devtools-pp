@@ -4,6 +4,37 @@ DevTools++ 버전별 변경 이력 (최신순). 기능 개요는 [README.md](REA
 
 ---
 
+### v0.15.0 변경사항 (2026-05-25)
+PoC 검증 결과 수집 탭 신설 — 콘솔에서 발사한 PoC 결과를 패널에 자동 누적·표시.
+분석 사이클(콘솔 paste → 결과 회수 → 리포트 갱신)의 마찰을 줄이고, 다수 TP의
+누적 검증 워크플로우를 표준화.
+
+#### 새 메인 탭 "PoC"
+- 기존 Monitor / JS Trace / Intercept 옆에 **PoC** 탭 추가 (4번째 1급 탭)
+- 좌측: 결과 목록 (TP / target / verdict 배지 / 시간) — 시간 역순
+- 우측: 선택 결과 상세 (verdict / Result KV / poc.meta / Full raw / Notes 편집)
+- 액션: Mark Analyzed (체크리스트 시그널) · Export (개별 JSON) · Delete · Clear All · Export All
+- 필터: verdict (VERIFIED / INVALID / UNCLEAR / 기타) · TP · 미분석만
+- 미분석 결과 있으면 탭 라벨에 빨간 카운트 배지
+
+#### 수집 메커니즘 — JS Trace 패턴 재활용
+- page-context에서 `gadget.report(result)` 호출 → `window.__dtppPocResults` 배열 push
+- 패널이 1초 폴링(`chrome.devtools.inspectedWindow.eval`)으로 splice해 수신
+- 기존 JS Trace의 `__authTrace` 폴링 패턴과 동일 → 새 인프라 0, 코드 격리도 무관
+- inject script / background relay 불필요 (page와 패널이 같은 inspectedWindow 컨텍스트)
+
+#### gadget.report 헬퍼 신규
+- `analysis/gadgets/_shared/report.js` — 단순 `window.__dtppPocResults.push(result)` 한 함수
+- 결과 객체에 `id`/`tp`/`target`/`timestamp` 기본값 자동 보충
+- 버전 호환: v0.14.x 이하 / DevTools++ 미설치 환경에선 silent no-op — PoC 코드 어느 환경에서나 안전
+
+#### 데이터 모델 (D안 호환 의식)
+- 결과 객체 키 고정: `{id, tp, target, timestamp, verdict, status, errorCode, errorMsg, body, headers, ...}`
+- D안(라이브 API) 등장 시 같은 데이터를 그대로 HTTP/RPC로 노출 가능
+- `id` 필드는 외부 lookup key 역할 — 같은 PoC 재실행 시 overwrite (dedup)
+
+---
+
 ### v0.14.1 변경사항 (2026-05-25)
 Eager response-body 로더의 MIME 매칭 누락 fix — `application/x-javascript` 등
 legacy javascript variant가 자동 eager load 대상에서 빠져 export에 body가

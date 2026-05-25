@@ -8725,3 +8725,345 @@ window.__monitorAPI = {
   });
 })();
 
+
+
+// ============================================================
+// PoC 탭 (v0.15.0) — gadget.report로 수집한 검증 결과 표시
+// ------------------------------------------------------------
+// page-context의 window.__dtppPocResults 배열을 1초 폴링.
+// gadget.report(result)가 그 배열에 push하면 패널이 splice로 가져와
+// 좌측 목록에 누적, 우측 상세에 선택 항목 표시.
+// ============================================================
+
+const pocResults = [];     // 누적 결과 (시간 역순으로 정렬해서 렌더)
+const pocResultsMap = new Map();  // id → result (dedup용)
+let selectedPocId = null;
+let pocFilterVerdict = 'all';
+let pocFilterTp = 'all';
+let pocFilterUnanalyzed = false;
+let _pocPollTimer = null;
+const POC_POLL_INTERVAL_MS = 1000;
+
+function _pocClassifyVerdict(verdictStr) {
+  if (!verdictStr) return 'OTHER';
+  const v = String(verdictStr).toUpperCase();
+  if (v.startsWith('VERIFIED')) return 'VERIFIED';
+  if (v.startsWith('INVALID')) return 'INVALID';
+  if (v.startsWith('UNCLEAR') || v.startsWith('PARTIAL')) return 'UNCLEAR';
+  return 'OTHER';
+}
+
+function _pocEnsureId(r) {
+  // 호출자가 id를 안 주면 tp+target+timestamp로 합성
+  if (r.id) return r.id;
+  return (r.tp || 'TP-?') + '-' + (r.target || 'unknown') + '-' + (r.timestamp || Date.now());
+}
+
+function _pocFormatTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, '0');
+  return pad(d.getMonth() + 1) + '/' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+
+function _pocPollOnce() {
+  if (!chrome.devtools || !chrome.devtools.inspectedWindow) return;
+  const expr = '(function(){var a=window.__dtppPocResults;if(!a||!a.length)return"[]";var s=JSON.stringify(a.splice(0));return s;})()';
+  chrome.devtools.inspectedWindow.eval(expr, (raw, exc) => {
+    if (exc || typeof raw !== 'string') return;
+    if (raw === '[]') return;
+    let arr;
+    try { arr = JSON.parse(raw); } catch (e) { return; }
+    if (!Array.isArray(arr) || arr.length === 0) return;
+    let added = 0;
+    for (const r of arr) {
+      if (!r || typeof r !== 'object') continue;
+      const id = _pocEnsureId(r);
+      r.id = id;
+      r._receivedAt = Date.now();
+      r._analyzed = !!r._analyzed;
+      // dedup: 같은 id 재수신 시 overwrite (사용자가 같은 PoC 재실행 시)
+      if (pocResultsMap.has(id)) {
+        const idx = pocResults.findIndex(x => x.id === id);
+        if (idx >= 0) pocResults[idx] = r;
+      } else {
+        pocResults.unshift(r);  // 최신이 위
+      }
+      pocResultsMap.set(id, r);
+      added++;
+    }
+    if (added > 0) {
+      _pocRefreshFilters();
+      _pocRenderList();
+      _pocRefreshBadge();
+      _pocAutoSelectFirstIfNone();
+    }
+  });
+}
+
+function _pocRefreshBadge() {
+  const badge = document.getElementById('poc-tab-badge');
+  if (!badge) return;
+  const total = pocResults.length;
+  const unanalyzed = pocResults.filter(r => !r._analyzed).length;
+  if (unanalyzed > 0) {
+    badge.textContent = String(unanalyzed);
+    badge.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+  }
+}
+
+function _pocRefreshFilters() {
+  // TP 필터 dropdown 옵션 동기
+  const tpSel = document.getElementById('poc-filter-tp');
+  if (!tpSel) return;
+  const tps = Array.from(new Set(pocResults.map(r => r.tp || 'TP-?'))).sort();
+  const cur = tpSel.value;
+  tpSel.innerHTML = '<option value="all">모든 TP</option>' +
+    tps.map(t => '<option value="' + _esc(t) + '">' + _esc(t) + '</option>').join('');
+  if (cur && (cur === 'all' || tps.includes(cur))) tpSel.value = cur;
+}
+
+function _pocFilteredResults() {
+  return pocResults.filter(r => {
+    if (pocFilterVerdict !== 'all') {
+      if (_pocClassifyVerdict(r.verdict) !== pocFilterVerdict) return false;
+    }
+    if (pocFilterTp !== 'all' && r.tp !== pocFilterTp) return false;
+    if (pocFilterUnanalyzed && r._analyzed) return false;
+    return true;
+  });
+}
+
+function _esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function _pocRenderList() {
+  const listEl = document.getElementById('poc-list');
+  if (!listEl) return;
+  const items = _pocFilteredResults();
+  const total = pocResults.length;
+  const stats = document.getElementById('poc-stats');
+  if (stats) stats.textContent = items.length + ' / ' + total + ' results';
+
+  if (items.length === 0) {
+    listEl.innerHTML = '<div class="poc-empty">' +
+      (total === 0 ? '콘솔에서 gadget.report(result) 호출 시 여기에 표시됩니다.' : '필터에 매칭되는 결과가 없습니다.') +
+      '</div>';
+    return;
+  }
+  let html = '';
+  for (const r of items) {
+    const cls = _pocClassifyVerdict(r.verdict);
+    const sel = r.id === selectedPocId ? ' selected' : '';
+    const analyzed = r._analyzed ? ' analyzed' : '';
+    html += '<div class="poc-item' + sel + analyzed + '" data-id="' + _esc(r.id) + '">';
+    html += '<div class="poc-item-head">';
+    html += '<span class="poc-tp">' + _esc(r.tp || 'TP-?') + '</span>';
+    html += '<span class="poc-target">' + _esc(r.target || '') + '</span>';
+    html += '<span class="poc-verdict-badge poc-verdict-' + cls + '">' + _esc(cls) + '</span>';
+    if (r._analyzed) html += '<span class="poc-item-check">✓</span>';
+    html += '<span class="poc-time">' + _esc(_pocFormatTime(r.timestamp || r._receivedAt)) + '</span>';
+    html += '</div>';
+    const sub = [];
+    if (r.poc && r.poc.variant) sub.push(_esc(r.poc.variant));
+    if (typeof r.status !== 'undefined') sub.push('status ' + _esc(r.status));
+    if (r.verdict) sub.push(_esc(String(r.verdict).slice(0, 60)));
+    html += '<div class="poc-item-meta">' + sub.join(' · ') + '</div>';
+    html += '</div>';
+  }
+  listEl.innerHTML = html;
+  // 클릭 이벤트
+  listEl.querySelectorAll('.poc-item').forEach(el => {
+    el.addEventListener('click', () => {
+      selectedPocId = el.dataset.id;
+      _pocRenderList();
+      _pocRenderDetail();
+    });
+  });
+}
+
+function _pocAutoSelectFirstIfNone() {
+  if (selectedPocId && pocResultsMap.has(selectedPocId)) return;
+  const filtered = _pocFilteredResults();
+  if (filtered.length > 0) {
+    selectedPocId = filtered[0].id;
+    _pocRenderList();
+    _pocRenderDetail();
+  }
+}
+
+function _pocRenderDetail() {
+  const detail = document.getElementById('poc-detail');
+  if (!detail) return;
+  if (!selectedPocId) {
+    detail.innerHTML = '<div class="poc-empty">좌측에서 항목 선택</div>';
+    return;
+  }
+  const r = pocResultsMap.get(selectedPocId);
+  if (!r) {
+    detail.innerHTML = '<div class="poc-empty">선택한 결과가 없습니다 (clear됨?)</div>';
+    return;
+  }
+  const cls = _pocClassifyVerdict(r.verdict);
+  let html = '';
+  html += '<h3>';
+  html += '<span class="poc-tp">' + _esc(r.tp || 'TP-?') + '</span>';
+  html += '<span class="poc-target">' + _esc(r.target || '') + '</span>';
+  html += '<span class="poc-verdict-badge poc-verdict-' + cls + '">' + _esc(cls) + '</span>';
+  if (r._analyzed) html += '<span class="poc-item-check">✓ analyzed</span>';
+  html += '</h3>';
+  html += '<div class="poc-detail-actions">';
+  html += '<button class="btn" id="poc-action-analyze">' + (r._analyzed ? '✓ Analyzed (취소)' : 'Mark Analyzed') + '</button>';
+  html += '<button class="btn" id="poc-action-export">Export</button>';
+  html += '<button class="btn" id="poc-action-delete">Delete</button>';
+  html += '</div>';
+
+  // verdict 풀 텍스트
+  if (r.verdict) {
+    html += '<div class="poc-detail-section"><h4>Verdict</h4>';
+    html += '<div class="poc-detail-section-body">' + _esc(String(r.verdict)) + '</div></div>';
+  }
+
+  // 핵심 결과 KV
+  html += '<div class="poc-detail-section"><h4>Result</h4>';
+  html += '<div class="poc-detail-section-body kv">';
+  const kvKeys = ['status', 'errorCode', 'errorMsg', 'bodyLength', 'hasDataRows', 'setCookie'];
+  for (const k of kvKeys) {
+    if (typeof r[k] !== 'undefined') {
+      html += '<div><span class="k">' + _esc(k) + ':</span> <span class="v">' + _esc(JSON.stringify(r[k])) + '</span></div>';
+    }
+  }
+  html += '</div></div>';
+
+  // poc.meta
+  if (r.poc) {
+    html += '<div class="poc-detail-section collapsed"><h4>PoC meta</h4>';
+    html += '<div class="poc-detail-section-body">' + _esc(JSON.stringify(r.poc, null, 2)) + '</div></div>';
+  }
+
+  // 전체 raw
+  html += '<div class="poc-detail-section collapsed"><h4>Full result (raw JSON)</h4>';
+  const rawCopy = Object.assign({}, r);
+  delete rawCopy._receivedAt;
+  html += '<div class="poc-detail-section-body">' + _esc(JSON.stringify(rawCopy, null, 2)) + '</div></div>';
+
+  // notes
+  html += '<div class="poc-detail-section"><h4>Notes</h4>';
+  html += '<div class="poc-detail-section-body">';
+  html += '<textarea class="poc-detail-notes" id="poc-notes-input" placeholder="분석 노트 (자동 저장)">' + _esc(r._notes || '') + '</textarea>';
+  html += '</div></div>';
+
+  detail.innerHTML = html;
+
+  // 액션 핸들러
+  document.getElementById('poc-action-analyze').addEventListener('click', () => {
+    r._analyzed = !r._analyzed;
+    pocResultsMap.set(r.id, r);
+    _pocRenderList();
+    _pocRenderDetail();
+    _pocRefreshBadge();
+  });
+  document.getElementById('poc-action-export').addEventListener('click', () => {
+    _pocExportOne(r);
+  });
+  document.getElementById('poc-action-delete').addEventListener('click', () => {
+    if (!window.confirm('이 PoC 결과를 삭제? (실 측정값 손실, 되돌릴 수 없음)')) return;
+    pocResultsMap.delete(r.id);
+    const idx = pocResults.findIndex(x => x.id === r.id);
+    if (idx >= 0) pocResults.splice(idx, 1);
+    selectedPocId = null;
+    _pocRefreshFilters();
+    _pocRenderList();
+    _pocRenderDetail();
+    _pocRefreshBadge();
+  });
+  const notesInput = document.getElementById('poc-notes-input');
+  if (notesInput) {
+    notesInput.addEventListener('input', () => {
+      r._notes = notesInput.value;
+      pocResultsMap.set(r.id, r);
+    });
+  }
+  // 섹션 토글
+  detail.querySelectorAll('.poc-detail-section h4').forEach(h => {
+    h.addEventListener('click', () => {
+      h.parentElement.classList.toggle('collapsed');
+    });
+  });
+}
+
+function _pocExportOne(r) {
+  const blob = new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const safe = (s) => String(s || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+  a.href = url;
+  a.download = safe(r.tp || 'TP') + '-' + safe(r.target || 'target') + '-' + (r.timestamp || Date.now()) + '.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function _pocExportAll() {
+  if (pocResults.length === 0) {
+    showToast('내보낼 PoC 결과가 없습니다');
+    return;
+  }
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    extensionVersion: chrome.runtime.getManifest().version,
+    count: pocResults.length,
+    results: pocResults,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'poc-results-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function _pocClearAll() {
+  if (pocResults.length === 0) return;
+  if (!window.confirm('모든 PoC 결과 (' + pocResults.length + '건) 삭제? 되돌릴 수 없습니다.')) return;
+  pocResults.length = 0;
+  pocResultsMap.clear();
+  selectedPocId = null;
+  _pocRefreshFilters();
+  _pocRenderList();
+  _pocRenderDetail();
+  _pocRefreshBadge();
+}
+
+function _pocBindControls() {
+  const clearBtn = document.getElementById('poc-clear');
+  if (clearBtn) clearBtn.addEventListener('click', _pocClearAll);
+  const exportBtn = document.getElementById('poc-export-all');
+  if (exportBtn) exportBtn.addEventListener('click', _pocExportAll);
+  const fv = document.getElementById('poc-filter-verdict');
+  if (fv) fv.addEventListener('change', () => { pocFilterVerdict = fv.value; _pocRenderList(); });
+  const ft = document.getElementById('poc-filter-tp');
+  if (ft) ft.addEventListener('change', () => { pocFilterTp = ft.value; _pocRenderList(); });
+  const fu = document.getElementById('poc-filter-unanalyzed');
+  if (fu) fu.addEventListener('change', () => { pocFilterUnanalyzed = fu.checked; _pocRenderList(); });
+}
+
+// 초기화 — 패널 로드 직후 1회 + 폴링 시작
+(function _initPocTab() {
+  _pocBindControls();
+  _pocRenderList();
+  _pocRefreshBadge();
+  // 폴링 시작
+  if (!_pocPollTimer) {
+    _pocPollTimer = setInterval(_pocPollOnce, POC_POLL_INTERVAL_MS);
+  }
+})();

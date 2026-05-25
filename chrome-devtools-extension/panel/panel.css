@@ -3621,6 +3621,167 @@ mark.network-search-mark.current {
   font-variant-numeric: tabular-nums;
 }
 
+/* v0.18.0 — Files 탐색기 사이드바 */
+.notes-layout {
+  display: flex;
+  flex: 1;
+  height: 100%;
+  overflow: hidden;
+}
+.notes-sidebar {
+  width: 220px;
+  min-width: 150px;
+  max-width: 600px;
+  flex-shrink: 0;
+  border-right: 1px solid #d4d4d4;
+  background: #fafafa;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.notes-sidebar.hidden { display: none; }
+.notes-sidebar.hidden + .notes-sidebar-resizer { display: none; }
+
+.notes-sidebar-resizer {
+  width: 4px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.1s;
+}
+.notes-sidebar-resizer:hover,
+.notes-sidebar-resizer.dragging {
+  background: #1A73E8;
+}
+.notes-sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #e0e0e0;
+  background: #f3f3f3;
+}
+.notes-sidebar-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: #555;
+  letter-spacing: 0.3px;
+}
+.notes-sidebar-tree {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 0;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: #333;
+}
+.notes-sidebar-empty {
+  padding: 16px 14px;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 11.5px;
+  color: #999;
+  text-align: center;
+  line-height: 1.5;
+}
+.notes-tree-item {
+  display: flex;
+  align-items: center;
+  padding: 2px 6px 2px 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+.notes-tree-item:hover { background: #E8F0FE; }
+.notes-tree-item.active { background: #1A73E8; color: white; }
+.notes-tree-item.active .notes-tree-toggle,
+.notes-tree-item.active .notes-tree-icon { color: white; }
+.notes-tree-toggle {
+  display: inline-block;
+  width: 12px;
+  font-size: 9px;
+  color: #888;
+  flex-shrink: 0;
+  text-align: center;
+}
+.notes-tree-icon {
+  display: inline-block;
+  width: 14px;
+  font-size: 11px;
+  margin-right: 4px;
+  color: #888;
+  flex-shrink: 0;
+}
+.notes-tree-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.notes-tree-root-label { font-weight: 600; color: #1A73E8; }
+.notes-tree-item.active .notes-tree-root-label { color: white; }
+.notes-tree-dir { font-weight: 500; color: #444; }
+.notes-tree-children { /* nested level */ }
+.notes-tree-children.collapsed { display: none; }
+.notes-tree-perm-warn {
+  margin: 4px 6px;
+  padding: 6px 8px;
+  background: #fff3cd;
+  border-left: 3px solid #f0ad4e;
+  border-radius: 2px;
+  font-family: -apple-system, sans-serif;
+  font-size: 10.5px;
+  color: #6e4f00;
+  cursor: pointer;
+}
+.notes-tree-perm-warn:hover { background: #ffe69c; }
+.notes-tree-root-close {
+  margin-left: auto;
+  padding: 0 4px;
+  color: #c62828;
+  font-size: 13px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.notes-tree-item:hover .notes-tree-root-close { opacity: 1; }
+.notes-sidebar-footer {
+  padding: 6px 10px;
+  border-top: 1px solid #e0e0e0;
+  background: #f3f3f3;
+  font-size: 11px;
+}
+.notes-toggle.small { font-size: 11px; }
+.notes-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* 파일 탭 — 노트 탭과 구분 */
+.notes-tab.file-tab {
+  background: #fffaf0;
+  border-color: #f5e6b8;
+}
+.notes-tab.file-tab.active {
+  background: #fff3cd;
+  border-color: #f0ad4e;
+  color: #6e4f00;
+}
+.notes-tab.dirty .notes-tab-name::after {
+  content: ' ●';
+  color: #ef6c00;
+  font-weight: 700;
+}
+.notes-tab.file-tab .notes-tab-name::before {
+  content: '📄 ';
+  margin-right: 2px;
+}
+
 /* v0.17.0 — line number gutter */
 .notes-linenum-gutter {
   background: #f7f7f7;

@@ -4,6 +4,33 @@ DevTools++ 버전별 변경 이력 (최신순). 기능 개요는 [README.md](REA
 
 ---
 
+### v0.18.0 변경사항 (2026-05-25)
+Notes 탭 — **파일 탐색기 사이드바**. 외부 디렉토리를 직접 연결해 트리에서 파일을 클릭으로 열고 명시 저장으로 FS에 write back. 분석 작업 중 OS 탐색기/Finder 왕복 제거.
+
+#### 핵심 기능
+- **디렉토리 연결** — Notes 사이드바 `+` 버튼 → `window.showDirectoryPicker()` (File System Access API, readwrite). 한 번 승인 후 IndexedDB에 DirectoryHandle 영속화 → 다음 세션 자동 복원 시도
+- **트리 탐색** — 좌측 사이드바에 디렉토리 트리 (펼치기/접기, 다중 디렉토리 동시 연결). 텍스트 파일만 표시 기본(`.md/.txt/.json/.js/.ts/...`), `show all files` 토글로 전체 표시. `.DS_Store / node_modules / __pycache__ / .git / dist / build` 등 자동 제외
+- **파일 열기 = 새 탭** — 트리 파일 클릭 → 노트 탭 바에 `📄 파일명` 새 탭 추가. 같은 에디터에서 편집 (font/line-number/wrap 동일 적용)
+- **명시 저장 (FS write back)** — `Cmd/Ctrl+S` 또는 toolbar `Save` 버튼. dirty `●` 마커로 미저장 표시. 탭 닫기 시 dirty면 confirm. 노트(chrome.storage 자동 저장)와 *별개 저장 경로*
+- **권한 갱신** — 세션 만료 시 트리에 `🔒 click to grant` 경고 → 클릭으로 `requestPermission()` 재요청
+
+#### UI
+- Notes 탭 안 좌측 사이드바 (기본 220px, 150–600px **drag로 폭 조정 가능**) + `📁` 토글 버튼으로 숨김/표시
+- 노트 탭(기본) vs 파일 탭(`📄` 아이콘 + 황색 배경)으로 시각 구분
+- 사이드바 토글·폭·디렉토리 펼침 상태·`show all files`·폰트 크기·라인 넘버 모두 chrome.storage 영속
+
+#### 데이터 분리
+- 노트: `chrome.storage.local` (기존)
+- 파일 핸들: `IndexedDB` (DirectoryHandle 객체 직렬화)
+- 파일 내용: 메모리에만 유지 (원본 FS에 명시 저장)
+
+#### Picker popup 우회 (구현 결정)
+- DevTools panel은 iframe context라 `showDirectoryPicker`가 *"Cross origin sub frames aren't allowed to show a file picker"*로 거부됨
+- → 별도 popup window(`fs-picker.html` 500×280)를 띄워 *top-level context*에서 picker 호출. handle은 IndexedDB(same origin)에 저장하고 panel은 popup 닫힘 감지 후 IDB 재로드
+- 사용자는 panel `+` → popup 열림 → "Choose Directory" 클릭 → picker → 선택. 약간 추가 클릭 1회지만 동작 보장
+
+---
+
 ### v0.17.0 변경사항 (2026-05-25)
 Notes 탭 — 경량 에디터 기능 확장: 폰트 크기 조절 / 라인 넘버.
 

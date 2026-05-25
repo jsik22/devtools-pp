@@ -9086,13 +9086,22 @@ const NOTES_FONT_DEFAULT = 13;
 
 const notesState = {
   notes: [],            // [{id, name, content, createdAt, updatedAt}]
-  activeId: null,
+  activeId: null,       // 활성 entity id (노트 id 또는 파일 id)
+  activeType: 'note',   // 'note' | 'file'  (v0.18.0)
   searchTerm: '',
   searchMatches: [],    // [{start, end}]
   searchCursor: -1,
   saveTimer: null,
   loaded: false,
-  prefs: { fontSize: NOTES_FONT_DEFAULT, lineNumbers: false },   // v0.17.0
+  prefs: { fontSize: NOTES_FONT_DEFAULT, lineNumbers: false, sidebarOpen: true },   // v0.17.0 + v0.18.0
+};
+
+// v0.18.0 — 파일 탐색기 state (FS Access API)
+const fsState = {
+  dirs: [],             // [{id, name, handle, expanded:{path:bool}, tree, permGranted}]
+  files: [],            // [{id, dirId, segments, name, content, originalContent, isOpen}]
+  showAllFiles: false,
+  loaded: false,
 };
 
 function _notesNewId() {
@@ -9136,6 +9145,10 @@ function _notesLoad() {
       const fs = Number(stored.prefs.fontSize);
       if (fs >= NOTES_FONT_MIN && fs <= NOTES_FONT_MAX) notesState.prefs.fontSize = fs;
       if (typeof stored.prefs.lineNumbers === 'boolean') notesState.prefs.lineNumbers = stored.prefs.lineNumbers;
+      // v0.18.0
+      if (typeof stored.prefs.sidebarOpen === 'boolean') notesState.prefs.sidebarOpen = stored.prefs.sidebarOpen;
+      const sw = Number(stored.prefs.sidebarWidth);
+      if (sw >= 150 && sw <= 600) notesState.prefs.sidebarWidth = sw;
     }
     notesState.loaded = true;
     _notesRender();
@@ -9182,22 +9195,38 @@ function _notesSetStatus(state) {
 }
 
 function _notesActiveNote() {
+  // v0.18.0 — note 또는 file 둘 다 처리. 호출자는 type 확인 필요
+  if (notesState.activeType === 'file') {
+    return fsState.files.find(f => f.id === notesState.activeId);
+  }
   return notesState.notes.find(n => n.id === notesState.activeId);
 }
 
 function _notesRender() {
   _notesRenderTabs();
   _notesRenderEditor();
+  if (typeof _fsRenderSidebar === 'function') _fsRenderSidebar();
+  _notesUpdateSaveButton();
+}
+
+function _notesUpdateSaveButton() {
+  const btn = document.getElementById('notes-save');
+  if (!btn) return;
+  // 파일 모드일 때만 표시 — CSS의 .hidden은 글로벌 정의 없으므로 inline style로 직접 토글
+  btn.style.display = notesState.activeType === 'file' ? '' : 'none';
 }
 
 function _notesRenderTabs() {
   const container = document.getElementById('notes-tabs');
   if (!container) return;
   container.innerHTML = '';
+  // 노트 탭들
   for (const n of notesState.notes) {
     const tab = document.createElement('div');
-    tab.className = 'notes-tab' + (n.id === notesState.activeId ? ' active' : '');
+    const isActive = notesState.activeType === 'note' && n.id === notesState.activeId;
+    tab.className = 'notes-tab' + (isActive ? ' active' : '');
     tab.dataset.id = n.id;
+    tab.dataset.type = 'note';
     tab.title = '더블클릭으로 이름 변경 · X로 삭제';
 
     const name = document.createElement('span');
@@ -9242,7 +9271,37 @@ function _notesRenderTabs() {
     });
     tab.appendChild(closeBtn);
 
-    tab.addEventListener('click', () => _notesSelect(n.id));
+    tab.addEventListener('click', () => _notesSelect(n.id, 'note'));
+    container.appendChild(tab);
+  }
+
+  // v0.18.0 — 파일 탭들
+  for (const f of fsState.files) {
+    if (!f.isOpen) continue;
+    const tab = document.createElement('div');
+    const isActive = notesState.activeType === 'file' && f.id === notesState.activeId;
+    const isDirty = f.content !== f.originalContent;
+    tab.className = 'notes-tab file-tab' + (isActive ? ' active' : '') + (isDirty ? ' dirty' : '');
+    tab.dataset.id = f.id;
+    tab.dataset.type = 'file';
+    tab.title = `파일: ${f.segments.join('/')} · X로 닫기 (저장 안 됨)`;
+
+    const name = document.createElement('span');
+    name.className = 'notes-tab-name';
+    name.textContent = f.name;
+    tab.appendChild(name);
+
+    const closeBtn = document.createElement('span');
+    closeBtn.className = 'notes-tab-close';
+    closeBtn.textContent = '×';
+    closeBtn.title = '이 파일 탭 닫기 (FS에서는 삭제 안 됨)';
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _fsCloseFile(f.id);
+    });
+    tab.appendChild(closeBtn);
+
+    tab.addEventListener('click', () => _notesSelect(f.id, 'file'));
     container.appendChild(tab);
   }
 }
@@ -9250,25 +9309,27 @@ function _notesRenderTabs() {
 function _notesRenderEditor() {
   const editor = document.getElementById('notes-editor');
   if (!editor) return;
-  const note = _notesActiveNote();
-  if (!note) {
+  const entity = _notesActiveNote();
+  if (!entity) {
     editor.value = '';
     editor.disabled = true;
     _notesRenderLineNumbers();
     return;
   }
   editor.disabled = false;
-  if (editor.value !== note.content) {
-    editor.value = note.content;
+  if (editor.value !== entity.content) {
+    editor.value = entity.content;
   }
   _notesRenderLineNumbers();
 }
 
-function _notesSelect(id) {
-  if (notesState.activeId === id) return;
+function _notesSelect(id, type) {
+  type = type || 'note';
+  if (notesState.activeId === id && notesState.activeType === type) return;
   notesState.activeId = id;
+  notesState.activeType = type;
   _notesRender();
-  _notesScheduleSave();
+  if (type === 'note') _notesScheduleSave();
 }
 
 function _notesAdd() {
@@ -9429,6 +9490,13 @@ function _notesApplyPrefs() {
     editor.classList.toggle('nowrap', !wrapCheckbox.checked);
   }
   _notesRenderLineNumbers();
+  // v0.18.0 — sidebar 표시 상태 + 폭 적용
+  const sidebar = document.getElementById('notes-sidebar');
+  if (sidebar) {
+    sidebar.classList.toggle('hidden', notesState.prefs && notesState.prefs.sidebarOpen === false);
+    const w = notesState.prefs && notesState.prefs.sidebarWidth;
+    if (w && w >= 150 && w <= 600) sidebar.style.width = w + 'px';
+  }
 }
 
 function _notesRenderLineNumbers() {
@@ -9451,6 +9519,466 @@ function _notesAdjustFont(delta) {
   notesState.prefs.fontSize = next;
   _notesApplyPrefs();
   _notesScheduleSave();
+}
+
+// ============================================================
+// v0.18.0 — 파일 탐색기 (File System Access API + IndexedDB)
+// ============================================================
+
+const FS_DB_NAME = 'devtools-pp-fs';
+const FS_DB_VERSION = 1;
+const FS_DIR_STORE = 'dir-handles';
+
+const FS_TEXT_EXTS = /\.(md|txt|json|js|ts|jsx|tsx|css|scss|html|xml|yaml|yml|csv|log|py|sh|bash|conf|ini|env|gitignore|sql|toml|rb|go|rs|c|h|cpp|java|kt|swift|php|lua|vue|svelte)$/i;
+const FS_SKIP = /^\.|^(node_modules|__pycache__|\.git|\.DS_Store|dist|build|out|\.next|\.cache|coverage)$/;
+
+function _fsIdbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(FS_DB_NAME, FS_DB_VERSION);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore(FS_DIR_STORE, { keyPath: 'id' });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function _fsIdbGetAllDirs() {
+  try {
+    const db = await _fsIdbOpen();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(FS_DIR_STORE, 'readonly');
+      const req = tx.objectStore(FS_DIR_STORE).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) { console.warn('[fs] idb get all failed:', e); return []; }
+}
+
+async function _fsIdbPutDir(record) {
+  try {
+    const db = await _fsIdbOpen();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(FS_DIR_STORE, 'readwrite');
+      tx.objectStore(FS_DIR_STORE).put(record);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { console.warn('[fs] idb put failed:', e); }
+}
+
+async function _fsIdbDeleteDir(id) {
+  try {
+    const db = await _fsIdbOpen();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(FS_DIR_STORE, 'readwrite');
+      tx.objectStore(FS_DIR_STORE).delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { console.warn('[fs] idb delete failed:', e); }
+}
+
+function _fsIsTextFile(name) { return FS_TEXT_EXTS.test(name); }
+function _fsShouldSkip(name) { return FS_SKIP.test(name); }
+
+async function _fsCheckPermission(dir, mode) {
+  if (!dir.handle || !dir.handle.queryPermission) return 'granted';
+  try {
+    return await dir.handle.queryPermission({ mode: mode || 'read' });
+  } catch (_) { return 'denied'; }
+}
+
+// 권한 요청 — DevTools panel iframe에선 handle.requestPermission도 거부됨 (context별 transient activation 필요)
+// → popup window로 우회 (fs-picker.html?action=grant)
+async function _fsRequestPermission(dirId, mode) {
+  const dir = fsState.dirs.find(d => d.id === dirId);
+  if (!dir) return false;
+  const m = mode || 'readwrite';
+  const url = chrome.runtime.getURL(
+    'fs-picker.html?action=grant&dirId=' + encodeURIComponent(dirId) + '&mode=' + encodeURIComponent(m)
+  );
+  return new Promise((resolve) => {
+    chrome.windows.create({ type: 'popup', url, width: 500, height: 280, focused: true }, (win) => {
+      if (!win) { resolve(false); return; }
+      const onRemoved = async (closedId) => {
+        if (closedId !== win.id) return;
+        chrome.windows.onRemoved.removeListener(onRemoved);
+        // popup 닫힘 후 트리 enum 재시도 — 권한 grant 됐다면 성공
+        await _fsRefreshDir(dirId);
+        const d = fsState.dirs.find(x => x.id === dirId);
+        resolve(!!(d && d.permGranted));
+      };
+      chrome.windows.onRemoved.addListener(onRemoved);
+    });
+  });
+}
+
+// 초기 로드: IDB에서 저장된 디렉토리 핸들 복원
+async function _fsLoad() {
+  const records = await _fsIdbGetAllDirs();
+  fsState.dirs = records.map(r => ({
+    id: r.id, name: r.name, handle: r.handle,
+    expanded: {}, tree: null, permGranted: false,
+  }));
+  // 펼침 상태는 chrome.storage (handle은 IDB와 분리)
+  safeStorageGet(['devtoolsPpFsPrefs'], (result) => {
+    const prefs = result && result['devtoolsPpFsPrefs'];
+    if (prefs && prefs.expandedByDir) {
+      for (const d of fsState.dirs) {
+        d.expanded = prefs.expandedByDir[d.id] || {};
+      }
+    }
+    if (prefs && typeof prefs.showAllFiles === 'boolean') {
+      fsState.showAllFiles = prefs.showAllFiles;
+      const cb = document.getElementById('notes-fs-show-all');
+      if (cb) cb.checked = prefs.showAllFiles;
+    }
+  });
+  // 권한 자동 확인 (granted면 트리 자동 로드)
+  for (const d of fsState.dirs) {
+    const p = await _fsCheckPermission(d, 'read');
+    d.permGranted = p === 'granted';
+    if (d.permGranted) {
+      await _fsRefreshDir(d.id);
+    }
+  }
+  fsState.loaded = true;
+  _fsRenderSidebar();
+}
+
+function _fsSavePrefs() {
+  const expandedByDir = {};
+  for (const d of fsState.dirs) expandedByDir[d.id] = d.expanded;
+  safeStorageSet({ devtoolsPpFsPrefs: { expandedByDir, showAllFiles: fsState.showAllFiles } });
+}
+
+// 디렉토리 추가 — DevTools panel iframe에선 showDirectoryPicker 직접 호출 불가
+// → 별도 popup window(fs-picker.html)에서 picker 호출 → IDB에 저장 → popup 닫히면 panel에서 IDB 재로드
+async function _fsAddDirectory() {
+  if (!chrome.windows || !chrome.windows.create) {
+    showToast('chrome.windows API 불가 — 패널 컨텍스트 확인');
+    return;
+  }
+  const url = chrome.runtime.getURL('fs-picker.html');
+  // 사용자가 picker 작업 중인 기존 id 목록 (popup 닫힘 후 *새로 추가된* 것만 fsState에 push)
+  const existingIds = new Set(fsState.dirs.map(d => d.id));
+  chrome.windows.create({ type: 'popup', url, width: 500, height: 280, focused: true }, (win) => {
+    if (!win) return;
+    // popup 닫힘 감지 → IDB 재로드
+    const onRemoved = async (closedId) => {
+      if (closedId !== win.id) return;
+      chrome.windows.onRemoved.removeListener(onRemoved);
+      try {
+        const records = await _fsIdbGetAllDirs();
+        let added = 0;
+        for (const r of records) {
+          if (existingIds.has(r.id)) continue;
+          const dir = { id: r.id, name: r.name, handle: r.handle, expanded: {}, tree: null, permGranted: false };
+          // popup에서 readwrite로 picker 호출했으므로 권한 granted 상태이지만 panel에서 다시 확인
+          const p = await _fsCheckPermission(dir, 'read');
+          dir.permGranted = p === 'granted';
+          fsState.dirs.push(dir);
+          if (dir.permGranted) await _fsRefreshDir(dir.id);
+          added++;
+        }
+        _fsRenderSidebar();
+        if (added > 0) showToast(`Directory connected (${added})`);
+      } catch (e) {
+        console.warn('[fs] post-popup reload failed:', e);
+      }
+    };
+    chrome.windows.onRemoved.addListener(onRemoved);
+  });
+}
+
+// 디렉토리 제거 (연결 끊기)
+async function _fsRemoveDirectory(dirId) {
+  const dir = fsState.dirs.find(d => d.id === dirId);
+  if (!dir) return;
+  if (!window.confirm(`Disconnect "${dir.name}"? Open files from this directory will be closed.`)) return;
+  // 해당 디렉토리 소속 열린 파일 모두 닫기
+  fsState.files = fsState.files.filter(f => f.dirId !== dirId);
+  // 활성 탭이 사라졌으면 첫 노트로
+  if (notesState.activeType === 'file' && !fsState.files.find(f => f.id === notesState.activeId)) {
+    if (notesState.notes.length > 0) {
+      notesState.activeType = 'note';
+      notesState.activeId = notesState.notes[0].id;
+    }
+  }
+  fsState.dirs = fsState.dirs.filter(d => d.id !== dirId);
+  await _fsIdbDeleteDir(dirId);
+  _fsSavePrefs();
+  _fsRenderSidebar();
+  _notesRender();
+}
+
+// 디렉토리 트리 재귀 enum
+async function _fsEnumDir(dirHandle, depth) {
+  if (depth > 8) return [];   // 안전: 최대 8단계
+  const items = [];
+  try {
+    for await (const [name, handle] of dirHandle.entries()) {
+      if (_fsShouldSkip(name)) continue;
+      if (handle.kind === 'directory') {
+        items.push({ name, kind: 'directory', handle, children: null });
+      } else if (handle.kind === 'file') {
+        if (fsState.showAllFiles || _fsIsTextFile(name)) {
+          items.push({ name, kind: 'file', handle });
+        }
+      }
+    }
+  } catch (e) { console.warn('[fs] enum failed:', e); }
+  items.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return items;
+}
+
+// 단일 디렉토리 트리 갱신 (lazy: 1단계만)
+// 낙관적 enum — 권한 체크 없이 바로 시도. 실패 시 NotAllowedError 잡아 permGranted=false 처리
+async function _fsRefreshDir(dirId) {
+  const dir = fsState.dirs.find(d => d.id === dirId);
+  if (!dir || !dir.handle) return;
+  try {
+    const tree = await _fsEnumDir(dir.handle, 0);
+    dir.tree = tree;
+    dir.permGranted = true;
+    _fsRenderSidebar();
+  } catch (e) {
+    if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
+      dir.permGranted = false;
+      dir.tree = null;
+      _fsRenderSidebar();
+    } else {
+      console.warn('[fs] refreshDir error:', e);
+    }
+  }
+}
+
+// 트리 노드 펼치기 (lazy)
+async function _fsExpandNode(dirId, pathSegments) {
+  const dir = fsState.dirs.find(d => d.id === dirId);
+  if (!dir || !dir.tree) return;
+  const pathKey = pathSegments.join('/');
+  dir.expanded[pathKey] = !dir.expanded[pathKey];
+  _fsSavePrefs();
+
+  // 펼치는 거면 children 로드
+  if (dir.expanded[pathKey]) {
+    let node = { children: dir.tree };
+    let handle = dir.handle;
+    for (const seg of pathSegments) {
+      const child = (node.children || []).find(c => c.name === seg && c.kind === 'directory');
+      if (!child) return;
+      if (!child.children) {
+        try {
+          const sub = await handle.getDirectoryHandle(seg);
+          child.children = await _fsEnumDir(sub, pathSegments.length);
+          handle = sub;
+        } catch (e) { console.warn('[fs] expand failed:', e); return; }
+      } else {
+        try { handle = await handle.getDirectoryHandle(seg); } catch (_) { return; }
+      }
+      node = child;
+    }
+  }
+  _fsRenderSidebar();
+}
+
+async function _fsRefreshAll() {
+  for (const d of fsState.dirs) {
+    if (d.permGranted) await _fsRefreshDir(d.id);
+  }
+  showToast('Tree refreshed');
+}
+
+// 파일 열기 (탭으로)
+async function _fsOpenFile(dirId, pathSegments) {
+  const dir = fsState.dirs.find(d => d.id === dirId);
+  if (!dir) return;
+  const fileId = 'f_' + dirId + '_' + pathSegments.join('/');
+  const existing = fsState.files.find(f => f.id === fileId);
+  if (existing) {
+    notesState.activeType = 'file';
+    notesState.activeId = fileId;
+    _notesRender();
+    return;
+  }
+  // 권한 확인
+  if (!dir.permGranted) {
+    const ok = await _fsRequestPermission(dirId, 'read');
+    if (!ok) { showToast('읽기 권한 필요'); return; }
+  }
+  try {
+    let handle = dir.handle;
+    for (let i = 0; i < pathSegments.length - 1; i++) {
+      handle = await handle.getDirectoryHandle(pathSegments[i]);
+    }
+    const fileHandle = await handle.getFileHandle(pathSegments[pathSegments.length - 1]);
+    const file = await fileHandle.getFile();
+    const content = await file.text();
+    fsState.files.push({
+      id: fileId, dirId, segments: pathSegments,
+      name: pathSegments[pathSegments.length - 1],
+      content, originalContent: content, isOpen: true,
+    });
+    notesState.activeType = 'file';
+    notesState.activeId = fileId;
+    _notesRender();
+  } catch (e) {
+    showToast('파일 열기 실패: ' + e.message);
+    console.error('[fs] open file error:', e);
+  }
+}
+
+// 파일 저장 (FS write back, 명시 저장)
+async function _fsSaveFile(fileId) {
+  const f = fsState.files.find(f => f.id === fileId);
+  if (!f) return;
+  const dir = fsState.dirs.find(d => d.id === f.dirId);
+  if (!dir || !dir.handle) { showToast('디렉토리 핸들 없음'); return; }
+  // 쓰기 권한 확인
+  const p = await _fsCheckPermission(dir, 'readwrite');
+  if (p !== 'granted') {
+    const ok = await _fsRequestPermission(f.dirId, 'readwrite');
+    if (!ok) { showToast('쓰기 권한 없음'); return; }
+  }
+  try {
+    let handle = dir.handle;
+    for (let i = 0; i < f.segments.length - 1; i++) {
+      handle = await handle.getDirectoryHandle(f.segments[i]);
+    }
+    const fileHandle = await handle.getFileHandle(f.segments[f.segments.length - 1]);
+    const writable = await fileHandle.createWritable();
+    await writable.write(f.content);
+    await writable.close();
+    f.originalContent = f.content;
+    _notesRenderTabs();
+    _notesSetStatus('saved');
+    showToast('Saved: ' + f.name);
+  } catch (e) {
+    showToast('저장 실패: ' + e.message);
+    console.error('[fs] save file error:', e);
+  }
+}
+
+// 파일 탭 닫기 (dirty면 confirm)
+function _fsCloseFile(fileId) {
+  const f = fsState.files.find(f => f.id === fileId);
+  if (!f) return;
+  if (f.content !== f.originalContent) {
+    if (!window.confirm(`Close "${f.name}" without saving? (changes will be lost)`)) return;
+  }
+  fsState.files = fsState.files.filter(x => x.id !== fileId);
+  // 활성이 닫힌 거면 첫 노트로 fallback
+  if (notesState.activeType === 'file' && notesState.activeId === fileId) {
+    if (notesState.notes.length > 0) {
+      notesState.activeType = 'note';
+      notesState.activeId = notesState.notes[0].id;
+    } else {
+      notesState.activeType = 'note';
+      notesState.activeId = null;
+    }
+  }
+  _notesRender();
+}
+
+// 사이드바 렌더 (트리)
+function _fsRenderSidebar() {
+  const sidebar = document.getElementById('notes-sidebar');
+  if (sidebar) sidebar.classList.toggle('hidden', notesState.prefs && notesState.prefs.sidebarOpen === false);
+  const tree = document.getElementById('notes-sidebar-tree');
+  if (!tree) return;
+  if (fsState.dirs.length === 0) {
+    tree.innerHTML = '<div class="notes-sidebar-empty">No directory connected.<br>Click <strong>+</strong> to add.</div>';
+    return;
+  }
+  tree.innerHTML = '';
+  for (const dir of fsState.dirs) {
+    const root = document.createElement('div');
+    root.className = 'notes-tree-item';
+    if (!dir.permGranted) {
+      const warn = document.createElement('div');
+      warn.className = 'notes-tree-perm-warn';
+      warn.textContent = `🔒 ${dir.name} — click to grant permission`;
+      warn.addEventListener('click', () => _fsRequestPermission(dir.id, 'read').then(ok => { if (ok) _fsRefreshDir(dir.id); }));
+      tree.appendChild(warn);
+      continue;
+    }
+    const isExpanded = dir.expanded['__root__'] !== false;   // 기본 펼침
+    root.innerHTML = `<span class="notes-tree-toggle">${isExpanded ? '▾' : '▸'}</span><span class="notes-tree-icon">📁</span><span class="notes-tree-label notes-tree-root-label"></span><span class="notes-tree-root-close" title="Disconnect">×</span>`;
+    root.querySelector('.notes-tree-label').textContent = dir.name;
+    root.querySelector('.notes-tree-toggle').addEventListener('click', (e) => {
+      e.stopPropagation();
+      dir.expanded['__root__'] = !isExpanded;
+      _fsSavePrefs();
+      _fsRenderSidebar();
+    });
+    root.querySelector('.notes-tree-root-close').addEventListener('click', (e) => {
+      e.stopPropagation();
+      _fsRemoveDirectory(dir.id);
+    });
+    root.addEventListener('click', () => {
+      dir.expanded['__root__'] = !isExpanded;
+      _fsSavePrefs();
+      _fsRenderSidebar();
+    });
+    tree.appendChild(root);
+
+    if (isExpanded && dir.tree) {
+      const ul = document.createElement('div');
+      ul.className = 'notes-tree-children';
+      ul.style.paddingLeft = '14px';
+      _fsRenderChildren(ul, dir, dir.tree, []);
+      tree.appendChild(ul);
+    }
+  }
+}
+
+function _fsRenderChildren(container, dir, items, pathSegments) {
+  for (const item of items) {
+    const row = document.createElement('div');
+    row.className = 'notes-tree-item';
+    if (item.kind === 'directory') {
+      const pathKey = [...pathSegments, item.name].join('/');
+      const isExp = !!dir.expanded[pathKey];
+      row.innerHTML = `<span class="notes-tree-toggle">${isExp ? '▾' : '▸'}</span><span class="notes-tree-icon">📁</span><span class="notes-tree-label notes-tree-dir"></span>`;
+      row.querySelector('.notes-tree-label').textContent = item.name;
+      row.addEventListener('click', (e) => {
+        e.stopPropagation();
+        _fsExpandNode(dir.id, [...pathSegments, item.name]);
+      });
+      container.appendChild(row);
+      if (isExp && item.children) {
+        const sub = document.createElement('div');
+        sub.className = 'notes-tree-children';
+        sub.style.paddingLeft = '14px';
+        _fsRenderChildren(sub, dir, item.children, [...pathSegments, item.name]);
+        container.appendChild(sub);
+      }
+    } else if (item.kind === 'file') {
+      const fileId = 'f_' + dir.id + '_' + [...pathSegments, item.name].join('/');
+      const isActive = notesState.activeType === 'file' && notesState.activeId === fileId;
+      if (isActive) row.classList.add('active');
+      row.innerHTML = `<span class="notes-tree-toggle"></span><span class="notes-tree-icon">📄</span><span class="notes-tree-label"></span>`;
+      row.querySelector('.notes-tree-label').textContent = item.name;
+      row.addEventListener('click', (e) => {
+        e.stopPropagation();
+        _fsOpenFile(dir.id, [...pathSegments, item.name]);
+      });
+      container.appendChild(row);
+    }
+  }
+}
+
+// 활성 entity 추상 (note or file)
+function _activeEntity() {
+  if (notesState.activeType === 'file') {
+    return fsState.files.find(f => f.id === notesState.activeId);
+  }
+  return notesState.notes.find(n => n.id === notesState.activeId);
 }
 
 // Send to Notes — 외부 호출 (Monitor 우클릭 등)
@@ -9480,11 +10008,17 @@ window.sendToActiveNote = function (text, label) {
   const editor = document.getElementById('notes-editor');
   if (editor) {
     editor.addEventListener('input', () => {
-      const note = _notesActiveNote();
-      if (!note) return;
-      note.content = editor.value;
-      note.updatedAt = Date.now();
-      _notesScheduleSave();
+      const entity = _notesActiveNote();
+      if (!entity) return;
+      entity.content = editor.value;
+      if (notesState.activeType === 'note') {
+        entity.updatedAt = Date.now();
+        _notesScheduleSave();
+      } else {
+        // v0.18.0 — 파일: 자동 저장 안 함, dirty 마커만 갱신
+        _notesRenderTabs();
+        _notesSetStatus('dirty');
+      }
       // 검색어가 있으면 결과 재계산
       if (notesState.searchTerm) _notesSearch(notesState.searchTerm);
       // v0.17.0 — 라인 넘버 갱신
@@ -9574,8 +10108,89 @@ window.sendToActiveNote = function (text, label) {
   if (searchPrev) searchPrev.addEventListener('click', () => _notesGotoMatch(notesState.searchCursor - 1));
   if (searchNext) searchNext.addEventListener('click', () => _notesGotoMatch(notesState.searchCursor + 1));
 
+  // v0.18.0 — 파일 탐색기 핸들러
+  const fsAddBtn = document.getElementById('notes-fs-add');
+  if (fsAddBtn) fsAddBtn.addEventListener('click', _fsAddDirectory);
+  const fsRefreshBtn = document.getElementById('notes-fs-refresh');
+  if (fsRefreshBtn) fsRefreshBtn.addEventListener('click', _fsRefreshAll);
+  const fsShowAll = document.getElementById('notes-fs-show-all');
+  if (fsShowAll) {
+    fsShowAll.addEventListener('change', () => {
+      fsState.showAllFiles = fsShowAll.checked;
+      _fsSavePrefs();
+      _fsRefreshAll();
+    });
+  }
+  const sidebarToggle = document.getElementById('notes-sidebar-toggle');
+  if (sidebarToggle) {
+    sidebarToggle.addEventListener('click', () => {
+      if (!notesState.prefs) notesState.prefs = {};
+      notesState.prefs.sidebarOpen = notesState.prefs.sidebarOpen === false;
+      _notesScheduleSave();
+      _fsRenderSidebar();
+    });
+  }
+
+  // v0.18.0 — 사이드바 폭 drag-resize
+  const sidebarEl = document.getElementById('notes-sidebar');
+  const resizer = document.getElementById('notes-sidebar-resizer');
+  if (sidebarEl && resizer) {
+    let dragging = false;
+    let startX = 0;
+    let startWidth = 0;
+    resizer.addEventListener('mousedown', (e) => {
+      dragging = true;
+      startX = e.clientX;
+      startWidth = sidebarEl.offsetWidth;
+      resizer.classList.add('dragging');
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'col-resize';
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      const w = Math.max(150, Math.min(600, startWidth + dx));
+      sidebarEl.style.width = w + 'px';
+    });
+    document.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      resizer.classList.remove('dragging');
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      // 영속화
+      if (!notesState.prefs) notesState.prefs = {};
+      notesState.prefs.sidebarWidth = sidebarEl.offsetWidth;
+      _notesScheduleSave();
+    });
+  }
+  const saveBtn = document.getElementById('notes-save');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', () => {
+      if (notesState.activeType === 'file') _fsSaveFile(notesState.activeId);
+    });
+  }
+  // Cmd/Ctrl+S 단축키 — Notes 탭 활성 시 항상 preventDefault (브라우저 페이지 저장 차단)
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      const notesActive = document.getElementById('notes') && document.getElementById('notes').classList.contains('active');
+      if (!notesActive) return;
+      e.preventDefault();
+      if (notesState.activeType === 'file') {
+        _fsSaveFile(notesState.activeId);
+      } else {
+        // 노트는 자동 저장 — 명시 저장 액션 없음, 안내 토스트만
+        _notesSaveNow();
+        showToast('노트는 자동 저장됨 (chrome.storage)');
+      }
+    }
+  });
+
   // 초기 로드
   _notesLoad();
+  // FS 로드는 노트 로드 후 (사이드바 적용 안정성)
+  setTimeout(() => { _fsLoad().catch(e => console.warn('[fs] load failed:', e)); }, 100);
 })();
 
 

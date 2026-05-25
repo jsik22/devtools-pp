@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>DevTools++ — Directory</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 24px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", sans-serif;
+  background: #fafafa;
+  color: #222;
+}
+h2 { margin: 0 0 8px; font-size: 16px; color: #1A73E8; }
+p { margin: 0 0 16px; font-size: 13px; color: #555; line-height: 1.5; }
+button {
+  background: #1A73E8;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  font-weight: 600;
+}
+button:hover { background: #1557b0; }
+button:disabled { background: #ccc; cursor: not-allowed; }
+#msg { margin-top: 16px; font-size: 12.5px; }
+#msg.ok { color: #2e7d32; }
+#msg.err { color: #c62828; }
+.hint { font-size: 11.5px; color: #888; margin-top: 12px; }
+</style>
+</head>
+<body>
+<h2 id="title">Connect Directory</h2>
+<p id="desc">분석할 디렉토리를 선택하세요. DevTools++ Notes 탭의 파일 탐색기에서 사용됩니다.</p>
+<button id="action-btn">📁 Choose Directory</button>
+<div id="msg"></div>
+<div class="hint">(DevTools 패널이 iframe 컨텍스트라 File System Access API를 직접 호출할 수 없어 popup으로 우회합니다.)</div>
+<script src="fs-picker.js"></script>
+</body>
+</html>

@@ -411,31 +411,53 @@
 
     <!-- Notes 탭 (v0.16.0) -->
     <section id="notes" class="tab-content">
-      <div class="notes-tabs-bar" id="notes-tabs-bar">
-        <div class="notes-tabs" id="notes-tabs"></div>
-        <button id="notes-tab-add" class="btn btn-xs btn-icon" title="Add new note">+</button>
-      </div>
-      <div class="notes-toolbar">
-        <input type="text" id="notes-search-input" class="filter-input notes-search" placeholder="Search in active note…" autocomplete="off">
-        <button id="notes-search-prev" class="btn btn-xs btn-icon" title="Previous match (Shift+Enter)">↑</button>
-        <button id="notes-search-next" class="btn btn-xs btn-icon" title="Next match (Enter)">↓</button>
-        <span id="notes-search-stat" class="notes-search-stat"></span>
-        <span class="notes-spacer"></span>
-        <div class="notes-font-ctrl">
-          <span id="notes-font-size" class="notes-font-display" title="Current font size">13px</span>
-          <button id="notes-font-dec" class="btn btn-xs btn-icon" title="Decrease font size">-</button>
-          <button id="notes-font-inc" class="btn btn-xs btn-icon" title="Increase font size">+</button>
+      <div class="notes-layout">
+        <!-- v0.18.0 — 파일 탐색기 사이드바 -->
+        <aside class="notes-sidebar" id="notes-sidebar">
+          <div class="notes-sidebar-header">
+            <span class="notes-sidebar-title">Files</span>
+            <button id="notes-fs-add" class="btn btn-xs btn-icon" title="Add directory (File System Access)">+</button>
+            <button id="notes-fs-refresh" class="btn btn-xs btn-icon" title="Refresh all trees">↻</button>
+          </div>
+          <div class="notes-sidebar-tree" id="notes-sidebar-tree">
+            <div class="notes-sidebar-empty">No directory connected.<br>Click <strong>+</strong> to add.</div>
+          </div>
+          <div class="notes-sidebar-footer">
+            <label class="notes-toggle small"><input type="checkbox" id="notes-fs-show-all"> show all files</label>
+          </div>
+        </aside>
+        <div class="notes-sidebar-resizer" id="notes-sidebar-resizer" title="Drag to resize sidebar"></div>
+
+        <div class="notes-main">
+          <div class="notes-tabs-bar" id="notes-tabs-bar">
+            <button id="notes-sidebar-toggle" class="btn btn-xs btn-icon" title="Toggle sidebar">📁</button>
+            <div class="notes-tabs" id="notes-tabs"></div>
+            <button id="notes-tab-add" class="btn btn-xs btn-icon" title="Add new note">+</button>
+          </div>
+          <div class="notes-toolbar">
+            <input type="text" id="notes-search-input" class="filter-input notes-search" placeholder="Search in active note…" autocomplete="off">
+            <button id="notes-search-prev" class="btn btn-xs btn-icon" title="Previous match (Shift+Enter)">↑</button>
+            <button id="notes-search-next" class="btn btn-xs btn-icon" title="Next match (Enter)">↓</button>
+            <span id="notes-search-stat" class="notes-search-stat"></span>
+            <span class="notes-spacer"></span>
+            <div class="notes-font-ctrl">
+              <span id="notes-font-size" class="notes-font-display" title="Current font size">13px</span>
+              <button id="notes-font-dec" class="btn btn-xs btn-icon" title="Decrease font size">-</button>
+              <button id="notes-font-inc" class="btn btn-xs btn-icon" title="Increase font size">+</button>
+            </div>
+            <label class="notes-toggle"><input type="checkbox" id="notes-linenum"> line #</label>
+            <label class="notes-toggle"><input type="checkbox" id="notes-wrap" checked> wrap</label>
+            <button id="notes-save" class="btn btn-xs" style="display:none" title="Save file (Cmd/Ctrl+S)">Save</button>
+            <button id="notes-download" class="btn btn-xs" title="Download active note as .txt">Download</button>
+            <input type="file" id="notes-import-file" accept=".txt,.md,.json,.xml" hidden>
+            <button id="notes-import" class="btn btn-xs" title="Import .txt / .md / .json / .xml as new note">Import</button>
+            <span id="notes-status" class="notes-status">saved</span>
+          </div>
+          <div class="notes-editor-wrap">
+            <div id="notes-linenum-gutter" class="notes-linenum-gutter hidden"></div>
+            <textarea id="notes-editor" class="notes-editor" spellcheck="false"></textarea>
+          </div>
         </div>
-        <label class="notes-toggle"><input type="checkbox" id="notes-linenum"> line #</label>
-        <label class="notes-toggle"><input type="checkbox" id="notes-wrap" checked> wrap</label>
-        <button id="notes-download" class="btn btn-xs" title="Download active note as .txt">Download</button>
-        <input type="file" id="notes-import-file" accept=".txt,.md,.json,.xml" hidden>
-        <button id="notes-import" class="btn btn-xs" title="Import .txt / .md / .json / .xml as new note">Import</button>
-        <span id="notes-status" class="notes-status">saved</span>
-      </div>
-      <div class="notes-editor-wrap">
-        <div id="notes-linenum-gutter" class="notes-linenum-gutter hidden"></div>
-        <textarea id="notes-editor" class="notes-editor" spellcheck="false"></textarea>
       </div>
     </section>
 

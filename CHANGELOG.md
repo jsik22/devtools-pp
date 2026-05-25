@@ -4,6 +4,63 @@ DevTools++ 버전별 변경 이력 (최신순). 기능 개요는 [README.md](REA
 
 ---
 
+### v0.17.0 변경사항 (2026-05-25)
+Notes 탭 — 경량 에디터 기능 확장: 폰트 크기 조절 / 라인 넘버.
+
+#### 폰트 크기 조절
+- toolbar 우측에 `A- / 13px / A+` 컨트롤 신설
+- 범위 `10–24px`, step 1px (default 13px)
+- chrome.storage에 영속화 (모든 노트 공통, DevTools 재오픈 후 복원)
+
+#### 라인 넘버 표시
+- toolbar `☑ line #` 토글로 ON/OFF
+- 좌측 gutter에 논리 라인 번호 (`\n` 기준)
+- 폰트 크기 변경 시 gutter도 동일 크기로 동기
+- editor scroll ↔ gutter scrollTop 실시간 동기
+- 라인 넘버 ON 시 wrap 자동 OFF + wrap 체크박스 비활성 (시각/논리 라인 어긋남 방지)
+- chrome.storage 영속화
+
+#### 메모
+- "경량 에디터 지향" 원칙 — syntax highlighting / 다중 커서 / 코드 폴딩 등은 의도적으로 미포함. textarea 기본 동작 유지
+
+---
+
+### v0.16.0 변경사항 (2026-05-25)
+Notes 탭 신설 — 분석 작업 중 외부 노트앱 전환 없이 텍스트 작업(페이로드 수정·임시
+메모·복붙 등)을 패널 내에서 처리.
+
+#### 새 메인 탭 "Notes"
+- 기존 Monitor / JS Trace / Intercept / PoC 옆 **5번째** 1급 탭
+- 다중 노트 탭 — `+` 추가 / 더블클릭 이름 변경 / `X` 삭제
+- plain text + 모노스페이스 폰트 (페이로드/JSON/XML 가독성)
+- Tab 키: 들여쓰기 2 spaces (focus 이동 방지)
+- wrap on/off 토글
+
+#### 자동 저장 + 영속성
+- `chrome.storage.local`에 1초 디바운스 자동 저장
+- 페이지 reload·DevTools 재오픈 후 복원 (활성 노트 ID 포함)
+- 우하단 status: `editing…` / `saved <시각>` 시각화
+
+#### 자체 검색
+- 활성 노트 내 검색 (Ctrl+F는 브라우저가 잡으므로 별도 박스)
+- prev/next 버튼 + Enter/Shift+Enter 단축키
+- 매치 위치 자동 스크롤 + 텍스트 선택
+
+#### Download / Import
+- Download: 활성 노트를 `.txt`로 다운로드
+- Import: `.txt`/`.md`/`.json`/`.xml` 파일을 새 노트로 가져옴 (파일명이 노트 이름)
+
+#### Send to Notes — Monitor 통합
+- Monitor detail 영역(Message/Initiator/Detection/Auth/JS Context/Description) 우클릭:
+  - 선택 텍스트 → Send selection
+  - 활성 detail 전체 → Send entire pane
+  - 선택 요청의 request line (METHOD + URL)
+- Monitor 행 우클릭:
+  - URL만 / request line + headers / 전체 req+resp 송신
+- 활성 노트에 자동 append (timestamp + label 헤더 포함)
+
+---
+
 ### v0.15.0 변경사항 (2026-05-25)
 PoC 검증 결과 수집 탭 신설 — 콘솔에서 발사한 PoC 결과를 패널에 자동 누적·표시.
 분석 사이클(콘솔 paste → 결과 회수 → 리포트 갱신)의 마찰을 줄이고, 다수 TP의

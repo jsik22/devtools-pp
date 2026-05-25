@@ -3301,24 +3301,32 @@ mark.network-search-mark.current {
 .poc-tab-badge.hidden { display: none; }
 
 #poc.tab-content { padding: 0; }
+.poc-helper {
+  padding: 6px 12px;
+  font-size: 11.5px;
+  color: #666;
+  background: #fafafa;
+  border-bottom: 1px solid #e0e0e0;
+}
 #poc .toolbar {
-  border-bottom: 1px solid #3e3e42;
+  border-bottom: 1px solid #e0e0e0;
   padding: 6px 10px;
   display: flex;
   align-items: center;
   gap: 8px;
+  background: #f3f3f3;
 }
 .poc-stat-spacer { flex: 1; }
 .poc-filter {
-  background: #2d2d30;
-  color: #d4d4d4;
-  border: 1px solid #3e3e42;
+  background: #ffffff;
+  color: #333;
+  border: 1px solid #c0c0c0;
   border-radius: 3px;
   padding: 3px 6px;
   font-size: 12px;
 }
-.poc-filter-check { font-size: 12px; color: #d4d4d4; display: inline-flex; align-items: center; gap: 4px; }
-.poc-stats { font-size: 12px; color: #969696; }
+.poc-filter-check { font-size: 12px; color: #333; display: inline-flex; align-items: center; gap: 4px; }
+.poc-stats { font-size: 12px; color: #666; }
 
 .poc-split {
   display: flex;
@@ -3329,25 +3337,26 @@ mark.network-search-mark.current {
   width: 380px;
   min-width: 240px;
   overflow-y: auto;
-  background: #1e1e1e;
+  background: #ffffff;
+  border-right: 1px solid #e0e0e0;
 }
 .poc-detail {
   flex: 1;
   overflow-y: auto;
   padding: 12px 16px;
-  background: #252526;
-  color: #d4d4d4;
+  background: #fafafa;
+  color: #333;
   font-size: 12.5px;
 }
 
 .poc-item {
   padding: 8px 12px;
-  border-bottom: 1px solid #2d2d30;
+  border-bottom: 1px solid #f0f0f0;
   cursor: pointer;
   font-size: 12.5px;
 }
-.poc-item:hover { background: #2d2d30; }
-.poc-item.selected { background: #094771; }
+.poc-item:hover { background: #f3f3f3; }
+.poc-item.selected { background: #E8F0FE; border-left: 3px solid #1A73E8; padding-left: 9px; }
 .poc-item.analyzed { opacity: 0.55; }
 .poc-item-head {
   display: flex;
@@ -3358,10 +3367,10 @@ mark.network-search-mark.current {
 .poc-tp {
   font-family: 'SF Mono', Menlo, Consolas, monospace;
   font-weight: 600;
-  color: #4ec9b0;
+  color: #1A73E8;
 }
-.poc-target { color: #969696; font-size: 11px; }
-.poc-time { color: #707070; font-size: 11px; margin-left: auto; }
+.poc-target { color: #666; font-size: 11px; }
+.poc-time { color: #999; font-size: 11px; margin-left: auto; }
 .poc-verdict-badge {
   display: inline-block;
   padding: 1px 6px;
@@ -3370,30 +3379,30 @@ mark.network-search-mark.current {
   font-weight: 700;
   letter-spacing: 0.02em;
 }
-.poc-verdict-VERIFIED { background: #5f2120; color: #ffb4ab; }
-.poc-verdict-INVALID { background: #1b3b1c; color: #a5d6a7; }
-.poc-verdict-UNCLEAR { background: #3a2c00; color: #ffd54f; }
-.poc-verdict-OTHER { background: #2a3a4a; color: #90caf9; }
+.poc-verdict-VERIFIED { background: #fdecea; color: #c62828; }
+.poc-verdict-INVALID { background: #e8f5e9; color: #2e7d32; }
+.poc-verdict-UNCLEAR { background: #fff8e1; color: #ef6c00; }
+.poc-verdict-OTHER { background: #e3f2fd; color: #1565c0; }
 .poc-item-meta {
   font-size: 11px;
-  color: #969696;
+  color: #666;
 }
 .poc-item-check {
   font-size: 11px;
-  color: #4caf50;
+  color: #2e7d32;
   margin-left: 4px;
 }
 
 .poc-empty {
   padding: 24px 16px;
-  color: #707070;
+  color: #999;
   font-size: 12.5px;
   text-align: center;
 }
 
 .poc-detail h3 {
   margin: 0 0 8px;
-  color: #d4d4d4;
+  color: #333;
   font-size: 14px;
   display: flex;
   align-items: center;
@@ -3407,20 +3416,23 @@ mark.network-search-mark.current {
 .poc-detail-actions .btn { font-size: 11.5px; padding: 4px 10px; }
 .poc-detail-section {
   margin: 10px 0;
-  border: 1px solid #3e3e42;
+  border: 1px solid #e0e0e0;
   border-radius: 3px;
+  background: #ffffff;
 }
 .poc-detail-section h4 {
   margin: 0;
   padding: 5px 10px;
-  background: #2d2d30;
+  background: #f3f3f3;
   font-size: 11.5px;
-  color: #cccccc;
+  color: #333;
   cursor: pointer;
   user-select: none;
+  border-bottom: 1px solid #e0e0e0;
 }
-.poc-detail-section h4::before { content: '▾ '; color: #969696; }
+.poc-detail-section h4::before { content: '▾ '; color: #666; }
 .poc-detail-section.collapsed h4::before { content: '▸ '; }
+.poc-detail-section.collapsed h4 { border-bottom: none; }
 .poc-detail-section.collapsed .poc-detail-section-body { display: none; }
 .poc-detail-section-body {
   padding: 8px 12px;
@@ -3428,27 +3440,245 @@ mark.network-search-mark.current {
   font-size: 11.5px;
   white-space: pre-wrap;
   word-break: break-all;
-  color: #cccccc;
+  color: #333;
   max-height: 360px;
   overflow-y: auto;
+  background: #ffffff;
 }
 .poc-detail-section-body.kv { font-family: inherit; }
 .poc-detail-section-body .k {
-  color: #9cdcfe;
+  color: #1A73E8;
   display: inline-block;
   min-width: 120px;
 }
 .poc-detail-section-body .v {
-  color: #ce9178;
+  color: #c62828;
 }
 .poc-detail-notes {
   width: 100%;
-  background: #1e1e1e;
-  color: #d4d4d4;
-  border: 1px solid #3e3e42;
+  background: #ffffff;
+  color: #333;
+  border: 1px solid #c0c0c0;
   padding: 6px 8px;
   font-size: 12px;
   border-radius: 3px;
   min-height: 60px;
   font-family: inherit;
+}
+
+/* ============================================================
+ * Notes 탭 (v0.16.0)
+ * 분석 메모장 — 다중 노트 탭 + 큰 textarea + 검색 + 자동 저장
+ * ============================================================ */
+
+#notes.tab-content { padding: 0; }
+#notes.tab-content.active { display: flex; flex-direction: column; height: 100%; }
+
+.notes-helper {
+  padding: 6px 12px;
+  font-size: 11.5px;
+  color: #666;
+  background: #fafafa;
+  border-bottom: 1px solid #e0e0e0;
+}
+.notes-tabs-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #f3f3f3;
+  border-bottom: 1px solid #e0e0e0;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.notes-tabs {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.notes-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 12px;
+  background: #ffffff;
+  border: 1px solid #d4d4d4;
+  border-radius: 3px;
+  color: #333;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  max-width: 200px;
+}
+.notes-tab:hover { background: #e8e8e8; }
+.notes-tab.active { background: #E8F0FE; border-color: #1A73E8; color: #1A73E8; }
+.notes-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notes-tab-name[contenteditable="true"] {
+  background: #ffffff;
+  outline: 1px solid #1A73E8;
+  padding: 0 2px;
+}
+.notes-tab-close {
+  font-size: 14px;
+  line-height: 12px;
+  color: #999;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+.notes-tab-close:hover { background: #fdecea; color: #c62828; }
+
+#notes-tab-add {
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.notes-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #fafafa;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+.notes-search {
+  width: 200px;
+  font-size: 12px;
+}
+.notes-search-stat {
+  font-size: 11.5px;
+  color: #666;
+  min-width: 60px;
+}
+.notes-spacer { flex: 1; }
+.notes-toggle {
+  font-size: 11.5px;
+  color: #333;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+}
+.notes-status {
+  font-size: 11px;
+  color: #666;
+  font-style: italic;
+  min-width: 100px;
+  text-align: right;
+}
+.notes-status.dirty { color: #b88a00; font-style: normal; }
+.notes-status.saved { color: #2e7d32; }
+
+.notes-editor-wrap {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  background: #ffffff;
+  position: relative;
+}
+.notes-editor {
+  flex: 1;
+  height: 100%;
+  background: #ffffff;
+  color: #1a1a1a;
+  border: none;
+  outline: none;
+  padding: 12px 16px;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.notes-editor.nowrap {
+  white-space: pre;
+  overflow-x: auto;
+  word-break: normal;
+}
+
+/* v0.17.0 — font size 컨트롤 */
+.notes-font-ctrl {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 4px;
+}
+.notes-font-display {
+  font-size: 11px;
+  color: #666;
+  min-width: 36px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* v0.17.0 — line number gutter */
+.notes-linenum-gutter {
+  background: #f7f7f7;
+  color: #999;
+  border-right: 1px solid #e0e0e0;
+  padding: 12px 8px 12px 10px;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  text-align: right;
+  user-select: none;
+  overflow: hidden;
+  white-space: pre;
+  min-width: 40px;
+  font-variant-numeric: tabular-nums;
+}
+.notes-linenum-gutter.hidden { display: none; }
+.notes-editor::placeholder {
+  color: #999;
+  font-style: italic;
+}
+
+/* Send-to-Notes 컨텍스트 메뉴 (다른 컨텍스트 메뉴와 공유 가능) */
+.notes-context-menu {
+  position: fixed;
+  background: #ffffff;
+  border: 1px solid #d4d4d4;
+  border-radius: 3px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  padding: 4px 0;
+  z-index: 10000;
+  min-width: 180px;
+  font-size: 12.5px;
+}
+.notes-context-menu .ctx-item {
+  padding: 6px 14px;
+  cursor: pointer;
+  color: #333;
+}
+.notes-context-menu .ctx-item:hover {
+  background: #E8F0FE;
+  color: #1A73E8;
+}
+.notes-context-menu .ctx-sep {
+  height: 1px;
+  background: #e0e0e0;
+  margin: 4px 0;
+}
+.notes-context-menu .ctx-hint {
+  padding: 4px 14px;
+  font-size: 11px;
+  color: #999;
+  font-style: italic;
+}
+
+/* 검색 매치 강조 — textarea는 직접 highlight 어렵지만,
+   selectionStart/End로 스크롤·선택만 처리 */
+.notes-editor.search-match {
+  outline: 1px solid #ffc107;
+  outline-offset: -1px;
 }

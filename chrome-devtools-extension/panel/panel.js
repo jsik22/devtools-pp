@@ -9067,3 +9067,663 @@ function _pocBindControls() {
     _pocPollTimer = setInterval(_pocPollOnce, POC_POLL_INTERVAL_MS);
   }
 })();
+
+
+// ============================================================
+// Notes 탭 (v0.16.0) — 분석 메모장
+// ------------------------------------------------------------
+// 다중 노트 탭 + 자동 저장 (chrome.storage.local, 1초 디바운스) + 검색 +
+// Download/Import + Send to Notes (Monitor 우클릭 통합).
+// 페이지 reload·DevTools 재오픈 후 복원.
+// ============================================================
+
+const NOTES_STORAGE_KEY = 'devtoolsPpNotes';
+const NOTES_SAVE_DEBOUNCE_MS = 1000;
+// v0.17.0 — 에디터 prefs 범위
+const NOTES_FONT_MIN = 10;
+const NOTES_FONT_MAX = 24;
+const NOTES_FONT_DEFAULT = 13;
+
+const notesState = {
+  notes: [],            // [{id, name, content, createdAt, updatedAt}]
+  activeId: null,
+  searchTerm: '',
+  searchMatches: [],    // [{start, end}]
+  searchCursor: -1,
+  saveTimer: null,
+  loaded: false,
+  prefs: { fontSize: NOTES_FONT_DEFAULT, lineNumbers: false },   // v0.17.0
+};
+
+function _notesNewId() {
+  return 'n_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+}
+
+function _notesDefault() {
+  return {
+    id: _notesNewId(),
+    name: 'Note 1',
+    content: '',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
+function _notesLoad() {
+  safeStorageGet([NOTES_STORAGE_KEY], (result) => {
+    const stored = result && result[NOTES_STORAGE_KEY];
+    if (stored && Array.isArray(stored.notes) && stored.notes.length > 0) {
+      notesState.notes = stored.notes;
+      notesState.activeId = stored.activeId && stored.notes.find(n => n.id === stored.activeId)
+        ? stored.activeId
+        : stored.notes[0].id;
+      // 한글 기본 이름 migration: "노트 N" → "Note N" (사용자가 변경한 이름은 건드리지 않음)
+      let migrated = false;
+      for (const n of notesState.notes) {
+        if (typeof n.name === 'string' && /^노트\s*\d+$/.test(n.name)) {
+          n.name = n.name.replace(/^노트\s*/, 'Note ');
+          migrated = true;
+        }
+      }
+      if (migrated) _notesSaveNow();
+    } else {
+      // 첫 실행 — 빈 노트 하나
+      notesState.notes = [_notesDefault()];
+      notesState.activeId = notesState.notes[0].id;
+    }
+    // v0.17.0 — prefs 복원 (없으면 기본값 유지)
+    if (stored && stored.prefs && typeof stored.prefs === 'object') {
+      const fs = Number(stored.prefs.fontSize);
+      if (fs >= NOTES_FONT_MIN && fs <= NOTES_FONT_MAX) notesState.prefs.fontSize = fs;
+      if (typeof stored.prefs.lineNumbers === 'boolean') notesState.prefs.lineNumbers = stored.prefs.lineNumbers;
+    }
+    notesState.loaded = true;
+    _notesRender();
+    _notesApplyPrefs();
+  });
+}
+
+function _notesSaveNow() {
+  if (!notesState.loaded) return;
+  const payload = {
+    notes: notesState.notes,
+    activeId: notesState.activeId,
+    prefs: notesState.prefs,
+    savedAt: Date.now(),
+  };
+  safeStorageSet({ [NOTES_STORAGE_KEY]: payload }, () => {
+    _notesSetStatus('saved');
+  });
+}
+
+function _notesScheduleSave() {
+  if (!notesState.loaded) return;
+  _notesSetStatus('dirty');
+  if (notesState.saveTimer) clearTimeout(notesState.saveTimer);
+  notesState.saveTimer = setTimeout(() => {
+    notesState.saveTimer = null;
+    _notesSaveNow();
+  }, NOTES_SAVE_DEBOUNCE_MS);
+}
+
+function _notesSetStatus(state) {
+  const el = document.getElementById('notes-status');
+  if (!el) return;
+  el.classList.remove('saved', 'dirty');
+  if (state === 'saved') {
+    el.textContent = 'saved ' + new Date().toLocaleTimeString();
+    el.classList.add('saved');
+  } else if (state === 'dirty') {
+    el.textContent = 'editing…';
+    el.classList.add('dirty');
+  } else {
+    el.textContent = state;
+  }
+}
+
+function _notesActiveNote() {
+  return notesState.notes.find(n => n.id === notesState.activeId);
+}
+
+function _notesRender() {
+  _notesRenderTabs();
+  _notesRenderEditor();
+}
+
+function _notesRenderTabs() {
+  const container = document.getElementById('notes-tabs');
+  if (!container) return;
+  container.innerHTML = '';
+  for (const n of notesState.notes) {
+    const tab = document.createElement('div');
+    tab.className = 'notes-tab' + (n.id === notesState.activeId ? ' active' : '');
+    tab.dataset.id = n.id;
+    tab.title = '더블클릭으로 이름 변경 · X로 삭제';
+
+    const name = document.createElement('span');
+    name.className = 'notes-tab-name';
+    name.textContent = n.name || '(unnamed)';
+    name.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      name.setAttribute('contenteditable', 'true');
+      name.focus();
+      const range = document.createRange();
+      range.selectNodeContents(name);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    });
+    name.addEventListener('blur', () => {
+      name.removeAttribute('contenteditable');
+      const newName = name.textContent.trim() || '(unnamed)';
+      if (newName !== n.name) {
+        n.name = newName;
+        n.updatedAt = Date.now();
+        _notesScheduleSave();
+      }
+    });
+    name.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); name.blur(); }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        name.textContent = n.name;
+        name.blur();
+      }
+    });
+    tab.appendChild(name);
+
+    const closeBtn = document.createElement('span');
+    closeBtn.className = 'notes-tab-close';
+    closeBtn.textContent = '×';
+    closeBtn.title = '이 노트 삭제';
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _notesDelete(n.id);
+    });
+    tab.appendChild(closeBtn);
+
+    tab.addEventListener('click', () => _notesSelect(n.id));
+    container.appendChild(tab);
+  }
+}
+
+function _notesRenderEditor() {
+  const editor = document.getElementById('notes-editor');
+  if (!editor) return;
+  const note = _notesActiveNote();
+  if (!note) {
+    editor.value = '';
+    editor.disabled = true;
+    _notesRenderLineNumbers();
+    return;
+  }
+  editor.disabled = false;
+  if (editor.value !== note.content) {
+    editor.value = note.content;
+  }
+  _notesRenderLineNumbers();
+}
+
+function _notesSelect(id) {
+  if (notesState.activeId === id) return;
+  notesState.activeId = id;
+  _notesRender();
+  _notesScheduleSave();
+}
+
+function _notesAdd() {
+  const newNote = _notesDefault();
+  newNote.name = 'Note ' + (notesState.notes.length + 1);
+  notesState.notes.push(newNote);
+  notesState.activeId = newNote.id;
+  _notesRender();
+  _notesScheduleSave();
+  // 새 노트 이름 즉시 편집 가능 상태로
+  setTimeout(() => {
+    const tab = document.querySelector(`.notes-tab[data-id="${newNote.id}"] .notes-tab-name`);
+    if (tab) tab.dispatchEvent(new MouseEvent('dblclick'));
+  }, 50);
+}
+
+function _notesDelete(id) {
+  const note = notesState.notes.find(n => n.id === id);
+  if (!note) return;
+  const hasContent = note.content && note.content.length > 0;
+  const confirmMsg = hasContent
+    ? `Delete note "${note.name}"? (${note.content.length} chars lost, cannot undo)`
+    : `Delete note "${note.name}"?`;
+  if (!window.confirm(confirmMsg)) return;
+  notesState.notes = notesState.notes.filter(n => n.id !== id);
+  if (notesState.notes.length === 0) {
+    // 마지막 노트면 빈 새 노트 자동 생성
+    notesState.notes = [_notesDefault()];
+  }
+  if (notesState.activeId === id) {
+    notesState.activeId = notesState.notes[0].id;
+  }
+  _notesRender();
+  _notesSaveNow();
+}
+
+function _notesDownload() {
+  const note = _notesActiveNote();
+  if (!note) return;
+  const safe = String(note.name).replace(/[^a-zA-Z0-9가-힣._ -]/g, '_').trim() || 'note';
+  const blob = new Blob([note.content || ''], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = safe + '.txt';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function _notesImport(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const content = String(e.target.result || '');
+    const newNote = _notesDefault();
+    newNote.name = file.name.replace(/\.[^.]+$/, '');
+    newNote.content = content;
+    notesState.notes.push(newNote);
+    notesState.activeId = newNote.id;
+    _notesRender();
+    _notesSaveNow();
+    showToast('Imported: ' + file.name);
+  };
+  reader.readAsText(file);
+}
+
+// 검색 — textarea에 직접 highlight 불가하지만 selectionStart/End로 점프
+function _notesSearch(term) {
+  const note = _notesActiveNote();
+  notesState.searchTerm = term;
+  notesState.searchMatches = [];
+  notesState.searchCursor = -1;
+  if (!term || !note || !note.content) {
+    _notesUpdateSearchStat();
+    return;
+  }
+  const lower = note.content.toLowerCase();
+  const t = term.toLowerCase();
+  let idx = 0;
+  while (true) {
+    const pos = lower.indexOf(t, idx);
+    if (pos < 0) break;
+    notesState.searchMatches.push({ start: pos, end: pos + term.length });
+    idx = pos + Math.max(1, term.length);
+    if (notesState.searchMatches.length > 10000) break;
+  }
+  if (notesState.searchMatches.length > 0) {
+    notesState.searchCursor = 0;
+    _notesGotoMatch(0);
+  }
+  _notesUpdateSearchStat();
+}
+
+function _notesGotoMatch(i) {
+  if (notesState.searchMatches.length === 0) return;
+  const total = notesState.searchMatches.length;
+  if (i < 0) i = total - 1;
+  if (i >= total) i = 0;
+  notesState.searchCursor = i;
+  const m = notesState.searchMatches[i];
+  const editor = document.getElementById('notes-editor');
+  if (!editor) return;
+  editor.focus();
+  editor.setSelectionRange(m.start, m.end);
+  // 스크롤 위치 조정 — selectionStart 위치 근처로
+  const line = editor.value.slice(0, m.start).split('\n').length;
+  const totalLines = editor.value.split('\n').length;
+  const ratio = totalLines > 0 ? line / totalLines : 0;
+  editor.scrollTop = ratio * (editor.scrollHeight - editor.clientHeight);
+  _notesUpdateSearchStat();
+}
+
+function _notesUpdateSearchStat() {
+  const stat = document.getElementById('notes-search-stat');
+  if (!stat) return;
+  if (!notesState.searchTerm) {
+    stat.textContent = '';
+  } else if (notesState.searchMatches.length === 0) {
+    stat.textContent = '0 / 0';
+  } else {
+    stat.textContent = (notesState.searchCursor + 1) + ' / ' + notesState.searchMatches.length;
+  }
+}
+
+// ============================================================
+// v0.17.0 — 에디터 prefs (font size / line numbers)
+// ============================================================
+
+function _notesApplyPrefs() {
+  const editor = document.getElementById('notes-editor');
+  if (!editor) return;
+  const prefs = notesState.prefs || { fontSize: NOTES_FONT_DEFAULT, lineNumbers: false };
+  const size = Math.min(NOTES_FONT_MAX, Math.max(NOTES_FONT_MIN, prefs.fontSize || NOTES_FONT_DEFAULT));
+  editor.style.fontSize = size + 'px';
+  const display = document.getElementById('notes-font-size');
+  if (display) display.textContent = size + 'px';
+
+  const gutter = document.getElementById('notes-linenum-gutter');
+  const lineCheckbox = document.getElementById('notes-linenum');
+  const wrapCheckbox = document.getElementById('notes-wrap');
+  const enabled = !!prefs.lineNumbers;
+  if (lineCheckbox) lineCheckbox.checked = enabled;
+  if (gutter) {
+    gutter.classList.toggle('hidden', !enabled);
+    gutter.style.fontSize = size + 'px';
+  }
+  // 라인넘버 ON 시 wrap 자동 OFF + 비활성화 (시각·논리 라인 어긋남 방지)
+  if (enabled) {
+    if (wrapCheckbox) {
+      wrapCheckbox.checked = false;
+      wrapCheckbox.disabled = true;
+    }
+    editor.classList.add('nowrap');
+  } else if (wrapCheckbox) {
+    wrapCheckbox.disabled = false;
+    editor.classList.toggle('nowrap', !wrapCheckbox.checked);
+  }
+  _notesRenderLineNumbers();
+}
+
+function _notesRenderLineNumbers() {
+  const editor = document.getElementById('notes-editor');
+  const gutter = document.getElementById('notes-linenum-gutter');
+  if (!editor || !gutter) return;
+  if (gutter.classList.contains('hidden')) return;
+  const totalLines = (editor.value.match(/\n/g) || []).length + 1;
+  const out = [];
+  for (let i = 1; i <= totalLines; i++) out.push(i);
+  gutter.textContent = out.join('\n');
+  gutter.scrollTop = editor.scrollTop;
+}
+
+function _notesAdjustFont(delta) {
+  if (!notesState.prefs) notesState.prefs = { fontSize: NOTES_FONT_DEFAULT, lineNumbers: false };
+  const cur = notesState.prefs.fontSize || NOTES_FONT_DEFAULT;
+  const next = Math.min(NOTES_FONT_MAX, Math.max(NOTES_FONT_MIN, cur + delta));
+  if (next === cur) return;
+  notesState.prefs.fontSize = next;
+  _notesApplyPrefs();
+  _notesScheduleSave();
+}
+
+// Send to Notes — 외부 호출 (Monitor 우클릭 등)
+window.sendToActiveNote = function (text, label) {
+  if (!notesState.loaded) {
+    // 아직 로드 안 됨 — 재시도
+    setTimeout(() => window.sendToActiveNote(text, label), 200);
+    return;
+  }
+  const note = _notesActiveNote();
+  if (!note) return;
+  const ts = new Date().toLocaleTimeString();
+  const header = label ? `\n\n--- ${label} (${ts}) ---\n` : `\n\n--- (${ts}) ---\n`;
+  note.content = (note.content || '') + header + (text || '') + '\n';
+  note.updatedAt = Date.now();
+  _notesRenderEditor();
+  // 활성 textarea 스크롤 끝으로
+  const editor = document.getElementById('notes-editor');
+  if (editor) editor.scrollTop = editor.scrollHeight;
+  _notesScheduleSave();
+  showToast('Sent to Notes: ' + (label || 'append'));
+};
+
+// 컨트롤 바인딩
+(function _initNotesTab() {
+  // 이벤트 핸들러 등록 (DOMContentLoaded 후 호출되므로 직접)
+  const editor = document.getElementById('notes-editor');
+  if (editor) {
+    editor.addEventListener('input', () => {
+      const note = _notesActiveNote();
+      if (!note) return;
+      note.content = editor.value;
+      note.updatedAt = Date.now();
+      _notesScheduleSave();
+      // 검색어가 있으면 결과 재계산
+      if (notesState.searchTerm) _notesSearch(notesState.searchTerm);
+      // v0.17.0 — 라인 넘버 갱신
+      if (notesState.prefs && notesState.prefs.lineNumbers) _notesRenderLineNumbers();
+    });
+    // v0.17.0 — scroll 동기화 (gutter ↔ editor)
+    editor.addEventListener('scroll', () => {
+      const gutter = document.getElementById('notes-linenum-gutter');
+      if (gutter && !gutter.classList.contains('hidden')) {
+        gutter.scrollTop = editor.scrollTop;
+      }
+    });
+    editor.addEventListener('keydown', (e) => {
+      // Tab으로 들여쓰기 (focus 이동 방지)
+      if (e.key === 'Tab' && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        const v = editor.value;
+        editor.value = v.slice(0, start) + '  ' + v.slice(end);
+        editor.selectionStart = editor.selectionEnd = start + 2;
+        editor.dispatchEvent(new Event('input'));
+      }
+    });
+  }
+
+  const addBtn = document.getElementById('notes-tab-add');
+  if (addBtn) addBtn.addEventListener('click', _notesAdd);
+
+  const downloadBtn = document.getElementById('notes-download');
+  if (downloadBtn) downloadBtn.addEventListener('click', _notesDownload);
+
+  const importBtn = document.getElementById('notes-import');
+  const importFile = document.getElementById('notes-import-file');
+  if (importBtn && importFile) {
+    importBtn.addEventListener('click', () => importFile.click());
+    importFile.addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (file) _notesImport(file);
+      e.target.value = '';   // 다시 같은 파일 선택 가능
+    });
+  }
+
+  const wrapToggle = document.getElementById('notes-wrap');
+  if (wrapToggle && editor) {
+    wrapToggle.addEventListener('change', () => {
+      editor.classList.toggle('nowrap', !wrapToggle.checked);
+    });
+  }
+
+  // v0.17.0 — 폰트 크기 버튼
+  const fontDec = document.getElementById('notes-font-dec');
+  const fontInc = document.getElementById('notes-font-inc');
+  if (fontDec) fontDec.addEventListener('click', () => _notesAdjustFont(-1));
+  if (fontInc) fontInc.addEventListener('click', () => _notesAdjustFont(1));
+
+  // v0.17.0 — 라인 넘버 토글
+  const lineCheckbox = document.getElementById('notes-linenum');
+  if (lineCheckbox) {
+    lineCheckbox.addEventListener('change', () => {
+      if (!notesState.prefs) notesState.prefs = { fontSize: NOTES_FONT_DEFAULT, lineNumbers: false };
+      notesState.prefs.lineNumbers = lineCheckbox.checked;
+      _notesApplyPrefs();
+      _notesScheduleSave();
+    });
+  }
+
+  const searchInput = document.getElementById('notes-search-input');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      _notesSearch(searchInput.value);
+    });
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (e.shiftKey) _notesGotoMatch(notesState.searchCursor - 1);
+        else _notesGotoMatch(notesState.searchCursor + 1);
+      }
+      if (e.key === 'Escape') {
+        searchInput.value = '';
+        _notesSearch('');
+      }
+    });
+  }
+  const searchPrev = document.getElementById('notes-search-prev');
+  const searchNext = document.getElementById('notes-search-next');
+  if (searchPrev) searchPrev.addEventListener('click', () => _notesGotoMatch(notesState.searchCursor - 1));
+  if (searchNext) searchNext.addEventListener('click', () => _notesGotoMatch(notesState.searchCursor + 1));
+
+  // 초기 로드
+  _notesLoad();
+})();
+
+
+// ============================================================
+// Send to Notes — Monitor detail 우클릭 통합 (v0.16.0)
+// ============================================================
+
+(function _initSendToNotes() {
+  function buildMenu(items, x, y) {
+    // 기존 메뉴 제거
+    document.querySelectorAll('.notes-context-menu').forEach(m => m.remove());
+    const menu = document.createElement('div');
+    menu.className = 'notes-context-menu';
+    for (const it of items) {
+      if (it.sep) {
+        const sep = document.createElement('div');
+        sep.className = 'ctx-sep';
+        menu.appendChild(sep);
+        continue;
+      }
+      if (it.hint) {
+        const hint = document.createElement('div');
+        hint.className = 'ctx-hint';
+        hint.textContent = it.hint;
+        menu.appendChild(hint);
+        continue;
+      }
+      const el = document.createElement('div');
+      el.className = 'ctx-item';
+      el.textContent = it.label;
+      el.addEventListener('click', () => {
+        try { it.onClick && it.onClick(); }
+        finally { menu.remove(); }
+      });
+      menu.appendChild(el);
+    }
+    // 위치 — 화면 밖으로 안 나가게 clamp
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    const px = Math.min(x, window.innerWidth - rect.width - 8);
+    const py = Math.min(y, window.innerHeight - rect.height - 8);
+    menu.style.left = px + 'px';
+    menu.style.top = py + 'px';
+
+    // 외부 클릭/Esc로 닫기
+    const onDocClick = (e) => {
+      if (!menu.contains(e.target)) {
+        menu.remove();
+        document.removeEventListener('click', onDocClick, true);
+        document.removeEventListener('keydown', onKey);
+      }
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        menu.remove();
+        document.removeEventListener('click', onDocClick, true);
+        document.removeEventListener('keydown', onKey);
+      }
+    };
+    setTimeout(() => {
+      document.addEventListener('click', onDocClick, true);
+      document.addEventListener('keydown', onKey);
+    }, 0);
+  }
+
+  // 1) Monitor detail 영역 (Message/Initiator/Detection/Auth/JS Context/Description) 우클릭
+  document.addEventListener('contextmenu', (e) => {
+    const detailEl = e.target.closest('.detail-content');
+    if (!detailEl) return;
+    e.preventDefault();
+    const selText = String(window.getSelection() || '').trim();
+    const visibleText = detailEl.innerText || '';
+    const detailKey = detailEl.id.replace('detail-', '');
+    const items = [];
+    if (selText.length > 0) {
+      items.push({
+        label: `Send selection to Notes (${selText.length}자)`,
+        onClick: () => sendToActiveNote(selText, `selection from ${detailKey}`),
+      });
+    } else {
+      items.push({ hint: '(텍스트를 선택해서 우클릭하면 선택분만 보냄)' });
+    }
+    items.push({
+      label: `Send entire ${detailKey} pane to Notes`,
+      onClick: () => sendToActiveNote(visibleText, `${detailKey} pane`),
+    });
+    // 활성 요청 URL 정보도
+    const req = selectedRequestId && typeof networkRequestMap !== 'undefined' && networkRequestMap.get
+      ? networkRequestMap.get(selectedRequestId) : null;
+    if (req) {
+      items.push({ sep: true });
+      items.push({
+        label: 'Send request line (METHOD + URL)',
+        onClick: () => sendToActiveNote(`${req.method} ${req.url}`, 'request line'),
+      });
+    }
+    buildMenu(items, e.clientX, e.clientY);
+  });
+
+  // 2) Network 행 (tr) 우클릭 — 요청 메타 송신
+  document.addEventListener('contextmenu', (e) => {
+    const tr = e.target.closest('tr.network-row');
+    if (!tr) return;
+    e.preventDefault();
+    const reqId = tr.dataset.reqId;
+    const req = reqId && typeof networkRequestMap !== 'undefined' && networkRequestMap.get
+      ? networkRequestMap.get(reqId) : null;
+    if (!req) return;
+    const items = [
+      {
+        label: 'Send URL to Notes',
+        onClick: () => sendToActiveNote(req.url, `${req.method} ${req.status}`),
+      },
+      {
+        label: 'Send request line + headers to Notes',
+        onClick: () => {
+          const parts = [`${req.method} ${req.url}`, `Status: ${req.status} ${req.statusText || ''}`];
+          if (req.requestHeaders) {
+            const headers = Array.isArray(req.requestHeaders)
+              ? req.requestHeaders.map(h => `${h.name}: ${h.value}`).join('\n')
+              : Object.entries(req.requestHeaders).map(([k, v]) => `${k}: ${v}`).join('\n');
+            parts.push('--- request headers ---', headers);
+          }
+          sendToActiveNote(parts.join('\n'), `request ${req.method}`);
+        },
+      },
+      {
+        label: 'Send full request+response to Notes',
+        onClick: () => {
+          const parts = [`${req.method} ${req.url}`, `Status: ${req.status}`];
+          if (req.requestHeaders) {
+            const headers = Array.isArray(req.requestHeaders)
+              ? req.requestHeaders.map(h => `${h.name}: ${h.value}`).join('\n')
+              : Object.entries(req.requestHeaders).map(([k, v]) => `${k}: ${v}`).join('\n');
+            parts.push('--- request headers ---', headers);
+          }
+          if (req.requestPostData) parts.push('--- request body ---', String(req.requestPostData));
+          if (req.responseHeaders) {
+            const headers = Array.isArray(req.responseHeaders)
+              ? req.responseHeaders.map(h => `${h.name}: ${h.value}`).join('\n')
+              : Object.entries(req.responseHeaders).map(([k, v]) => `${k}: ${v}`).join('\n');
+            parts.push('--- response headers ---', headers);
+          }
+          if (req.responseBody) parts.push('--- response body ---', String(req.responseBody).slice(0, 8000));
+          sendToActiveNote(parts.join('\n'), `full ${req.method}`);
+        },
+      },
+    ];
+    buildMenu(items, e.clientX, e.clientY);
+  });
+})();

@@ -19,10 +19,11 @@
       <div class="main-content">
         <div class="content-top">
           <div class="tabs">
-            <button class="tab active" data-tab="network">Monitor</button>
-            <button class="tab" data-tab="js-trace" disabled title="Start Monitor to enable JS Trace">JS Trace</button>
-            <button class="tab intercept-tab" data-tab="intercept">Intercept</button>
-            <button class="tab" data-tab="poc" title="PoC 검증 결과 (gadget.report로 수집)">PoC <span id="poc-tab-badge" class="poc-tab-badge hidden">0</span></button>
+            <button class="tab active" data-tab="network" title="Capture and inspect HTTP requests + Site Map + Replay">Monitor</button>
+            <button class="tab" data-tab="js-trace" disabled title="JavaScript runtime trace (storage / fetch / XHR / crypto). Enable Monitor first.">JS Trace</button>
+            <button class="tab intercept-tab" data-tab="intercept" title="MITM proxy — hold / modify / drop requests and responses">Intercept</button>
+            <button class="tab" data-tab="poc" title="PoC verification results collected via gadget.report()">PoC <span id="poc-tab-badge" class="poc-tab-badge hidden">0</span></button>
+            <button class="tab" data-tab="notes" title="Notepad — multiple notes, auto-save, Send-to-Notes from Monitor">Notes</button>
           </div>
           <div class="global-scope-bar">
             <span class="global-scope-label" title="Host+path pattern. Wildcards: *. Multiple patterns: comma-separated. Empty = all in scope.">🎯</span>
@@ -408,6 +409,36 @@
       </div>
     </section>
 
+    <!-- Notes 탭 (v0.16.0) -->
+    <section id="notes" class="tab-content">
+      <div class="notes-tabs-bar" id="notes-tabs-bar">
+        <div class="notes-tabs" id="notes-tabs"></div>
+        <button id="notes-tab-add" class="btn btn-xs btn-icon" title="Add new note">+</button>
+      </div>
+      <div class="notes-toolbar">
+        <input type="text" id="notes-search-input" class="filter-input notes-search" placeholder="Search in active note…" autocomplete="off">
+        <button id="notes-search-prev" class="btn btn-xs btn-icon" title="Previous match (Shift+Enter)">↑</button>
+        <button id="notes-search-next" class="btn btn-xs btn-icon" title="Next match (Enter)">↓</button>
+        <span id="notes-search-stat" class="notes-search-stat"></span>
+        <span class="notes-spacer"></span>
+        <div class="notes-font-ctrl">
+          <span id="notes-font-size" class="notes-font-display" title="Current font size">13px</span>
+          <button id="notes-font-dec" class="btn btn-xs btn-icon" title="Decrease font size">-</button>
+          <button id="notes-font-inc" class="btn btn-xs btn-icon" title="Increase font size">+</button>
+        </div>
+        <label class="notes-toggle"><input type="checkbox" id="notes-linenum"> line #</label>
+        <label class="notes-toggle"><input type="checkbox" id="notes-wrap" checked> wrap</label>
+        <button id="notes-download" class="btn btn-xs" title="Download active note as .txt">Download</button>
+        <input type="file" id="notes-import-file" accept=".txt,.md,.json,.xml" hidden>
+        <button id="notes-import" class="btn btn-xs" title="Import .txt / .md / .json / .xml as new note">Import</button>
+        <span id="notes-status" class="notes-status">saved</span>
+      </div>
+      <div class="notes-editor-wrap">
+        <div id="notes-linenum-gutter" class="notes-linenum-gutter hidden"></div>
+        <textarea id="notes-editor" class="notes-editor" spellcheck="false"></textarea>
+      </div>
+    </section>
+
     <!-- PoC 탭 (v0.15.0) -->
     <section id="poc" class="tab-content">
       <div class="toolbar">
@@ -415,16 +446,16 @@
         <button id="poc-export-all" class="btn" title="Export all results to ~/Downloads">Export All</button>
         <span class="poc-stat-spacer"></span>
         <select id="poc-filter-verdict" class="poc-filter">
-          <option value="all">모든 verdict</option>
+          <option value="all">All verdicts</option>
           <option value="VERIFIED">VERIFIED</option>
           <option value="INVALID">INVALID</option>
-          <option value="UNCLEAR">UNCLEAR · 기타</option>
+          <option value="UNCLEAR">UNCLEAR · other</option>
         </select>
         <select id="poc-filter-tp" class="poc-filter">
-          <option value="all">모든 TP</option>
+          <option value="all">All TPs</option>
         </select>
         <label class="poc-filter-check">
-          <input type="checkbox" id="poc-filter-unanalyzed"> 미분석만
+          <input type="checkbox" id="poc-filter-unanalyzed"> Unanalyzed only
         </label>
         <span id="poc-stats" class="poc-stats">0 results</span>
       </div>

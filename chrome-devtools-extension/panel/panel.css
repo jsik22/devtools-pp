@@ -3747,13 +3747,6 @@ mark.network-search-mark.current {
   transition: opacity 0.1s;
 }
 .notes-tree-item:hover .notes-tree-root-close { opacity: 1; }
-.notes-sidebar-footer {
-  padding: 6px 10px;
-  border-top: 1px solid #e0e0e0;
-  background: #f3f3f3;
-  font-size: 11px;
-}
-.notes-toggle.small { font-size: 11px; }
 .notes-main {
   flex: 1;
   display: flex;

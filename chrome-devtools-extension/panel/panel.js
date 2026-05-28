@@ -9100,7 +9100,6 @@ const notesState = {
 const fsState = {
   dirs: [],             // [{id, name, handle, expanded:{path:bool}, tree, permGranted}]
   files: [],            // [{id, dirId, segments, name, content, originalContent, isOpen}]
-  showAllFiles: false,
   loaded: false,
 };
 
@@ -9330,6 +9329,7 @@ function _notesSelect(id, type) {
   notesState.activeType = type;
   _notesRender();
   if (type === 'note') _notesScheduleSave();
+  else _fsScheduleSaveOpenFiles();
 }
 
 function _notesAdd() {
@@ -9531,6 +9531,7 @@ const FS_DIR_STORE = 'dir-handles';
 
 const FS_TEXT_EXTS = /\.(md|txt|json|js|ts|jsx|tsx|css|scss|html|xml|yaml|yml|csv|log|py|sh|bash|conf|ini|env|gitignore|sql|toml|rb|go|rs|c|h|cpp|java|kt|swift|php|lua|vue|svelte)$/i;
 const FS_SKIP = /^\.|^(node_modules|__pycache__|\.git|\.DS_Store|dist|build|out|\.next|\.cache|coverage)$/;
+const FS_MAX_FILE_BYTES = 5 * 1024 * 1024;   // 5MB — 초과 시 열기 전 경고 (편집기 성능)
 
 function _fsIdbOpen() {
   return new Promise((resolve, reject) => {
@@ -9583,7 +9584,7 @@ function _fsIsTextFile(name) { return FS_TEXT_EXTS.test(name); }
 function _fsShouldSkip(name) { return FS_SKIP.test(name); }
 
 async function _fsCheckPermission(dir, mode) {
-  if (!dir.handle || !dir.handle.queryPermission) return 'granted';
+  if (!dir.handle || !dir.handle.queryPermission) return 'prompt';   // fail-closed
   try {
     return await dir.handle.queryPermission({ mode: mode || 'read' });
   } catch (_) { return 'denied'; }
@@ -9629,11 +9630,6 @@ async function _fsLoad() {
         d.expanded = prefs.expandedByDir[d.id] || {};
       }
     }
-    if (prefs && typeof prefs.showAllFiles === 'boolean') {
-      fsState.showAllFiles = prefs.showAllFiles;
-      const cb = document.getElementById('notes-fs-show-all');
-      if (cb) cb.checked = prefs.showAllFiles;
-    }
   });
   // 권한 자동 확인 (granted면 트리 자동 로드)
   for (const d of fsState.dirs) {
@@ -9644,13 +9640,70 @@ async function _fsLoad() {
     }
   }
   fsState.loaded = true;
-  _fsRenderSidebar();
+  _fsRestoreOpenFiles(() => _notesRender());
 }
 
 function _fsSavePrefs() {
   const expandedByDir = {};
   for (const d of fsState.dirs) expandedByDir[d.id] = d.expanded;
-  safeStorageSet({ devtoolsPpFsPrefs: { expandedByDir, showAllFiles: fsState.showAllFiles } });
+  safeStorageSet({ devtoolsPpFsPrefs: { expandedByDir } });
+}
+
+// v0.18.1 — 열린 파일 버퍼 영속화. 노트는 chrome.storage 자동저장이지만 파일 버퍼는 메모리뿐이라
+// 패널 reload / SW 재활용 시 미저장 편집이 소실됐음 → 노트와 동일하게 chrome.storage로 보존.
+// handle은 IDB(dirs)에, 편집 버퍼/내용은 여기 별도 키에 저장 (직렬화 가능한 필드만).
+const FS_OPENFILES_KEY = 'devtoolsPpOpenFiles';
+let _fsOpenFilesTimer = null;
+
+function _fsSaveOpenFilesNow() {
+  if (!fsState.loaded) return;
+  const files = fsState.files.map(f => ({
+    id: f.id, dirId: f.dirId, segments: f.segments, name: f.name,
+    content: f.content, originalContent: f.originalContent, lastModified: f.lastModified,
+  }));
+  const activeFileId = notesState.activeType === 'file' ? notesState.activeId : null;
+  safeStorageSet({ [FS_OPENFILES_KEY]: { files, activeFileId, savedAt: Date.now() } });
+}
+
+function _fsScheduleSaveOpenFiles() {
+  if (!fsState.loaded) return;
+  if (_fsOpenFilesTimer) clearTimeout(_fsOpenFilesTimer);
+  _fsOpenFilesTimer = setTimeout(() => { _fsOpenFilesTimer = null; _fsSaveOpenFilesNow(); }, NOTES_SAVE_DEBOUNCE_MS);
+}
+
+function _fsRestoreOpenFiles(done) {
+  safeStorageGet([FS_OPENFILES_KEY], (res) => {
+    const stored = res && res[FS_OPENFILES_KEY];
+    if (stored && Array.isArray(stored.files)) {
+      for (const sf of stored.files) {
+        if (!sf || !sf.id || fsState.files.find(f => f.id === sf.id)) continue;
+        fsState.files.push({
+          id: sf.id, dirId: sf.dirId, segments: sf.segments || [], name: sf.name || '',
+          content: sf.content || '', originalContent: sf.originalContent || '', isOpen: true,
+          lastModified: sf.lastModified,
+        });
+      }
+      if (stored.activeFileId && fsState.files.find(f => f.id === stored.activeFileId)) {
+        notesState.activeType = 'file';
+        notesState.activeId = stored.activeFileId;
+      }
+    }
+    if (typeof done === 'function') done();
+  });
+}
+
+// v0.18.1 — 디렉토리 연결의 권한 함의 일회성 경고 (연결 폴더 = 세션 넘어 유지되는 read/write 권한)
+function _fsMaybeShowFirstConnectWarning() {
+  safeStorageGet(['devtoolsPpFsWarnShown'], (res) => {
+    if (res && res['devtoolsPpFsWarnShown']) return;
+    window.alert(
+      '⚠️ 디렉토리 연결 주의\n\n' +
+      '연결한 폴더는 DevTools++가 읽기·쓰기 권한을 가지며, 이 권한은 브라우저에 ' +
+      '저장되어 다음 세션에도 유지됩니다.\n\n' +
+      '라이브 쿠키·자격증명·PII 등 민감 정보가 든 폴더 연결은 신중히 하세요.'
+    );
+    safeStorageSet({ devtoolsPpFsWarnShown: true });
+  });
 }
 
 // 디렉토리 추가 — DevTools panel iframe에선 showDirectoryPicker 직접 호출 불가
@@ -9674,6 +9727,12 @@ async function _fsAddDirectory() {
         let added = 0;
         for (const r of records) {
           if (existingIds.has(r.id)) continue;
+          // 같은 폴더 중복 연결 방지 (id는 매번 새로 생성되므로 handle 동일성으로 판별)
+          let dup = false;
+          for (const ex of fsState.dirs) {
+            try { if (ex.handle && await ex.handle.isSameEntry(r.handle)) { dup = true; break; } } catch (_) {}
+          }
+          if (dup) { await _fsIdbDeleteDir(r.id); continue; }
           const dir = { id: r.id, name: r.name, handle: r.handle, expanded: {}, tree: null, permGranted: false };
           // popup에서 readwrite로 picker 호출했으므로 권한 granted 상태이지만 panel에서 다시 확인
           const p = await _fsCheckPermission(dir, 'read');
@@ -9683,7 +9742,7 @@ async function _fsAddDirectory() {
           added++;
         }
         _fsRenderSidebar();
-        if (added > 0) showToast(`Directory connected (${added})`);
+        if (added > 0) { showToast(`Directory connected (${added})`); _fsMaybeShowFirstConnectWarning(); }
       } catch (e) {
         console.warn('[fs] post-popup reload failed:', e);
       }
@@ -9709,6 +9768,7 @@ async function _fsRemoveDirectory(dirId) {
   fsState.dirs = fsState.dirs.filter(d => d.id !== dirId);
   await _fsIdbDeleteDir(dirId);
   _fsSavePrefs();
+  _fsSaveOpenFilesNow();
   _fsRenderSidebar();
   _notesRender();
 }
@@ -9723,7 +9783,7 @@ async function _fsEnumDir(dirHandle, depth) {
       if (handle.kind === 'directory') {
         items.push({ name, kind: 'directory', handle, children: null });
       } else if (handle.kind === 'file') {
-        if (fsState.showAllFiles || _fsIsTextFile(name)) {
+        if (_fsIsTextFile(name)) {
           items.push({ name, kind: 'file', handle });
         }
       }
@@ -9769,19 +9829,23 @@ async function _fsExpandNode(dirId, pathSegments) {
   if (dir.expanded[pathKey]) {
     let node = { children: dir.tree };
     let handle = dir.handle;
-    for (const seg of pathSegments) {
-      const child = (node.children || []).find(c => c.name === seg && c.kind === 'directory');
-      if (!child) return;
-      if (!child.children) {
-        try {
+    try {
+      for (const seg of pathSegments) {
+        const child = (node.children || []).find(c => c.name === seg && c.kind === 'directory');
+        if (!child) break;
+        if (!child.children) {
           const sub = await handle.getDirectoryHandle(seg);
           child.children = await _fsEnumDir(sub, pathSegments.length);
           handle = sub;
-        } catch (e) { console.warn('[fs] expand failed:', e); return; }
-      } else {
-        try { handle = await handle.getDirectoryHandle(seg); } catch (_) { return; }
+        } else {
+          handle = await handle.getDirectoryHandle(seg);
+        }
+        node = child;
       }
-      node = child;
+    } catch (e) {
+      console.warn('[fs] expand failed:', e);
+      dir.expanded[pathKey] = false;   // 실패 시 토글 되돌림 (트리/화살표가 실제 상태 반영)
+      _fsSavePrefs();
     }
   }
   _fsRenderSidebar();
@@ -9804,6 +9868,7 @@ async function _fsOpenFile(dirId, pathSegments) {
     notesState.activeType = 'file';
     notesState.activeId = fileId;
     _notesRender();
+    _fsSaveOpenFilesNow();
     return;
   }
   // 권한 확인
@@ -9816,17 +9881,25 @@ async function _fsOpenFile(dirId, pathSegments) {
     for (let i = 0; i < pathSegments.length - 1; i++) {
       handle = await handle.getDirectoryHandle(pathSegments[i]);
     }
-    const fileHandle = await handle.getFileHandle(pathSegments[pathSegments.length - 1]);
+    const fileName = pathSegments[pathSegments.length - 1];
+    const fileHandle = await handle.getFileHandle(fileName);
     const file = await fileHandle.getFile();
+    // 대용량 파일 경고 — textarea + 라인넘버 렌더가 느려질 수 있음
+    if (file.size > FS_MAX_FILE_BYTES) {
+      const mb = (file.size / (1024 * 1024)).toFixed(1);
+      if (!window.confirm(`"${fileName}"은(는) ${mb} MB로 큽니다. 편집기가 느려질 수 있어요. 그래도 열까요?`)) return;
+    }
     const content = await file.text();
     fsState.files.push({
       id: fileId, dirId, segments: pathSegments,
-      name: pathSegments[pathSegments.length - 1],
+      name: fileName,
       content, originalContent: content, isOpen: true,
+      lastModified: file.lastModified,
     });
     notesState.activeType = 'file';
     notesState.activeId = fileId;
     _notesRender();
+    _fsSaveOpenFilesNow();
   } catch (e) {
     showToast('파일 열기 실패: ' + e.message);
     console.error('[fs] open file error:', e);
@@ -9851,10 +9924,22 @@ async function _fsSaveFile(fileId) {
       handle = await handle.getDirectoryHandle(f.segments[i]);
     }
     const fileHandle = await handle.getFileHandle(f.segments[f.segments.length - 1]);
+    // 외부 변경 감지 (TOCTOU) — 연 이후 디스크에서 바뀌었으면 덮어쓰기 전 확인
+    try {
+      const cur = await fileHandle.getFile();
+      if (typeof f.lastModified === 'number' && cur.lastModified > f.lastModified) {
+        if (!window.confirm(`"${f.name}"이(가) 연 이후 디스크에서 변경됐습니다. 외부 변경을 덮어쓸까요?`)) {
+          showToast('저장 취소됨 (외부 변경 감지)');
+          return;
+        }
+      }
+    } catch (_) {}
     const writable = await fileHandle.createWritable();
     await writable.write(f.content);
     await writable.close();
     f.originalContent = f.content;
+    try { f.lastModified = (await fileHandle.getFile()).lastModified; } catch (_) { f.lastModified = Date.now(); }
+    _fsSaveOpenFilesNow();
     _notesRenderTabs();
     _notesSetStatus('saved');
     showToast('Saved: ' + f.name);
@@ -9882,6 +9967,7 @@ function _fsCloseFile(fileId) {
       notesState.activeId = null;
     }
   }
+  _fsSaveOpenFilesNow();
   _notesRender();
 }
 
@@ -9973,14 +10059,6 @@ function _fsRenderChildren(container, dir, items, pathSegments) {
   }
 }
 
-// 활성 entity 추상 (note or file)
-function _activeEntity() {
-  if (notesState.activeType === 'file') {
-    return fsState.files.find(f => f.id === notesState.activeId);
-  }
-  return notesState.notes.find(n => n.id === notesState.activeId);
-}
-
 // Send to Notes — 외부 호출 (Monitor 우클릭 등)
 window.sendToActiveNote = function (text, label) {
   if (!notesState.loaded) {
@@ -10015,9 +10093,10 @@ window.sendToActiveNote = function (text, label) {
         entity.updatedAt = Date.now();
         _notesScheduleSave();
       } else {
-        // v0.18.0 — 파일: 자동 저장 안 함, dirty 마커만 갱신
+        // v0.18.0 — 파일: FS 자동 write-back 안 함(명시 저장). dirty 마커 + 버퍼 영속화만
         _notesRenderTabs();
         _notesSetStatus('dirty');
+        _fsScheduleSaveOpenFiles();
       }
       // 검색어가 있으면 결과 재계산
       if (notesState.searchTerm) _notesSearch(notesState.searchTerm);
@@ -10113,14 +10192,6 @@ window.sendToActiveNote = function (text, label) {
   if (fsAddBtn) fsAddBtn.addEventListener('click', _fsAddDirectory);
   const fsRefreshBtn = document.getElementById('notes-fs-refresh');
   if (fsRefreshBtn) fsRefreshBtn.addEventListener('click', _fsRefreshAll);
-  const fsShowAll = document.getElementById('notes-fs-show-all');
-  if (fsShowAll) {
-    fsShowAll.addEventListener('change', () => {
-      fsState.showAllFiles = fsShowAll.checked;
-      _fsSavePrefs();
-      _fsRefreshAll();
-    });
-  }
   const sidebarToggle = document.getElementById('notes-sidebar-toggle');
   if (sidebarToggle) {
     sidebarToggle.addEventListener('click', () => {

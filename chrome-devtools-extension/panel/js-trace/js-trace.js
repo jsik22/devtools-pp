@@ -434,20 +434,33 @@
       setStatus('loading injector…');
       return;
     }
-    try {
-      await evalInPage(injectCode);
-      tracing = true;
-      traceStartedAt = Date.now();
-      try { tracedPageURL = await evalInPage('location.href'); } catch (e) { tracedPageURL = null; }
-      toggleBtn.textContent = 'Trace ON';
-      toggleBtn.className = 'btn btn-toggle-on';
-      if (tabBtn) tabBtn.classList.add('recording');
-      setStatus('recording…', true);
-      setPlaceholder('Recording — interact with the page (login / submit / etc.) to capture trace events.<br><span style="opacity:.6">Tip: try <code>Math.random()</code> in the page console for a quick sanity check.</span>');
-      pollTimer = setInterval(poll, POLL_INTERVAL_MS);
-    } catch (err) {
-      setStatus('inject failed: ' + err.message);
+    // 페이지 네비게이션 중엔 eval이 일시적으로 실패 — onNavigated 재주입
+    // 핸들러와 동일하게 6회 × 250ms 재시도 후에만 포기. 단발 실패로 Monitor는
+    // ON인데 Trace가 OFF인 채 영영 멈추던 문제 방지.
+    let injected = false, lastErr;
+    for (let i = 0; i < 6; i++) {
+      try {
+        await evalInPage(injectCode);
+        injected = true;
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise(r => setTimeout(r, 250));
+      }
     }
+    if (!injected) {
+      setStatus('inject failed: ' + (lastErr && lastErr.message || 'unknown'));
+      return;
+    }
+    tracing = true;
+    traceStartedAt = Date.now();
+    try { tracedPageURL = await evalInPage('location.href'); } catch (e) { tracedPageURL = null; }
+    toggleBtn.textContent = 'Trace ON';
+    toggleBtn.className = 'btn btn-toggle-on';
+    if (tabBtn) tabBtn.classList.add('recording');
+    setStatus('recording…', true);
+    setPlaceholder('Recording — interact with the page (login / submit / etc.) to capture trace events.<br><span style="opacity:.6">Tip: try <code>Math.random()</code> in the page console for a quick sanity check.</span>');
+    pollTimer = setInterval(poll, POLL_INTERVAL_MS);
   }
 
   async function stopTrace() {

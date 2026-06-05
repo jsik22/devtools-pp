@@ -69,6 +69,9 @@ function detectTargetHost() {
     let info;
     try { info = JSON.parse(result); } catch { return; }
     if (!info.host) return;
+    // onNavigated와 동일: 크롤 중 seed origin 밖이면 off-scope host 탭·
+    // 사이트맵 노드를 만들지 않음 (parse-fail 폴백·init 경유분 일관 처리).
+    if (crawlCaptureBlocks(info.href)) return;
     targetHost = info.host;
     ensureTargetInTree();
     const main = sitemapTree[targetHost];
@@ -96,6 +99,13 @@ chrome.devtools.network.onNavigated.addListener((url) => {
     detectTargetHost();
     return;
   }
+  // 크롤(scopeCapture) 중 seed origin 밖으로의 redirect/cross-host 착지는
+  // 무시 — off-scope host 탭·사이트맵 노드를 만들지 않음. 캡처 게이트
+  // (crawlCaptureBlocks)와 동일 판정 재사용. inspected 탭은 거기 있어도
+  // 패널 포커스/귀속(targetHost→_mainHost)은 seed host에 유지되어, 리다이렉트를
+  // 일으킨 seed-origin 요청은 seed 탭에 정상 표시됨. 크롤 비활성/scopeCapture
+  // OFF면 false 반환이라 기존 동작 그대로(회귀 없음).
+  if (crawlCaptureBlocks(url)) return;
   // Preserve-log 방식: 세션에서 먼저 방문한 host는 트리에 남음.
   // Clear만 트리를 비움. 현재 target이 트리 상단으로 이동하고
   // 나머지는 모두 "External"로 들어감.
@@ -136,6 +146,7 @@ const crawlState = {
   timeoutId: null,
   watchdogId: null,
   pollId: null,
+  navListener: null, // 현재 스텝의 onNavigated 리스너 — 스텝 도중 Stop 시 정리용
   // Spider
   frontier: [],
   seen: new Set(),
@@ -341,14 +352,30 @@ function visitNextCrawl() {
   crawlState.currentUrl = item.url;
   updateCrawlProgress(item);
 
-  let expectedOrigin = null;
-  try { expectedOrigin = new URL(item.url).origin; } catch { /* keep null */ }
-
-  // 이 스텝은 readyState 폴링 성공 또는 워치독 중 먼저 오는 쪽만 1회 처리.
+  // 이 스텝은 onNavigated(off-scope) / eval 폴링(in-scope 로드완료) / 워치독 중
+  // 먼저 오는 쪽만 1회 처리.
   let stepDone = false;
+
+  // off-scope 착지 감지 = 브라우저 commit 신호(onNavigated). cross-origin
+  // redirect(예: www→policy) 시 main-frame이 최종 타깃을 commit하면 그 URL로
+  // 발화한다(off-scope host 탭이 생기던 바로 그 이벤트 — 발화 보장됨). 이전엔
+  // eval readyState 폴링으로 off-scope 완료를 잡으려 했으나, redirect 후 새 origin
+  // 컨텍스트에서 inspectedWindow.eval이 'complete'를 안정적으로 못 돌려줘(에러 반복)
+  // 폴링이 off-scope 분기까지 못 가고 워치독 10초까지 대기하던 게 지연의 원인이었다.
+  // 이제 commit이 seed scope 밖이면 즉시 포기 → 다음 frontier로(추출 없음).
+  const onNav = (navUrl) => {
+    if (stepDone || !crawlState.active) return;
+    let o = null;
+    try { o = new URL(navUrl).origin; } catch { /* keep null */ }
+    if (o && !crawlState.seedOrigins.has(o)) finishStep(false);
+    // in-scope commit이면 eval 폴링이 로드완료를 잡게 둔다.
+  };
+
   const finishStep = (loaded) => {
     if (stepDone) return;
     stepDone = true;
+    chrome.devtools.network.onNavigated.removeListener(onNav);
+    crawlState.navListener = null;
     if (crawlState.pollId) { clearInterval(crawlState.pollId); crawlState.pollId = null; }
     if (crawlState.watchdogId) { clearTimeout(crawlState.watchdogId); crawlState.watchdogId = null; }
     if (!crawlState.active) return;
@@ -359,20 +386,24 @@ function visitNextCrawl() {
         collectLinksThenContinue(item);
       }, SPIDER_POST_LOAD_GRACE_MS);
     } else {
-      // 로드완료 안 잡힘(alert/hang/너무 느림) → 이 페이지 추출 생략,
-      // 다음으로. 다음 spiderNavigate(브라우저 레벨)가 막힌 다이얼로그를
-      // 부수적으로 취소시키며 빠져나감.
+      // 추출 생략하고 다음으로. 호출 경우: (1) 로드완료 미포착(alert/hang/너무
+      // 느림) — 다음 spiderNavigate가 막힌 다이얼로그를 부수 취소, (2) seed scope
+      // 밖으로 redirect commit — off-scope 페이지는 크롤 대상이 아니므로 DOM을
+      // 읽지 않고 넘어감.
       crawlState.timeoutId = setTimeout(visitNextCrawl, crawlState.waitMs);
     }
   };
 
+  chrome.devtools.network.onNavigated.addListener(onNav);
+  crawlState.navListener = onNav;
+
   // 브라우저 레벨 이동 (background tabs.update). 페이지 JS 안 거침.
   spiderNavigate(item.url);
 
-  // commit 대기 후, inspectedWindow.eval로 새 페이지 로드 완료를 폴링.
-  // origin이 기대값과 일치 + readyState 'complete'여야 통과 → 이전 문서의
-  // 잔여 'complete'를 새 페이지로 오인하지 않음. alert가 페이지를 막으면
-  // 이 eval이 응답 안 함 → 워치독이 stuck 처리.
+  // commit 대기 후, inspectedWindow.eval로 readyState/origin을 폴링해 in-scope
+  // 로드 완료를 판정. seed scope 위에서 'complete'면 추출 진행. off-scope 착지는
+  // 위 onNav가 처리하므로 여기선 seed origin만 본다(same-origin이라 eval 안정적).
+  // alert로 막힌 페이지는 'complete'에 영영 도달 못 함 → 워치독이 stuck 처리.
   crawlState.timeoutId = setTimeout(() => {
     if (!crawlState.active || stepDone) return;
     const probe = `JSON.stringify({rs:document.readyState,o:location.origin})`;
@@ -382,11 +413,11 @@ function visitNextCrawl() {
         return;
       }
       chrome.devtools.inspectedWindow.eval(probe, (raw, err) => {
-        if (err || stepDone || !crawlState.active) return;
+        if (stepDone || !crawlState.active || err) return;
         let st;
         try { st = JSON.parse(raw); } catch { return; }
-        if (st && st.rs === 'complete' &&
-            (expectedOrigin === null || st.o === expectedOrigin)) {
+        if (!st) return;
+        if (st.rs === 'complete' && crawlState.seedOrigins.has(st.o)) {
           finishStep(true);
         }
       });
@@ -465,6 +496,11 @@ function stopCrawl() {
   crawlState.watchdogId = null;
   if (crawlState.pollId) clearInterval(crawlState.pollId);
   crawlState.pollId = null;
+  // 스텝 도중 Stop이면 finishStep이 안 불려 onNav 리스너가 남는다 → 직접 제거.
+  if (crawlState.navListener) {
+    chrome.devtools.network.onNavigated.removeListener(crawlState.navListener);
+    crawlState.navListener = null;
+  }
   crawlState.active = false;
   crawlState.endedAt = Date.now();
   saveCrawlMeta();
@@ -1525,6 +1561,8 @@ function processNetworkRequest(harEntry) {
     method: r.method,
     url: r.url,
     startTime: null,
+    // 요청 발생 시각(ISO) — Monitor Timestamp 컬럼 표시·export/import 라운드트립용.
+    startedDateTime: harEntry.startedDateTime || null,
     status: resp.status,
     statusText: resp.statusText || '',
     type: resp.content?.mimeType?.split('/').pop() || '-',
@@ -1946,6 +1984,7 @@ function _exportItem(r) {
       time: r.time,
       rawSize: r.rawSize ?? null,
       rawTime: r.rawTime ?? null,
+      startedDateTime: r.startedDateTime || (r._harEntry && r._harEntry.startedDateTime) || null,
     },
     requestHeaders: r.requestHeaders || {},
     requestPostData: r.requestPostData || null,
@@ -2134,6 +2173,7 @@ function _itemToReq(item) {
     time: meta.time || '-',
     rawSize: meta.rawSize ?? null,
     rawTime: meta.rawTime ?? null,
+    startedDateTime: meta.startedDateTime || item.startedDateTime || null,
     protocol: meta.protocol || '',
     requestHeaders: item.requestHeaders || meta.requestHeaders || {},
     requestPostData: item.requestPostData ?? meta.requestPostData ?? null,
@@ -2491,6 +2531,20 @@ function updateNetworkRowMark(req) {
   if (badge) badge.textContent = marked ? '★' : '☆';
 }
 
+// Monitor 행의 발생 시각 — req의 ISO(startedDateTime 또는 _harEntry)를 로컬
+// HH:MM:SS.mmm로. 전체 일시는 title(hover)로. 시각 정보 없으면 {text:'-'}.
+function formatReqTs(r) {
+  const iso = (r && r.startedDateTime) ||
+    (r && r._harEntry && r._harEntry.startedDateTime) || null;
+  if (!iso) return { text: '-', title: '' };
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return { text: '-', title: '' };
+  const p2 = n => String(n).padStart(2, '0');
+  const p3 = n => String(n).padStart(3, '0');
+  const text = `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}.${p3(d.getMilliseconds())}`;
+  return { text, title: d.toLocaleString() };
+}
+
 function buildNetworkRow(r) {
   const statusClass = r.status >= 400 ? 'status-error'
     : r.status >= 300 ? 'status-redirect'
@@ -2522,8 +2576,10 @@ function buildNetworkRow(r) {
   const authBadge = _isReqAuth(r)
     ? '<span class="row-auth-badge" title="Detected as login request — see Auth tab">🔐</span> '
     : '';
+  const ts = formatReqTs(r);
   tr.innerHTML =
     `<td class="select-cell"><input type="checkbox" class="row-select" ${checkedAttr}></td>` +
+    `<td class="ts-cell" title="${escapeHtml(ts.title)}">${ts.text}</td>` +
     `<td class="host-cell ${hostKindClass}" title="${escapeHtml(r.url)}">${escapeHtml(host)}</td>` +
     `<td><strong>${escapeHtml(r.method)}</strong></td>` +
     `<td class="url-cell" title="${escapeHtml(r.url)}">${markBadge}${authBadge}${replayBadge}${escapeHtml(truncateUrl(r.url))}</td>` +

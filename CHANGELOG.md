@@ -4,6 +4,23 @@ DevTools++ 버전별 변경 이력 (최신순). 기능 개요는 [README.md](REA
 
 ---
 
+### v0.19.0 변경사항 (2026-06-05)
+Monitor에 요청 발생 시각(Timestamp) 컬럼 신설 + Auto Crawl의 off-scope(리다이렉트) 처리 견고화.
+
+#### Monitor — Timestamp 컬럼 (신규)
+- **요청 발생 시각 컬럼** — 호스트 테이블 Host 좌측에 Timestamp 컬럼 추가. 로컬 `HH:MM:SS.mmm` 표시, 셀 hover 시 전체 일시 툴팁. 요청 소요시간을 보여주는 기존 `Time` 컬럼과 별개
+- **export/import 라운드트립** — 원본 ISO 8601(`startedDateTime`)을 export에 포함, import 시 복원 → 재임포트한 캡처에서도 시각 보존
+- **컬럼 구분선 상시 노출** — 너비 조절 핸들(컬럼 경계선)을 hover 전에도 항상 표시, drag/hover 시 강조
+
+#### Auto Crawl — off-scope 리다이렉트 처리
+- **off-scope 호스트 격리** — 시드 origin(예: `www.naver.com`) 크롤 중 페이지가 다른 호스트(`policy.naver.com` 등)로 리다이렉트돼도 그 호스트의 Network 탭·Site Map 노드를 만들지 않음. 캡처 게이트와 동일한 scope 판정을 `onNavigated`/`detectTargetHost`에 적용. 리다이렉트를 일으킨 in-scope 요청 자체는 캡처 유지
+- **off-scope 착지 즉시 포기 + 지연 제거** — 리다이렉트로 seed origin 밖에 commit되면 `onNavigated`(브라우저 commit 신호)로 감지해 링크 추출 없이 다음 항목으로 진행. 이전엔 cross-origin 컨텍스트에서 `inspectedWindow.eval`이 로드완료를 못 돌려줘 리다이렉트 페이지마다 워치독 10초를 소모하던 지연을 제거
+
+#### JS Trace
+- **주입 단발 실패 시 자동 재시도** — `startTrace()`의 페이지 주입을 nav 재주입과 동일한 6회×250ms 재시도로 변경. 네비게이션 중 Monitor를 켜 첫 주입이 일시 실패하면 Monitor는 ON인데 Trace가 멈춘 채 복구되지 않던 문제 수정
+
+---
+
 ### v0.18.1 변경사항 (2026-05-29)
 v0.18.0 파일 탐색기 코드 리뷰 후속 — 데이터 무결성·유실 방지 및 보안 하드닝.
 

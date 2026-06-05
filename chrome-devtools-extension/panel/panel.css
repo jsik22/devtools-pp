@@ -383,9 +383,21 @@ tr:hover {
   user-select: none;
   z-index: 2;
 }
-.col-resizer:hover,
-.col-resizer.dragging {
+/* 컬럼 너비 조절 핸들의 구분선 — 항상 노출(hover 전에도 보임). th 경계선과
+   동일한 #d4d4d4, drag/hover 시 파랑으로 강조. */
+.col-resizer::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  right: 2px;
+  width: 1px;
+  background: #d4d4d4;
+}
+.col-resizer:hover::after,
+.col-resizer.dragging::after {
   background: #0078d4;
+  width: 2px;
 }
 /* 드래그 중에는 전역 cursor를 col-resize로 유지 (마우스가 resizer 벗어나도). */
 body.col-resizing,
@@ -2667,15 +2679,18 @@ tr.selected td {
 #network-table {
   table-layout: fixed;
 }
-#network-table thead th:nth-child(2) { width: 200px; } /* Host (label + All/Host-only toggle) */
-#network-table thead th:nth-child(3) { width: 70px; }  /* Method */
-/* nth-child(4) URL — width 미지정, flex 흡수 */
-#network-table thead th:nth-child(5) { width: 60px; }  /* Status */
-#network-table thead th:nth-child(6) { width: 90px; }  /* Type */
-#network-table thead th:nth-child(7) { width: 70px; }  /* Size */
-#network-table thead th:nth-child(8) { width: 70px; }  /* Time */
-#network-table thead th:nth-child(9) { width: 100px; } /* Initiator */
-#network-table thead th:nth-child(10) { width: 110px; } /* Detection */
+#network-table thead th:nth-child(2) { width: 95px; }  /* Timestamp */
+#network-table thead th:nth-child(3) { width: 200px; } /* Host (label + All/Host-only toggle) */
+#network-table thead th:nth-child(4) { width: 70px; }  /* Method */
+/* nth-child(5) URL — width 미지정, flex 흡수 */
+#network-table thead th:nth-child(6) { width: 60px; }  /* Status */
+#network-table thead th:nth-child(7) { width: 90px; }  /* Type */
+#network-table thead th:nth-child(8) { width: 70px; }  /* Size */
+#network-table thead th:nth-child(9) { width: 70px; }  /* Time */
+#network-table thead th:nth-child(10) { width: 100px; } /* Initiator */
+#network-table thead th:nth-child(11) { width: 110px; } /* Detection */
+
+/* Timestamp 셀 — 색/크기/폰트는 일반 td 텍스트(#000, 12px) 그대로 상속. */
 
 #network-table th {
   position: relative; /* col-resizer 부착용 */

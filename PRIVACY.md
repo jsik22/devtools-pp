@@ -34,7 +34,6 @@ DevTools++ requests the following Chrome permissions:
 | Permission | Why it's needed |
 |---|---|
 | `<all_urls>` (host permission) | Required to monitor network requests across all websites in the inspected tab |
-| `activeTab` | Required to identify the currently inspected tab |
 | `nativeMessaging` | Required to communicate with the local proxy process for Intercept |
 | `proxy` | Required to route the inspected tab's traffic through the local MITM proxy |
 | `declarativeNetRequest` | Required to apply tab-scoped proxy routing rules |

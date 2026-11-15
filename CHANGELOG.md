@@ -4,6 +4,15 @@ DevTools++ 버전별 변경 이력 (최신순). 기능 개요는 [README.md](REA
 
 ---
 
+### v0.19.1 변경사항 (2026-11-15)
+Chrome 웹 스토어 정책 위반 경고(권한 사용, 참조 ID: Purple Potassium) 대응 — 사용하지 않는 권한 제거.
+
+#### 권한
+- **`activeTab` 권한 제거** — 코드 어디에서도 사용하지 않던 권한. 검사 중인 탭 식별은 `chrome.devtools.inspectedWindow.tabId`로 처리하며 별도 권한이 필요 없음. `PRIVACY.md` 권한 표에서도 삭제
+- 나머지 권한 감사 결과 모두 사용 중: `nativeMessaging`(Intercept 프록시 통신), `proxy`(검사 탭 트래픽 라우팅), `declarativeNetRequest`(탭 스코프 태깅 헤더), `storage`(설정·노트 영속화), `<all_urls>`(dNR modifyHeaders·백그라운드 fetch)
+
+---
+
 ### v0.19.0 변경사항 (2026-06-05)
 Monitor에 요청 발생 시각(Timestamp) 컬럼 신설 + Auto Crawl의 off-scope(리다이렉트) 처리 견고화.
 

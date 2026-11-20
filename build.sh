@@ -48,6 +48,6 @@ echo "GitHub : $GH_ZIP   ($(unzip -l "$GH_ZIP"  | tail -1 | awk '{print $2}') fi
 echo "CWS    : $CWS_ZIP  ($(unzip -l "$CWS_ZIP" | tail -1 | awk '{print $2}') files)"
 echo
 echo "Sanity — CWS zip manifest must be at root:"
-if unzip -Z1 "$CWS_ZIP" | grep -qx 'manifest.json'; then echo "  OK: manifest.json at root"; else echo "  FAIL: manifest.json not at root" >&2; exit 1; fi
+if unzip -Z1 "$CWS_ZIP" | grep -x 'manifest.json' >/dev/null; then echo "  OK: manifest.json at root"; else echo "  FAIL: manifest.json not at root" >&2; exit 1; fi
 echo "Sanity — CWS zip must NOT contain native-proxy:"
-if unzip -Z1 "$CWS_ZIP" | grep -q '^native-proxy/'; then echo "  FAIL: native-proxy present in CWS zip" >&2; exit 1; else echo "  OK: native-proxy excluded"; fi
+if unzip -Z1 "$CWS_ZIP" | grep '^native-proxy/' >/dev/null; then echo "  FAIL: native-proxy present in CWS zip" >&2; exit 1; else echo "  OK: native-proxy excluded"; fi

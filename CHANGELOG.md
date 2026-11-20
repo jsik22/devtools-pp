@@ -4,6 +4,29 @@ DevTools++ 버전별 변경 이력 (최신순). 기능 개요는 [README.md](REA
 
 ---
 
+### v0.19.2 변경사항 (2026-11-20)
+코드 리뷰 P0 수정 — Intercept 보안·안정성, ReDoS, HTML 주입, Notes 데이터 유실. **native-proxy가 바뀌었으므로 CWS 사용자도 GitHub에서 native-proxy를 다시 받아야 적용됨.**
+
+#### Intercept (native-proxy)
+- **검사 탭 외 트래픽은 업스트림 인증서 엄격 검증** — Intercept 중 다른 탭의 HTTPS 요청은 Node 기본 CA + OS 신뢰 저장소로 검증하고, 실패하면 502. 이전엔 브라우저 전체가 `rejectUnauthorized:false`로 중계돼 위조 인증서가 가려졌음. 검사 탭은 기존처럼 self-signed 허용하되 호스트별 1회 경고 토스트 표시
+- **Forward Modified의 Content-Length 재계산** — 편집한 body 길이로 다시 계산(Transfer-Encoding 제거). body가 짧으면 요청이 멈추고 길면 남은 바이트가 다음 요청처럼 전송되던 문제 수정. body를 편집하지 않았으면 원본 바이트 그대로 전송(바이너리 손상 방지), 잘린 body를 편집해 보낼 땐 확인창
+- **보류 중 브라우저 취소 처리** — 탭 이동 등으로 요청이 취소되면 보류를 풀고 업스트림으로 보내지 않음. 타임아웃·취소 항목은 패널 큐에서 제거하고, 적용되지 못한 결정은 로그에 `expired`로 표시(이전엔 "modified"로 잘못 기록)
+- **네이티브 메시징 한도** — host → 브라우저 메시지는 body를 잘라 1MB 안에 맞춤(초과 시 포트가 끊겨 보류 요청이 모두 사라졌음). 브라우저 → host 수신 한도를 Chrome 실제 한도 64MB로 수정
+
+#### 보안
+- **ReDoS 수정** — 이메일·URL 인코딩·JWT 탐지 정규식, Server 헤더 버전 추출, JS Trace `(capped)` 처리. 512KB 입력에서도 선형 시간. JWT가 토큰 문자에 바로 붙은 경우(`xeyJ…`)는 더 이상 탐지하지 않음
+- **HTML 주입 차단** — import한 status/size/time, scan category, Detection severity, JS Trace cat/seq 이스케이프. import한 finding 정규화
+
+#### Notes
+- **Send to Notes가 열린 디스크 파일에 기록되던 문제** — 파일 탭이 활성이면 마지막 노트에 추가
+- **검색어가 있을 때 타이핑하면 텍스트가 사라지던 문제** 수정
+- **DevTools 창 여러 개에서 서로 덮어쓰던 문제** — 노트 단위 병합(저장 직전 재조회 + `storage.onChanged` 반영). "saved"·저장 실패 상태 표시 동작
+
+#### 기타
+- README 버전 배지 갱신, `build.sh` grep 오탐(SIGPIPE + pipefail) 수정
+
+---
+
 ### v0.19.1 변경사항 (2026-11-15)
 Chrome 웹 스토어 정책 위반 경고(권한 사용, 참조 ID: Purple Potassium) 대응 — 사용하지 않는 권한 제거.
 

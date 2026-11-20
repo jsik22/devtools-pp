@@ -2,7 +2,7 @@
 
 > DevTools++는 Chrome DevTools의 Native함과 전문 테스트 도구(Burp, Postman 등...)의 핵심 기능을 합친 경량 Web/API 테스트 도구입니다. 패널 하나로 모니터링 · 인터셉트 · 리플레이 · JS 분석이 가능합니다.
 
-[![Version](https://img.shields.io/badge/version-0.11.0-blue)](#)
+[![Version](https://img.shields.io/badge/version-0.19.2-blue)](#)
 [![License](https://img.shields.io/badge/license-MIT-green)](#)
 [![Chrome](https://img.shields.io/badge/Chrome-MV3-yellow)](#)
 

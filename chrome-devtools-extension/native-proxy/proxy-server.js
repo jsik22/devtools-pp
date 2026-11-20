@@ -41,6 +41,27 @@ function _decodeResponseBody(buf, contentEncoding) {
   return { body: buf, hadEncoding: true };
 }
 
+// 업스트림 TLS 검증용 CA 번들 — Node 기본 번들 + (지원 시) OS 신뢰 저장소.
+// OS 저장소를 합치지 않으면 사내 루트 CA 등 브라우저는 신뢰하는 인증서를
+// 프록시가 거부하게 됨. tls.getCACertificates 미지원(구버전 Node)이면 null →
+// Node 기본 번들 사용.
+let _upstreamCA;
+function _getUpstreamCA() {
+  if (_upstreamCA !== undefined) return _upstreamCA;
+  _upstreamCA = null;
+  try {
+    if (typeof tls.getCACertificates === 'function') {
+      _upstreamCA = [...new Set([
+        ...tls.getCACertificates('default'),
+        ...tls.getCACertificates('system'),
+      ])];
+    }
+  } catch {
+    _upstreamCA = null;
+  }
+  return _upstreamCA;
+}
+
 class ProxyServer extends EventEmitter {
   constructor(options = {}) {
     super();
@@ -61,6 +82,8 @@ class ProxyServer extends EventEmitter {
     this.requestTimeout = options.requestTimeout || 60000; // 기본 60s
     this.server = null;
     this._idCounter = 0;
+    // 인증서 경고를 이미 보낸 호스트 — 같은 호스트로 반복 경고 방지
+    this._certWarnedHosts = new Set();
   }
 
   // 확장의 declarativeNetRequest 룰이 inspected DevTools 탭에서 시작된
@@ -177,8 +200,13 @@ class ProxyServer extends EventEmitter {
 
   /**
    * 실제 서버로 요청 forward + 응답 pipe back
+   *
+   * allowInvalidCert: true면 업스트림 인증서 오류를 허용(self-signed 스테이징
+   * 대상 테스트용)하되 패널에 경고를 보냄. inspected 탭에서 온(태그된) 요청만
+   * true — 다른 탭 트래픽은 브라우저와 동일하게 엄격 검증해서, Intercept 중
+   * 위조 인증서가 우리 CA로 재서명돼 정상처럼 보이는 일을 막음.
    */
-  _forwardRequest(method, targetUrl, headers, body, clientRes, requestId) {
+  _forwardRequest(method, targetUrl, headers, body, clientRes, requestId, allowInvalidCert = false) {
     const parsed = new URL(targetUrl);
     const isHttps = parsed.protocol === 'https:';
     const transport = isHttps ? https : http;
@@ -196,12 +224,25 @@ class ProxyServer extends EventEmitter {
       path: parsed.pathname + parsed.search,
       method: method,
       headers: fwdHeaders,
-      rejectUnauthorized: false, // Accept self-signed certs on targets
+      rejectUnauthorized: !allowInvalidCert,
     };
+    if (isHttps && !allowInvalidCert) {
+      const ca = _getUpstreamCA();
+      if (ca) options.ca = ca;
+    }
 
     let proxyReq;
     try {
       proxyReq = transport.request(options, (proxyRes) => {
+      if (isHttps && allowInvalidCert && proxyRes.socket && proxyRes.socket.authorized === false
+          && !this._certWarnedHosts.has(parsed.host)) {
+        this._certWarnedHosts.add(parsed.host);
+        this.emit('upstream_cert_warning', {
+          host: parsed.host,
+          url: targetUrl,
+          error: String(proxyRes.socket.authorizationError || 'unknown'),
+        });
+      }
       if (requestId) {
         // 응답 body 버퍼링
         const chunks = [];
@@ -242,6 +283,15 @@ class ProxyServer extends EventEmitter {
               wasEncoded: hadEncoding, // true → modified 시 Content-Encoding 제거
               clientRes,
               timer,
+            });
+            // 브라우저가 요청을 취소(탭 이동·닫기)하면 hold 해제 + 패널에 알림
+            clientRes.on('close', () => {
+              const p = this.pendingResponses.get(respId);
+              if (p && p.clientRes === clientRes) {
+                clearTimeout(p.timer);
+                this.pendingResponses.delete(respId);
+                this.emit('request_aborted', { id: respId });
+              }
             });
 
             this.emit('response_intercepted', {
@@ -341,7 +391,7 @@ class ProxyServer extends EventEmitter {
     // 즉시 forward 조건: intercept off, inspected 탭 외 요청, 또는
     // bypass 룰 매치
     if (!this.interceptActive || !hasTabTag || this._shouldBypass(fullUrl, req.method)) {
-      this._forwardRequest(req.method, fullUrl, req.headers, body, res);
+      this._forwardRequest(req.method, fullUrl, req.headers, body, res, undefined, hasTabTag);
       return;
     }
 
@@ -351,10 +401,21 @@ class ProxyServer extends EventEmitter {
     const timer = setTimeout(() => {
       if (this.pendingRequests.has(id)) {
         this.pendingRequests.delete(id);
-        this._forwardRequest(req.method, fullUrl, req.headers, body, res);
+        this._forwardRequest(req.method, fullUrl, req.headers, body, res, undefined, true);
         this.emit('request_timeout', { id });
       }
     }, this.requestTimeout);
+
+    // 브라우저가 hold 중인 요청을 취소(탭 이동·닫기)하면 나중에 timeout으로
+    // 뒤늦게 전송되지 않도록 pending에서 제거 + 패널에 알림
+    res.on('close', () => {
+      const p = this.pendingRequests.get(id);
+      if (p) {
+        clearTimeout(p.timer);
+        this.pendingRequests.delete(id);
+        this.emit('request_aborted', { id });
+      }
+    });
 
     // pending 요청 저장
     this.pendingRequests.set(id, {
@@ -409,15 +470,28 @@ class ProxyServer extends EventEmitter {
 
     switch (decision.action) {
       case 'forward':
-        this._forwardRequest(method, reqUrl, headers, body, clientRes, id);
+        this._forwardRequest(method, reqUrl, headers, body, clientRes, id, true);
         break;
 
       case 'forward_modified': {
         const newMethod = decision.method || method;
         const newUrl = decision.url || reqUrl;
-        const newHeaders = decision.headers || headers;
         const newBody = decision.body != null ? Buffer.from(decision.body, 'utf8') : body;
-        this._forwardRequest(newMethod, newUrl, newHeaders, newBody, clientRes, id);
+        // body가 바뀌었을 수 있으므로 Content-Length를 실제 전송 바이트로
+        // 재계산. 원본 값을 그대로 두면 짧아진 body는 upstream이 나머지를
+        // 기다리며 hang, 길어진 body는 초과분이 다음 요청처럼 해석됨.
+        // 단일 buffer 전송이므로 Transfer-Encoding도 제거.
+        const newHeaders = { ...(decision.headers || headers) };
+        let hadLength = false;
+        for (const k of Object.keys(newHeaders)) {
+          const lk = k.toLowerCase();
+          if (lk === 'content-length') hadLength = true;
+          if (lk === 'content-length' || lk === 'transfer-encoding') delete newHeaders[k];
+        }
+        if (newBody.length > 0 || hadLength) {
+          newHeaders['content-length'] = String(newBody.length);
+        }
+        this._forwardRequest(newMethod, newUrl, newHeaders, newBody, clientRes, id, true);
         break;
       }
 
@@ -447,7 +521,7 @@ class ProxyServer extends EventEmitter {
       }
 
       default:
-        this._forwardRequest(method, reqUrl, headers, body, clientRes);
+        this._forwardRequest(method, reqUrl, headers, body, clientRes, undefined, true);
     }
 
     return true;
@@ -525,7 +599,7 @@ class ProxyServer extends EventEmitter {
   forwardAllPending() {
     for (const [id, pending] of this.pendingRequests) {
       clearTimeout(pending.timer);
-      this._forwardRequest(pending.method, pending.url, pending.headers, pending.body, pending.clientRes);
+      this._forwardRequest(pending.method, pending.url, pending.headers, pending.body, pending.clientRes, undefined, true);
     }
     this.pendingRequests.clear();
     for (const [id, pending] of this.pendingResponses) {

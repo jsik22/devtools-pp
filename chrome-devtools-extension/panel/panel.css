@@ -2279,6 +2279,8 @@ tr.selected td {
 .log-mocked { color: #7b1fa2; }
 .log-bypassed { color: #999; }
 .log-timeout { color: #d32f2f; }
+.log-aborted { color: #999; }
+.log-expired { color: #d32f2f; }
 .log-pending { color: #999; }
 
 .icpt-log-item .log-method {

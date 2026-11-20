@@ -16,9 +16,32 @@ const ProxyServer = require('./proxy-server');
 
 let inputBuffer = Buffer.alloc(0);
 
+// Chrome 한도: host → 브라우저 1MB, 브라우저 → host 64MiB.
+// host → 브라우저 메시지가 1MB를 넘으면 Chrome이 포트를 끊어 host가 죽고
+// hold 중이던 요청이 모두 사라짐 → 여유분을 두고 body를 잘라 맞춤.
+const MAX_OUT_BYTES = 1024 * 1024 - 4096;
+const MAX_IN_BYTES = 64 * 1024 * 1024;
+
+function _encodeFitting(msg) {
+  let buf = Buffer.from(JSON.stringify(msg), 'utf8');
+  if (buf.length <= MAX_OUT_BYTES || typeof msg.body !== 'string') return buf;
+  // body가 원인 — JSON escape(바이너리의 U+FFFD, \u00XX 등) 후 크기를
+  // 기준으로 비율만큼 줄이기를 반복
+  let body = msg.body;
+  while (body.length > 0) {
+    const bodyJsonLen = Buffer.byteLength(JSON.stringify(body), 'utf8');
+    const overhead = buf.length - bodyJsonLen;
+    const budget = MAX_OUT_BYTES - overhead;
+    if (budget <= 0) { body = ''; break; }
+    body = body.slice(0, Math.floor(body.length * (budget / bodyJsonLen) * 0.95));
+    buf = Buffer.from(JSON.stringify({ ...msg, body, bodyTruncated: true }), 'utf8');
+    if (buf.length <= MAX_OUT_BYTES) return buf;
+  }
+  return Buffer.from(JSON.stringify({ ...msg, body: '', bodyTruncated: true }), 'utf8');
+}
+
 function sendMessage(msg) {
-  const json = JSON.stringify(msg);
-  const buf = Buffer.from(json, 'utf8');
+  const buf = _encodeFitting(msg);
   const header = Buffer.alloc(4);
   header.writeUInt32LE(buf.length, 0);
   process.stdout.write(header);
@@ -28,8 +51,8 @@ function sendMessage(msg) {
 function parseMessages(callback) {
   while (inputBuffer.length >= 4) {
     const msgLen = inputBuffer.readUInt32LE(0);
-    if (msgLen > 1024 * 1024) {
-      // 메시지가 너무 큼 (Chrome 한도는 1MB)
+    if (msgLen > MAX_IN_BYTES) {
+      // Chrome 한도를 넘는 길이 = 스트림 손상. 복구 불가하므로 버퍼 폐기
       inputBuffer = Buffer.alloc(0);
       return;
     }
@@ -75,6 +98,14 @@ async function startProxy(config = {}) {
 
   proxy.on('request_timeout', (data) => {
     sendMessage({ type: 'request_timeout', id: data.id });
+  });
+
+  proxy.on('request_aborted', (data) => {
+    sendMessage({ type: 'request_aborted', id: data.id });
+  });
+
+  proxy.on('upstream_cert_warning', (data) => {
+    sendMessage({ type: 'upstream_cert_warning', ...data });
   });
 
   proxy.on('response_captured', (data) => {
@@ -133,8 +164,10 @@ async function handleMessage(msg) {
       break;
 
     case 'decision':
-      if (proxy) {
-        proxy.handleDecision(msg.id, msg);
+      // 이미 timeout/취소로 처리된 요청이면 결정이 적용되지 않았음을 알림
+      // → 패널이 "modified"로 잘못 기록하지 않도록
+      if (!proxy || !proxy.handleDecision(msg.id, msg)) {
+        sendMessage({ type: 'decision_ignored', id: msg.id, action: msg.action });
       }
       break;
 

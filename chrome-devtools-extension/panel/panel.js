@@ -2146,11 +2146,29 @@ function _parseImportJson(text) {
 // (_exportItem) — 라운드트립이 prefix를 누적하지 않음.
 const IMPORT_TAB_MARK = '📥 ';
 
+// 임포트 파일은 외부(공유받은 캡처 등)에서 오므로 신뢰하지 않음 —
+// finding 배열 모양과 class/attribute에 들어가는 토큰 필드를 정규화.
+// 비정상 값(문자열·객체)이 들어오면 buildNetworkRow의 forEach가 throw해서
+// Monitor 테이블 전체가 렌더되지 않던 문제도 함께 방지.
+function _importFindings(list) {
+  if (!Array.isArray(list)) return [];
+  const tok = v => String(v == null ? '' : v).replace(/[^A-Za-z0-9_-]/g, '');
+  const str = v => (v == null ? '' : String(v));
+  return list.filter(f => f && typeof f === 'object').map(f => ({
+    ...f,
+    category: tok(f.category),
+    severity: tok(f.severity),
+    badge: str(f.badge),
+    location: str(f.location),
+    evidence: f.evidence == null ? f.evidence : str(f.evidence),
+  }));
+}
+
 function _itemToReq(item) {
   const meta = item.request || item;
   // Session 귀속 — export의 스탬프 우선, URL의 host로 fallback해서
   // legacy export(mainHost 없음)도 가장 자연스러운 탭에 들어가도록.
-  let mainHost = item.mainHost || null;
+  let mainHost = typeof item.mainHost === 'string' ? item.mainHost : null;
   if (!mainHost) {
     try { mainHost = new URL(meta.url || '').host || null; } catch {}
   }
@@ -2182,7 +2200,7 @@ function _itemToReq(item) {
     responseBodyLoaded: item.responseBodyLoaded ?? meta.responseBodyLoaded ?? false,
     responseBase64: !!(item.responseBase64 ?? meta.responseBase64),
     initiator: item.initiator || meta.initiator || null,
-    scanResults: item.findings || item.scanResults || meta.scanResults || [],
+    scanResults: _importFindings(item.findings || item.scanResults || meta.scanResults),
     _mainHost: mainHost,
     _harEntry: null,
     _imported: true,
@@ -2583,10 +2601,10 @@ function buildNetworkRow(r) {
     `<td class="host-cell ${hostKindClass}" title="${escapeHtml(r.url)}">${escapeHtml(host)}</td>` +
     `<td><strong>${escapeHtml(r.method)}</strong></td>` +
     `<td class="url-cell" title="${escapeHtml(r.url)}">${markBadge}${authBadge}${replayBadge}${escapeHtml(truncateUrl(r.url))}</td>` +
-    `<td class="${statusClass}">${r.status}</td>` +
+    `<td class="${statusClass}">${escapeHtml(r.status)}</td>` +
     `<td>${escapeHtml(r.type)}</td>` +
-    `<td>${r.size}</td>` +
-    `<td>${r.time}</td>` +
+    `<td>${escapeHtml(r.size)}</td>` +
+    `<td>${escapeHtml(r.time)}</td>` +
     `<td class="initiator-cell">${renderInitiatorBadge(r)}</td>` +
     `<td class="scan-badges-cell">${renderScanBadgesInline(r.scanResults)}</td>`;
   return tr;
@@ -3352,8 +3370,14 @@ id를 읽어 가공·전송하는 흐름이 여기서 잡힙니다. 같은 input
 
 // kind 단위 설명 — kind에서 " (capped)" 접미사는 제거 후 매칭.
 // 11개 wrapper의 emit kind들을 prefix 매칭으로 커버.
+// 정규식 /\s*\(capped\)$/는 페이지가 위조한 긴 공백 kind에서 제곱 시간 → endsWith로 대체
+function _stripCappedSuffix(kind) {
+  const k = String(kind || '');
+  return k.endsWith('(capped)') ? k.slice(0, -'(capped)'.length).trimEnd() : k;
+}
+
 function _jsTraceKindDescription(kind) {
-  const k = String(kind || '').replace(/\s*\(capped\)$/, '');
+  const k = _stripCappedSuffix(kind);
   if (k === 'Math.random')
     return 'JS 내장 PRNG. 암호학적 안전성 없음 (Mersenne Twister 기반). 토큰 생성에 쓰이면 보안 약점 후보.';
   if (k === 'crypto.getRandomValues')
@@ -3419,8 +3443,8 @@ function renderJsTraceBridge(req) {
   const reqClock = new Date(reqMs).toLocaleTimeString();
 
   const linkedHtml = linked
-    ? `<div class="jstrace-row jstrace-linked" data-seq="${linked.seq}" title="Click to jump to this event in JS Trace tab">
-         <span class="cat-dot cat-${linked.cat}"></span>
+    ? `<div class="jstrace-row jstrace-linked" data-seq="${escHtml(String(linked.seq))}" title="Click to jump to this event in JS Trace tab">
+         <span class="cat-dot cat-${escHtml(linked.cat)}"></span>
          <span class="jstrace-kind">${escHtml(linked.kind)}</span>
          <span class="jstrace-args">${escHtml((linked.args || []).join(' · '))}</span>
          <span class="jstrace-t">${_msToOffset(linked.t, reqMs)}</span>
@@ -3443,7 +3467,7 @@ function renderJsTraceBridge(req) {
       if (ev.cat === 'network' && (!linked || ev.seq !== linked.seq)) continue;
       if (!byCat[ev.cat]) byCat[ev.cat] = { events: [], kinds: new Map() };
       byCat[ev.cat].events.push(ev);
-      const normalized = String(ev.kind).replace(/\s*\(capped\)$/, '');
+      const normalized = _stripCappedSuffix(ev.kind);
       if (!byCat[ev.cat].kinds.has(normalized)) {
         byCat[ev.cat].kinds.set(normalized, ev.kind);
       }
@@ -3474,15 +3498,15 @@ function renderJsTraceBridge(req) {
           }${kindLines ? `<ul class="jstrace-kind-list">${kindLines}</ul>` : ''}</div>`
         : '';
       const rowsHtml = g.events.map(ev => `
-        <div class="jstrace-row ${linked && ev.seq === linked.seq ? 'jstrace-is-linked' : ''}" data-seq="${ev.seq}" title="Click to jump to this event in JS Trace tab">
-          <span class="cat-dot cat-${ev.cat}"></span>
+        <div class="jstrace-row ${linked && ev.seq === linked.seq ? 'jstrace-is-linked' : ''}" data-seq="${escHtml(String(ev.seq))}" title="Click to jump to this event in JS Trace tab">
+          <span class="cat-dot cat-${escHtml(ev.cat)}"></span>
           <span class="jstrace-kind">${escHtml(ev.kind)}</span>
           <span class="jstrace-args">${escHtml((ev.args || []).slice(0, 2).join(' · '))}</span>
           <span class="jstrace-t">${_msToOffset(ev.t, reqMs)}</span>
         </div>`).join('');
-      return `<div class="detection-group jstrace-cat-group" data-jst-cat="${cat}">
+      return `<div class="detection-group jstrace-cat-group" data-jst-cat="${escHtml(cat)}">
         <div class="detection-group-header">
-          <span class="scan-badge scan-badge-jst-${cat}"><span class="cat-dot cat-${cat}"></span> ${escHtml(cat)}</span>
+          <span class="scan-badge scan-badge-jst-${escHtml(cat)}"><span class="cat-dot cat-${escHtml(cat)}"></span> ${escHtml(cat)}</span>
           <span class="detection-group-count">${g.events.length} event${g.events.length === 1 ? '' : 's'}</span>
           ${(catDesc || kindLines) ? '<span class="detection-group-toggle">▾</span>' : ''}
         </div>
@@ -3622,9 +3646,9 @@ function renderResponsePane(req) {
       ` <span style="color:#8a6d00">(replay)</span>`;
   } else {
     const sCls = _statusClass(req.status);
-    const size = req.size && req.size !== '-' ? ` · ${req.size}` : '';
-    const time = req.time && req.time !== '-' ? ` · ${req.time}` : '';
-    meta.innerHTML = `<span class="${sCls}">${req.status || '-'}${req.statusText ? ' ' + escapeHtml(req.statusText) : ''}</span>${time}${size}`;
+    const size = req.size && req.size !== '-' ? ` · ${escapeHtml(req.size)}` : '';
+    const time = req.time && req.time !== '-' ? ` · ${escapeHtml(req.time)}` : '';
+    meta.innerHTML = `<span class="${sCls}">${escapeHtml(req.status || '-')}${req.statusText ? ' ' + escapeHtml(req.statusText) : ''}</span>${time}${size}`;
   }
 
   const bodyEl = document.getElementById('msg-response-body');
@@ -3807,13 +3831,16 @@ function _scanEncodedPositions(text) {
   let m;
 
   // 1. JWT — 3-segment, header와 payload 모두 eyJ로 시작
-  const jwtRe = /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g;
+  //    선두 lookbehind(토큰 문자 뒤에서는 시작 안 함, 단 %XX 뒤는 허용)는
+  //    ReDoS 방지: 없으면 "eyJeyJeyJ…" 같은 긴 run에서 시작점마다 끝까지
+  //    스캔해 입력 길이의 제곱 시간이 걸림 (아래 이메일·URL 정규식도 동일).
+  const jwtRe = /(?:(?<![A-Za-z0-9_-])|(?<=%[0-9A-Fa-f]{2}))eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g;
   while ((m = jwtRe.exec(text)) !== null) {
     const f = detectJWT(m[0]);
     if (f) results.push({ start: m.index, end: m.index + m[0].length, finding: f });
   }
   // 2. URL-encoded — 2+ %XX 연속 (주변에 url-safe 문자)
-  const urlRe = /[A-Za-z0-9~._!*'()\-+]*(?:%[0-9A-Fa-f]{2}[A-Za-z0-9~._!*'()\-+]*){2,}/g;
+  const urlRe = /(?<![A-Za-z0-9~._!*'()\-+])[A-Za-z0-9~._!*'()\-+]*(?:%[0-9A-Fa-f]{2}[A-Za-z0-9~._!*'()\-+]*){2,}/g;
   while ((m = urlRe.exec(text)) !== null) {
     const f = detectUrlEncoded(m[0]);
     if (f) results.push({ start: m.index, end: m.index + m[0].length, finding: f });
@@ -6015,7 +6042,9 @@ function _shouldFlagAsIdor(key, value) {
 // null 반환.
 function _scanExtractServerVersion(value) {
   if (typeof value !== 'string') return null;
-  const m = value.match(/([A-Za-z][A-Za-z0-9.-]*)\/(\d+(?:\.\d+)+)/);
+  // 이름 길이 상한 {0,63} = ReDoS 방지 (대상 서버가 거대한 Server 헤더를 보내면
+  // 무제한 *는 시작점마다 끝까지 스캔해 제곱 시간)
+  const m = value.match(/([A-Za-z][A-Za-z0-9.-]{0,63})\/(\d+(?:\.\d+)+)/);
   return m ? `${m[1]}/${m[2]}` : null;
 }
 
@@ -6380,7 +6409,7 @@ function scanRequest(req) {
     if (body.length > SCAN_BODY_LIMIT) body = body.slice(0, SCAN_BODY_TRUNCATE);
 
     // JWT 패턴 (eyJ로 시작 — `{"`의 base64url)
-    const jwtMatches = body.match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/);
+    const jwtMatches = body.match(/(?:(?<![A-Za-z0-9_-])|(?<=%[0-9A-Fa-f]{2}))eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/);
     if (jwtMatches) {
       const tok = jwtMatches[0];
       // false positive 회피를 위해 기존 detectJWT로 검증
@@ -6396,7 +6425,9 @@ function scanRequest(req) {
     // 이메일 — @localhost, @<ipv4>, 그리고 사실 파일 확장자인 TLD는
     // skip (예: "logo@2x.png"이 regex에 매치되지만 Retina 자산 파일명일
     // 뿐 PII 아님).
-    const emailMatch = body.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
+    // 선두 lookbehind = ReDoS 방지 (매치 결과는 동일 — leftmost 매치는
+    // 항상 local-part 문자가 아닌 곳에서 시작하므로)
+    const emailMatch = body.match(/(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
     if (emailMatch) {
       const email = emailMatch[0];
       const domain = email.slice(email.indexOf('@') + 1);
@@ -6507,7 +6538,7 @@ function renderScanBadgesInline(scanResults) {
     byCat[f.category].evidences.push(f.location + (f.evidence ? ` — ${f.evidence}` : ''));
   });
   return Object.entries(byCat).map(([cat, info]) =>
-    `<span class="scan-badge scan-badge-${cat}" title="${escapeAttr(info.evidences.join('\n'))}">${escapeHtml(info.badge)}</span>`
+    `<span class="scan-badge scan-badge-${escapeAttr(cat)}" title="${escapeAttr(info.evidences.join('\n'))}">${escapeHtml(info.badge)}</span>`
   ).join(' ');
 }
 
@@ -6688,7 +6719,7 @@ function _detectAuthSignals(req) {
   if (!signals.response) {
     const respBody = req.responseBody || '';
     // JWT 패턴
-    if (/eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}/.test(respBody)) {
+    if (/(?:(?<![A-Za-z0-9_-])|(?<=%[0-9A-Fa-f]{2}))eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}/.test(respBody)) {
       signals.response = true;
       signals.signalsHit.push('Response body contains a JWT');
     } else if (/"(access_?token|id_?token|refresh_?token|session_?id|auth_?token)"\s*:/i.test(respBody)) {
@@ -6771,7 +6802,7 @@ function _findCsrfToken(req) {
 // 같은 작은 헤더는 20자만 디코드); 다운스트림 JSON 디코더가 파싱
 // 안 되는 header/payload를 reject해서 random eyJ-prefixed 텍스트를
 // 필터링.
-const _AUTH_JWT_RE = /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/;
+const _AUTH_JWT_RE = /(?:(?<![A-Za-z0-9_-])|(?<=%[0-9A-Fa-f]{2}))eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/;
 
 function _extractJwtFromResponse(req) {
   const sources = [];
@@ -7185,18 +7216,19 @@ function renderDetection(req) {
       ? `<div class="detection-category-desc hidden">${escapeHtml(desc)}</div>`
       : '';
     const toggleHint = desc ? '<span class="detection-group-toggle">▾</span>' : '';
-    html += `<div class="detection-group" data-category="${cat}">
+    html += `<div class="detection-group" data-category="${escapeAttr(cat)}">
       <div class="detection-group-header">
-        <span class="scan-badge scan-badge-${cat}">${escapeHtml(g.badge)}</span>
+        <span class="scan-badge scan-badge-${escapeAttr(cat)}">${escapeHtml(g.badge)}</span>
         <span class="detection-group-count">${g.items.length} finding${g.items.length === 1 ? '' : 's'}</span>
         ${toggleHint}
       </div>
       ${descBlock}
       <div class="detection-findings">`;
     for (const f of g.items) {
-      html += `<div class="detection-finding severity-${f.severity}">
+      const sev = String(f.severity || '');
+      html += `<div class="detection-finding severity-${escapeAttr(sev)}">
         <div class="detection-finding-top">
-          <span class="detection-severity sev-${f.severity}">${f.severity.toUpperCase()}</span>
+          <span class="detection-severity sev-${escapeAttr(sev)}">${escapeHtml(sev.toUpperCase())}</span>
           <span class="detection-location">${escapeHtml(f.location)}</span>
         </div>
         <div class="detection-evidence">${escapeHtml(f.evidence || '')}</div>
@@ -7331,11 +7363,11 @@ function isContextInvalidated(err) {
 // 와 같은 "Extension context invalidated"를 throw. 그 상태에서 silently
 // no-op하도록 wrap (그리고 throw하면 kill switch도 뒤집어서 runtime
 // 탐지기가 아직 못 잡은 경우에도 대비).
-function safeStorageSet(obj) {
+function safeStorageSet(obj, callback) {
   if (bgReconnectStopped) return;
   if (!chrome.storage || !chrome.storage.local) return;
   try {
-    chrome.storage.local.set(obj);
+    chrome.storage.local.set(obj, callback);
   } catch (err) {
     if (isContextInvalidated(err)) bgReconnectStopped = true;
   }
@@ -7455,17 +7487,52 @@ function handleBgMessage(msg) {
       handleResponseIntercepted(msg);
       break;
 
-    case 'request_timeout': {
-      // 캡처된 스냅샷에서 method/url 가져오기 → log 행이 빈
-      // / / time 문자열 대신 timeout된 항목을 표시.
-      const cap = capturedRequests.get(msg.id);
-      upsertInterceptLog(msg.id, {
-        action: 'timeout',
-        method: cap ? cap.method : '',
-        url: cap ? cap.url : '',
-      });
+    case 'request_timeout':
+    case 'request_aborted': {
+      // 프록시가 이미 처리(timeout = 원본 그대로 forward, aborted = 브라우저가
+      // 취소해 폐기)한 항목 → 큐에서 제거. 남겨두면 이후 Drop/Forward
+      // Modified가 조용히 무시되는데 로그엔 적용된 것처럼 남음.
+      const action = msg.type === 'request_timeout' ? 'timeout' : 'aborted';
+      if (msg.id && msg.id.endsWith('_resp')) {
+        const item = respQueue.find(q => q.id === msg.id);
+        removeFromRespQueue(msg.id);
+        const reqId = item ? item.requestId : msg.id.replace(/_resp$/, '');
+        upsertInterceptLog(reqId, {
+          responseAction: action,
+          responseStatus: item && action === 'timeout' ? item.statusCode : undefined,
+        });
+      } else {
+        // 캡처된 스냅샷에서 method/url 가져오기 → log 행이 빈
+        // / / time 문자열 대신 timeout된 항목을 표시.
+        const cap = capturedRequests.get(msg.id);
+        removeFromReqQueue(msg.id);
+        upsertInterceptLog(msg.id, {
+          action,
+          method: cap ? cap.method : '',
+          url: cap ? cap.url : '',
+        });
+      }
+      if (action === 'timeout') {
+        showToast('Held item timed out — the proxy forwarded it unchanged');
+      }
       break;
     }
+
+    case 'decision_ignored': {
+      // 결정이 도착하기 전에 프록시가 이미 처리한 항목 — 로그를 바로잡음.
+      // 이 패널의 자동 bypass 결정이 무시된 경우(다른 패널이 먼저 처리)는 무시.
+      if (_icptAutoDecided.delete(msg.id)) break;
+      const isResp = msg.id && msg.id.endsWith('_resp');
+      const logId = isResp ? msg.id.replace(/_resp$/, '') : msg.id;
+      upsertInterceptLog(logId, isResp ? { responseAction: 'expired' } : { action: 'expired' });
+      showToast('Decision not applied — the item had already timed out or was cancelled');
+      break;
+    }
+
+    case 'upstream_cert_warning':
+      showToast(`⚠ Upstream TLS certificate invalid for ${msg.host} (${msg.error}) — allowed for the inspected tab only`);
+      console.warn('[DevTools++] Upstream certificate invalid:', msg.host, msg.error, msg.url);
+      break;
 
     case 'pong':
       updateProxyStatus('active', `Proxy: ${msg.pendingCount || 0} pending`);
@@ -7687,7 +7754,7 @@ function handleProxyInterceptedRequest(msg) {
 
   // Method 필터
   if (methodFilter && msg.method !== methodFilter) {
-    sendInterceptDecision(msg.id, { action: 'forward' });
+    _icptAutoForward(msg.id);
     upsertInterceptLog(msg.id, { action: 'bypassed', method: msg.method, url: msg.url });
     return;
   }
@@ -7695,13 +7762,13 @@ function handleProxyInterceptedRequest(msg) {
   // 통해 서버 측에서 이미 필터링하지만, config 업데이트가 도착하기
   // 전에 dispatch된 race는 여기서 잡음)
   if (!inGlobalScope(msg.url)) {
-    sendInterceptDecision(msg.id, { action: 'forward' });
+    _icptAutoForward(msg.id);
     upsertInterceptLog(msg.id, { action: 'bypassed', method: msg.method, url: msg.url });
     return;
   }
   // Bypass 룰
   if (interceptBypassRegex && interceptBypassRegex.test(msg.url)) {
-    sendInterceptDecision(msg.id, { action: 'forward' });
+    _icptAutoForward(msg.id);
     upsertInterceptLog(msg.id, { action: 'bypassed', method: msg.method, url: msg.url });
     return;
   }
@@ -7714,6 +7781,7 @@ function handleProxyInterceptedRequest(msg) {
     url: msg.url,
     headers: msg.headers || {},
     postData: msg.body || '',
+    bodyTruncated: !!msg.bodyTruncated,
   };
   reqQueue.push(newItem);
   if (!selectedReqId) {
@@ -7971,6 +8039,16 @@ function stopIntercept() {
 
 function sendInterceptDecision(id, decision) {
   sendToBg({ type: 'decision', id, ...decision });
+}
+
+// 필터/scope/bypass에 의한 자동 forward. 패널이 여러 개면 같은 요청에
+// 다른 패널도 결정을 보내 한쪽이 decision_ignored를 받는데, 자동 결정이
+// 무시된 것은 정상이므로 경고하지 않도록 id를 기록.
+const _icptAutoDecided = new Set();
+function _icptAutoForward(id) {
+  _icptAutoDecided.add(id);
+  if (_icptAutoDecided.size > 1000) _icptAutoDecided.delete(_icptAutoDecided.values().next().value);
+  sendInterceptDecision(id, { action: 'forward' });
 }
 
 // ---- 큐 렌더링 ----
@@ -8242,12 +8320,21 @@ function forwardSelected(modified) {
         showToast('Could not parse the raw request — check the request line and headers');
         return;
       }
+      // body를 편집하지 않았으면 보내지 않음(null) → 프록시가 원본 bytes를
+      // 그대로 사용. 에디터 텍스트는 UTF-8 디코드본이라 바이너리(multipart
+      // 업로드 등)가 깨지고, 512KB 초과 body는 잘린 상태이기 때문.
+      // textarea는 CRLF를 LF로 정규화하므로 비교도 정규화해서
+      const bodyChanged = parsed.body !== (item.postData || '').replace(/\r\n?/g, '\n');
+      if (bodyChanged && item.bodyTruncated &&
+          !confirm('This request body was truncated for display (over 512KB).\nSending the edited body will replace the original with the truncated text. Continue?')) {
+        return;
+      }
       sendInterceptDecision(item.id, {
         action: 'forward_modified',
         method: parsed.method,
         url: parsed.url,
         headers: parsed.headers,
-        body: parsed.body,
+        body: bodyChanged ? parsed.body : null,
       });
       upsertInterceptLog(item.id, { action: 'modified', method: parsed.method, url: parsed.url });
     } else {
@@ -8270,11 +8357,18 @@ function forwardSelected(modified) {
         showToast('Could not parse the raw response — check the status line and headers');
         return;
       }
+      // request side와 동일 — body 미편집이면 null → 프록시가 디코드된 원본
+      // bytes 사용 (512KB 초과 잘림·바이너리 손상 방지)
+      const bodyChanged = parsed.body !== (item.body || '').replace(/\r\n?/g, '\n');
+      if (bodyChanged && item.bodyTruncated &&
+          !confirm('This response body was truncated for display (over 512KB).\nSending the edited body will replace the original with the truncated text. Continue?')) {
+        return;
+      }
       sendInterceptDecision(item.id, {
         action: 'forward_modified',
         responseStatus: parsed.statusCode,
         headers: parsed.headers,
-        body: parsed.body,
+        body: bodyChanged ? parsed.body : null,
       });
       capturedResponses.set(reqId, {
         statusCode: parsed.statusCode, headers: parsed.headers,
@@ -8450,6 +8544,8 @@ function renderInterceptLog() {
     let statusCell;
     if (l.responseAction === 'dropped') {
       statusCell = `<span class="log-resp-drop">DROP</span>`;
+    } else if (l.responseAction === 'aborted' || l.responseAction === 'expired') {
+      statusCell = `<span class="log-resp-drop">${l.responseAction.toUpperCase()}</span>`;
     } else if (l.responseStatus != null) {
       const s = l.responseStatus;
       const color = s < 400 ? '#0b7a3e' : '#d32f2f';
@@ -9163,6 +9259,50 @@ function _notesNewId() {
   return 'n_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 }
 
+// ---- 다중 패널 동기화 ----
+// DevTools 창이 여러 개면 각 패널이 노트 배열 전체를 따로 들고 있어서,
+// 마지막에 저장한 패널이 다른 패널의 편집·삭제를 덮어썼음. 마지막으로
+// 저장소와 맞춘 기준선(snapshot: id → [name, content])과 비교해 로컬에서
+// 바뀐(dirty) 노트와 삭제한 노트만 원격 목록 위에 얹는 노트 단위 병합으로 해결.
+const NOTES_INSTANCE_ID = _notesNewId();
+let _notesSnapshot = new Map();
+
+function _notesSig(n) { return JSON.stringify([n.name, n.content]); }
+
+function _notesTakeSnapshot(list) {
+  _notesSnapshot = new Map((list || []).map(n => [n.id, _notesSig(n)]));
+}
+
+function _notesMergeRemote(remoteNotes) {
+  const localById = new Map(notesState.notes.map(n => [n.id, n]));
+  const isDirty = n => _notesSnapshot.get(n.id) !== _notesSig(n); // 신규 노트도 dirty
+  const out = [];
+  const seen = new Set();
+  for (const r of remoteNotes) {
+    if (!r || !r.id) continue;
+    const l = localById.get(r.id);
+    if (!l && _notesSnapshot.has(r.id)) continue;   // 로컬에서 삭제함
+    out.push(l && isDirty(l) ? l : r);
+    seen.add(r.id);
+  }
+  // 원격에 없는 로컬 노트: 편집분(신규 포함)만 보존, 아니면 원격 삭제를 따름
+  for (const l of notesState.notes) {
+    if (!seen.has(l.id) && isDirty(l)) out.push(l);
+  }
+  return out.length > 0 ? out : [_notesDefault()];
+}
+
+// 병합 결과를 로컬 상태로 반영. 노트 객체가 교체될 수 있으므로 탭을 다시 그림
+// (탭 이름 변경 핸들러가 이전 객체를 잡고 있지 않도록).
+function _notesAdopt(list) {
+  notesState.notes = list;
+  if (notesState.activeType === 'note' && !list.find(n => n.id === notesState.activeId)) {
+    notesState.activeId = list[0].id;
+  }
+  _notesRenderTabs();
+  _notesRenderEditor();
+}
+
 function _notesDefault() {
   return {
     id: _notesNewId(),
@@ -9178,6 +9318,7 @@ function _notesLoad() {
     const stored = result && result[NOTES_STORAGE_KEY];
     if (stored && Array.isArray(stored.notes) && stored.notes.length > 0) {
       notesState.notes = stored.notes;
+      _notesTakeSnapshot(stored.notes);
       notesState.activeId = stored.activeId && stored.notes.find(n => n.id === stored.activeId)
         ? stored.activeId
         : stored.notes[0].id;
@@ -9213,14 +9354,36 @@ function _notesLoad() {
 
 function _notesSaveNow() {
   if (!notesState.loaded) return;
-  const payload = {
-    notes: notesState.notes,
-    activeId: notesState.activeId,
-    prefs: notesState.prefs,
-    savedAt: Date.now(),
-  };
-  safeStorageSet({ [NOTES_STORAGE_KEY]: payload }, () => {
-    _notesSetStatus('saved');
+  // 저장 직전 저장소를 다시 읽어 다른 패널의 변경과 병합(read-merge-write)
+  safeStorageGet([NOTES_STORAGE_KEY], (result) => {
+    const stored = result && result[NOTES_STORAGE_KEY];
+    if (stored && Array.isArray(stored.notes) && stored.savedBy !== NOTES_INSTANCE_ID) {
+      _notesAdopt(_notesMergeRemote(stored.notes));
+    }
+    const payload = {
+      notes: notesState.notes,
+      activeId: notesState.activeId,
+      prefs: notesState.prefs,
+      savedAt: Date.now(),
+      savedBy: NOTES_INSTANCE_ID,
+    };
+    _notesTakeSnapshot(notesState.notes);
+    safeStorageSet({ [NOTES_STORAGE_KEY]: payload }, () => {
+      const err = chrome.runtime && chrome.runtime.lastError;
+      _notesSetStatus(err ? 'save failed: ' + err.message : 'saved');
+    });
+  });
+}
+
+// 다른 패널이 저장하면 즉시 병합 → 이 패널의 다음 저장이 그 변경을 덮어쓰지 않음
+if (chrome.storage && chrome.storage.onChanged) {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes[NOTES_STORAGE_KEY] || !notesState.loaded) return;
+    const nv = changes[NOTES_STORAGE_KEY].newValue;
+    if (!nv || nv.savedBy === NOTES_INSTANCE_ID || !Array.isArray(nv.notes)) return;
+    const merged = _notesMergeRemote(nv.notes);
+    _notesTakeSnapshot(nv.notes);   // 원격 저장본이 새 기준선
+    _notesAdopt(merged);
   });
 }
 
@@ -9381,6 +9544,8 @@ function _notesRenderEditor() {
 function _notesSelect(id, type) {
   type = type || 'note';
   if (notesState.activeId === id && notesState.activeType === type) return;
+  if (type === 'note') notesState.lastNoteId = id;
+  else if (notesState.activeType === 'note') notesState.lastNoteId = notesState.activeId;
   notesState.activeId = id;
   notesState.activeType = type;
   _notesRender();
@@ -9455,7 +9620,9 @@ function _notesImport(file) {
 }
 
 // 검색 — textarea에 직접 highlight 불가하지만 selectionStart/End로 점프
-function _notesSearch(term) {
+// jump=false: 타이핑 중 재계산용 — 매치를 선택하면 다음 키 입력이 선택 영역을
+// 덮어써 텍스트가 사라지므로 커서/선택은 건드리지 않음
+function _notesSearch(term, jump = true) {
   const note = _notesActiveNote();
   notesState.searchTerm = term;
   notesState.searchMatches = [];
@@ -9474,7 +9641,7 @@ function _notesSearch(term) {
     idx = pos + Math.max(1, term.length);
     if (notesState.searchMatches.length > 10000) break;
   }
-  if (notesState.searchMatches.length > 0) {
+  if (notesState.searchMatches.length > 0 && jump) {
     notesState.searchCursor = 0;
     _notesGotoMatch(0);
   }
@@ -10122,6 +10289,13 @@ window.sendToActiveNote = function (text, label) {
     setTimeout(() => window.sendToActiveNote(text, label), 200);
     return;
   }
+  // 파일 탭이 활성이면 파일 버퍼가 아니라 노트로 보냄 — 파일에 붙이면
+  // 쿠키·헤더 같은 캡처 데이터가 dirty 표시도 없이 다음 저장 때 디스크에 기록됨
+  if (notesState.activeType === 'file') {
+    const target = notesState.notes.find(n => n.id === notesState.lastNoteId) || notesState.notes[0];
+    if (!target) return;
+    _notesSelect(target.id, 'note');
+  }
   const note = _notesActiveNote();
   if (!note) return;
   const ts = new Date().toLocaleTimeString();
@@ -10155,7 +10329,7 @@ window.sendToActiveNote = function (text, label) {
         _fsScheduleSaveOpenFiles();
       }
       // 검색어가 있으면 결과 재계산
-      if (notesState.searchTerm) _notesSearch(notesState.searchTerm);
+      if (notesState.searchTerm) _notesSearch(notesState.searchTerm, false);
       // v0.17.0 — 라인 넘버 갱신
       if (notesState.prefs && notesState.prefs.lineNumbers) _notesRenderLineNumbers();
     });
